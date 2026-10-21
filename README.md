@@ -42,8 +42,6 @@ Use the server's address instead of 127.0.0.1 when it runs on another machine. S
 | 6003 | UDP | game server (battles) |
 | 5876 | UDP | client NAT probe (only logged) |
 
-None of these clash with a WoW / mangos server (3724, 8085, 3306).
-
 ## Settings (environment variables)
 
 | Variable | Default | Meaning |
