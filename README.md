@@ -1,6 +1,6 @@
 # OpenWelkin
 
-An open-source server emulator for MarsWar (Welkin4591)
+MMOFPS server for Welkin4591 / Mars War: an open-source server emulator
 
 A fan-made server for the MarsWar client. The stock client is used as-is; only its config file
 points at this server. Work in progress: several players per battlefield (free for all), Training Ground and Northern Front, shop, warehouse,
