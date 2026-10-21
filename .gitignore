@@ -1,0 +1,20 @@
+# Game data unpacked from the player's own MarsWar install (setup_data.py) -- belongs to the game's publisher
+server/data/
+
+# Live server state and logs
+server/characters.json
+server/accounts.json
+*.json.tmp
+*.log
+
+# Reverse-engineering scratch: client disassembly, symbol caches, probe output, screenshots
+server/tools/*.asm
+server/tools/*.symcache
+server/tools/*.funcs
+server/tools/*.out
+server/tools/*.txt
+*.png
+*.dmp
+
+__pycache__/
+server/snap.png

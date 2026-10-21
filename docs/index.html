@@ -1,0 +1,467 @@
+<title>MarsWar Protocol Docs</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: fixed message index on the left (collapses above content on phones), long reference column on the right. */
+:root {
+  --bg: #f3f2ee;
+  --panel: #e9e7e0;
+  --fg: #22231f;
+  --muted: #5f6157;
+  --line: #cfccc1;
+  --accent: #a4481f;      /* oxidised Mars red */
+  --accent-soft: #f1ddd2;
+  --code-bg: #ecebe5;
+  --cs: #2f6b47;          /* client -> server */
+  --sc: #2c5a8f;          /* server -> client */
+  --display: "Chakra Petch", "Segoe UI", system-ui, sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #17181a; --panel: #1f2023; --fg: #e3e2dc; --muted: #a09f97; --line: #34353a;
+  --accent: #e3784a; --accent-soft: #3a2419; --code-bg: #222327; --cs: #6cc08f; --sc: #7fb0e8; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #17181a; --panel: #1f2023; --fg: #e3e2dc; --muted: #a09f97; --line: #34353a;
+  --accent: #e3784a; --accent-soft: #3a2419; --code-bg: #222327; --cs: #6cc08f; --sc: #7fb0e8; color-scheme: dark }
+
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--fg); font: 15px/1.6 var(--body); margin: 0 }
+a { color: var(--accent) }
+a:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+code, pre, .fmt { font-family: var(--mono); font-size: 13px }
+code { background: var(--code-bg); padding: 1px 5px; border-radius: 3px }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; line-height: 1.2 }
+
+.shell { display: grid; grid-template-columns: 280px minmax(0, 1fr); min-height: 100vh }
+nav.index { background: var(--panel); border-right: 1px solid var(--line); position: sticky; top: env(safe-area-inset-top, 0px);
+  height: 100vh; overflow-y: auto; padding-block: 20px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: 16px }
+.brand { font-family: var(--display); font-weight: 700; font-size: 22px; letter-spacing: .02em; margin: 0 0 2px }
+.brand span { color: var(--accent) }
+.tag { color: var(--muted); font-size: 12px; margin: 0 0 14px }
+#filter { width: 100%; font: 13px var(--mono); padding: 7px 9px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--fg) }
+.navgroup { margin-top: 16px }
+.navgroup h4 { font: 600 11px var(--body); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin: 0 0 4px }
+.navgroup a { display: flex; gap: 8px; align-items: baseline; text-decoration: none; color: var(--fg); padding: 2px 4px; border-radius: 3px; font-size: 13px }
+.navgroup a:hover { background: var(--accent-soft) }
+.navgroup a .id { font: 11px var(--mono); color: var(--muted); min-width: 64px; font-variant-numeric: tabular-nums }
+
+main { padding-block: 28px 80px; padding-left: max(24px, env(safe-area-inset-left, 0px)); padding-right: max(24px, env(safe-area-inset-right, 0px)); max-width: 980px }
+main > section { margin-bottom: 44px }
+main h2 { font-size: 26px; margin: 0 0 10px; padding-bottom: 6px; border-bottom: 2px solid var(--accent) }
+main h3 { font-size: 18px; margin: 26px 0 6px }
+.lead { font-size: 16px; color: var(--muted); max-width: 68ch }
+p, li { max-width: 72ch }
+
+.msg { border: 1px solid var(--line); border-radius: 6px; margin: 16px 0; background: var(--bg); overflow: hidden }
+.msg header { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: baseline; padding: 10px 14px; background: var(--panel); border-bottom: 1px solid var(--line) }
+.msg header h3 { margin: 0; font-size: 16px; font-family: var(--mono); font-weight: 500 }
+.msg header .id { font: 13px var(--mono); color: var(--muted); font-variant-numeric: tabular-nums }
+.dir { font: 600 11px var(--body); letter-spacing: .06em; text-transform: uppercase; padding: 1px 7px; border-radius: 10px; border: 1px solid currentColor }
+.dir.cs { color: var(--cs) } .dir.sc { color: var(--sc) }
+.status { margin-left: auto; font-size: 12px; color: var(--muted) }
+.msg .body { padding: 10px 14px 12px; display: grid; gap: 8px }
+.msg .body p { margin: 0 }
+.tablewrap { overflow-x: auto }
+table.fields { border-collapse: collapse; width: 100%; font-size: 13px }
+table.fields th { text-align: left; font: 600 11px var(--body); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding: 4px 10px 4px 0; border-bottom: 1px solid var(--line) }
+table.fields td { padding: 4px 10px 4px 0; border-bottom: 1px dashed var(--line); vertical-align: top }
+table.fields td:first-child { font-family: var(--mono); white-space: nowrap; color: var(--accent) }
+table.fields td:nth-child(2) { font-family: var(--mono); white-space: nowrap }
+pre { background: var(--code-bg); padding: 10px 12px; border-radius: 4px; overflow-x: auto; margin: 0; line-height: 1.45 }
+.note { border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 8px 12px; border-radius: 0 4px 4px 0; font-size: 14px }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 13px; color: var(--muted); margin: 8px 0 0 }
+.hidden-by-filter { display: none !important }
+
+@media (max-width: 820px) {
+  .shell { grid-template-columns: minmax(0, 1fr) }
+  nav.index { position: static; height: auto; max-height: 55vh; border-right: 0; border-bottom: 1px solid var(--line); padding-right: max(16px, env(safe-area-inset-right, 0px)) }
+  main { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)) }
+}
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth } }
+</style>
+
+<div class="shell">
+<nav class="index" aria-label="Message index">
+  <p class="brand">MARS<span>WAR</span> DOCS</p>
+  <p class="tag">Welkin4591 · Outpop engine · protocol notes</p>
+  <label for="filter" class="tag" style="display:block;margin:0 0 4px">Filter messages</label>
+  <input id="filter" type="search" placeholder="name or id, e.g. 50122" autocomplete="off">
+  <div id="navgroups"></div>
+</nav>
+
+<main>
+<section id="intro">
+  <h2>About</h2>
+  <p class="lead">Protocol notes for MarsWar (Welkin4591), a TK Digital mech shooter. The servers are gone. These notes come from the 2010 Windows client and were tested against our own server emulator.</p>
+  <p>Every message has a <strong>catalog</strong> (u8) and a <strong>type</strong> (u16), written here as <code>(catalog, type)</code>. Names come from the client's own handler classes. Offsets like <code>+0xfc</code> say where a value is stored in the client, to help when reading the disassembly.</p>
+  <div class="legend">
+    <span><span class="dir cs">C→S</span> sent by the client</span>
+    <span><span class="dir sc">S→C</span> sent by the server</span>
+    <span>Status: <b>verified</b> = works in the emulator · <b>partial</b> = fields still unknown</span>
+  </div>
+</section>
+
+<section id="flow">
+  <h2>Connection flow</h2>
+  <p>The client talks to three servers. Each one hands over the address of the next.</p>
+<pre class="mermaid">
+sequenceDiagram
+  participant C as Client
+  participant L as Login server (TCP 6001)
+  participant G as Gate server (TCP 6002)
+  participant B as Game server (UDP 6003)
+  C->>L: key exchange + LS_ValidatePassword (10,10000)
+  L-->>C: user id, gate address, session key
+  C->>G: key exchange (session key as first message)
+  C->>G: character list (13,13000) / online (13,13004)
+  C->>G: hall requests, Training Ground list (18,18029)
+  C->>G: QS_ApplyEnter (18,18000)
+  G-->>C: game server address
+  C->>B: FDP SYN, then (9,40851)
+  B-->>C: GS_Battle_Initialize (19,40050)
+  C->>B: battle loaded (9,30050)
+  B-->>C: spawn sequence (19,30001 ... 19,50109)
+</pre>
+  <p>The login and gate servers share one transport (below). The game server uses a reliable-UDP layer called FDP. The client also probes an "ADServer" on UDP 5876 for NAT detection; it needs no answer.</p>
+  <p>Server addresses come from <code>game_client_config.xml</code> (<code>LoginServer</code>, <code>ADServer</code>). <code>Loader.exe</code> is a dead auto-updater; start <code>System\MarsWar.exe</code> directly.</p>
+</section>
+
+<section id="types">
+  <h2>Data types</h2>
+  <div class="tablewrap"><table class="fields">
+    <tr><th>Name</th><th>Size</th><th>Meaning</th></tr>
+    <tr><td>u8 / u16 / u32</td><td>1 / 2 / 4</td><td>Unsigned little-endian integers. <code>i32</code> is signed.</td></tr>
+    <tr><td>f32 / f64</td><td>4 / 8</td><td>IEEE floats, little-endian.</td></tr>
+    <tr><td>vec3</td><td>12</td><td>Three f32: x, y, z. Y is up.</td></tr>
+    <tr><td>str</td><td>var</td><td>7-bit varint byte length (.NET <code>BinaryWriter</code> style) followed by UTF-8 text. Used almost everywhere.</td></tr>
+    <tr><td>str8</td><td>var</td><td>u8 length + Latin-1 bytes. Only seen in the login request.</td></tr>
+  </table></div>
+</section>
+
+<section id="transport">
+  <h2>Login &amp; gate transport</h2>
+  <h3 id="kx">Key exchange</h3>
+  <p>Each TCP connection opens with a plain frame <code>"0001" | u32 length | rest</code>. The client sends a fresh RSA-512 key; the server answers with an AES key encrypted to it.</p>
+  <div class="msg"><header><h3>KX request</h3><span class="dir cs">C→S</span><span class="status">verified</span></header><div class="body"><div class="tablewrap"><table class="fields">
+    <tr><th>Field</th><th>Type</th><th>Notes</th></tr>
+    <tr><td>magic</td><td>"0001"</td><td>ASCII</td></tr>
+    <tr><td>length</td><td>u32</td><td>bytes that follow</td></tr>
+    <tr><td>status</td><td>u32</td><td>1</td></tr>
+    <tr><td>—</td><td>u32</td><td>0</td></tr>
+    <tr><td>—</td><td>u32</td><td>9</td></tr>
+    <tr><td>key length</td><td>u32</td><td>0x5c</td></tr>
+    <tr><td>public key</td><td>bytes</td><td>X.509 DER RSA-512, e = 17, new for every connection</td></tr>
+    <tr><td>first message</td><td>bytes</td><td>On the gate: <code>str</code> session key from the login reply, a space, and a machine hash</td></tr>
+  </table></div></div></div>
+  <div class="msg"><header><h3>KX reply</h3><span class="dir sc">S→C</span><span class="status">verified</span></header><div class="body"><div class="tablewrap"><table class="fields">
+    <tr><th>Field</th><th>Type</th><th>Notes</th></tr>
+    <tr><td>magic</td><td>"0001"</td><td></td></tr>
+    <tr><td>length</td><td>u32</td><td></td></tr>
+    <tr><td>status</td><td>u32</td><td>1</td></tr>
+    <tr><td>key block</td><td>bytes</td><td>RSAES-OAEP-SHA1 of <code>i32 key_index (1..32) | u16 0 | 16-byte AES key</code></td></tr>
+  </table></div></div></div>
+
+  <h3 id="packets">Packets</h3>
+<pre class="fmt">u8 flags | length (1, 2 or 4 bytes) | AES-128-ECB payload | u8 checksum</pre>
+  <ul>
+    <li><b>flags</b>: bits 6–7 give the width of the length field (1 = u8, 2 = u16, 3 = u32); bit 0 marks a system packet. Bit 1 is <em>not</em> an encryption flag: every packet is encrypted.</li>
+    <li><b>length</b> counts the payload plus the checksum byte.</li>
+    <li><b>payload</b>: AES-128-ECB with the exchanged key. The last plaintext byte is the pad count (1–16).</li>
+    <li><b>checksum</b> = (sum of header bytes + sum of <code>payload[::key_index]</code>) mod 256.</li>
+  </ul>
+
+  <h3 id="message">Message header</h3>
+  <p>The decrypted payload is one <code>Outpop::Message</code> (MessageService.dll):</p>
+<pre class="fmt">u8 flags | u8 catalog | [u16 type] | [u32 token] | [u16 result] | [u32 multi id] | body</pre>
+  <div class="tablewrap"><table class="fields">
+    <tr><th>Flag</th><th>Bit</th><th>Adds</th></tr>
+    <tr><td>has type</td><td>0x80</td><td>u16 type</td></tr>
+    <tr><td>request</td><td>0x04</td><td>u32 token (echoed in the reply)</td></tr>
+    <tr><td>ack</td><td>0x08</td><td>u32 token + u16 result (0 = success)</td></tr>
+    <tr><td>multicast</td><td>0x20 / 0x40</td><td>u32 multi id</td></tr>
+    <tr><td>trans</td><td>0x02</td><td>—</td></tr>
+  </table></div>
+  <p class="note">If a request gets no reply, the UI waits forever. The emulator answers unknown requests with success and 32 zero bytes (empty lists, zeros, empty strings). This works almost everywhere. Exception: <code>(14,14057)</code> TodayMilitary crashes the client with a zeroed reply.</p>
+</section>
+
+<section id="fdp">
+  <h2>Game server: FDP over UDP</h2>
+  <p>FDP is the client's reliable-UDP session layer (IONetwork.dll <code>Dgram_*</code> / <code>Session_Holder</code>). Its payloads are plaintext, with no AES.</p>
+<pre class="fmt">u8 flags | u16 number | u16 session | u16 mtu length | u8 split id | u16 ack id | u16 order id   (12 bytes)</pre>
+  <div class="tablewrap"><table class="fields">
+    <tr><th>Packet</th><th>Flags</th><th>Fields</th></tr>
+    <tr><td>SYN</td><td>0x07</td><td>split 2, session = client session id, payload <code>u32 n | n bytes</code> connect stream. Resent every 3 s.</td></tr>
+    <tr><td>SYN-ACK</td><td>0x07</td><td>split 3, mtu length 12, ack id = server session id, order 1 (2 = no session, 3 = session mismatch). After this every packet carries the <em>receiver's</em> session id.</td></tr>
+    <tr><td>ack</td><td>0x05</td><td>split 1, number = sender's next reliable number, ack id = next number expected (cumulative), order 2.</td></tr>
+    <tr><td>reliable data</td><td>0xe1</td><td>split 1. Order id must increase by one per packet; a repeated order id is silently dropped.</td></tr>
+    <tr><td>unreliable data</td><td>0x01 / 0x21</td><td>own number counter, order 0</td></tr>
+  </table></div>
+  <p>A data payload holds one or more messages, each <code>u16 length | Outpop::Message</code>. Reliable and unreliable packets keep separate sequence counters.</p>
+
+  <h3 id="envelope">Event envelope</h3>
+  <p>Every message the game server sends starts with this envelope:</p>
+<pre class="fmt">f32 event time (0 = now; non-zero schedules it later) | u32 unique key (duplicates dropped) | payload</pre>
+  <p class="note">Send game events on <b>catalog 19</b>. The client ignores catalog 9 messages from the server (it treats them as outgoing). Catalog 19 events belong to the local player's character automatically.</p>
+</section>
+
+<section id="login-msgs">
+  <h2>Login server messages</h2>
+  <div class="msg" id="m-10-10000"><header><h3>LS_ValidatePassword</h3><span class="id">(10,10000)</span><span class="dir cs">C→S</span><span class="status">verified</span></header><div class="body"><div class="tablewrap"><table class="fields">
+    <tr><th>Field</th><th>Type</th><th>Notes</th></tr>
+    <tr><td>version</td><td>u32</td><td></td></tr>
+    <tr><td>account</td><td>str8</td><td></td></tr>
+    <tr><td>password</td><td>str8</td><td>plain text inside the AES channel</td></tr>
+    <tr><td>region</td><td>u32</td><td>10102</td></tr>
+    <tr><td>—</td><td>u32</td><td>1</td></tr>
+    <tr><td>machine hash</td><td>str8</td><td></td></tr>
+  </table></div></div></div>
+  <div class="msg" id="m-10-10000r"><header><h3>LS_ValidatePassword reply</h3><span class="id">(10,10000)</span><span class="dir sc">S→C</span><span class="status">verified</span></header><div class="body"><div class="tablewrap"><table class="fields">
+    <tr><th>Field</th><th>Type</th><th>Notes</th></tr>
+    <tr><td>user id</td><td>u32</td><td></td></tr>
+    <tr><td>gate ip</td><td>u32</td><td>network order as packed by the server</td></tr>
+    <tr><td>gate port</td><td>u16</td><td>6002</td></tr>
+    <tr><td>session key</td><td>str</td><td>sent back to the gate as the KX first message</td></tr>
+    <tr><td>—</td><td>8 + 4 bytes</td><td>zero</td></tr>
+    <tr><td>ip2</td><td>u32</td><td></td></tr>
+    <tr><td>flag</td><td>u8</td><td></td></tr>
+  </table></div></div><  <p class="note">Error results: the client shows the text for the result code from <code>Language/ErrorInfoENG.xml</code>. Login uses 10001 "Invalid account or password." and 10002 (too many retries). Result 1 means "Request Timeout".</p>
+/div>
+</section>
+
+<section id="gate-msgs">
+  <h2>Gate server messages</h2>
+  <p>All gate requests carry a token; replies echo it with result 0.</p>
+  <div class="msg" id="m-13-13000"><header><h3>CS_GetCharacterList</h3><span class="id">(13,13000)</span><span class="dir sc">S→C reply</span><span class="status">verified</span></header><div class="body">
+<pre class="fmt">u32 count | count x ( u32 id | str name | u8 gender | u32 model | u8 | u8 state )</pre>
+    <p>Count 0 opens nation select and character creation. State 2, 4 or 8 reopens nation select; anything else makes the client send CS_CharacterOnline.</p></div></div>
+  <div class="msg" id="m-13-13006"><header><h3>CS_Active_Character</h3><span class="id">(13,13006)</span><span class="dir cs">C→S</span><span class="status">partial</span></header><div class="body">
+    <p>Create a character. Request: <code>str name | u8 gender | u32 model | …</code>. Reply: <code>u32 new character id</code>; the client then asks for the list again.</p></div></div>
+  <div class="msg" id="m-13-13004"><header><h3>CS_CharacterOnline</h3><span class="id">(13,13004)</span><span class="dir sc">S→C reply</span><span class="status">partial</span></header><div class="body">
+<pre class="fmt">u32 id | u8 state | u32 | u32 | u8 | str name | str | u8 | u8 gender | u32 model | str | str | str | u32 n | n x (u32 | u16 | u8 | u8)</pre>
+    <p>Builds the hall (<code>CNewHallUI</code>).</p></div></div>
+  <div class="msg" id="m-18-18029"><header><h3>GetShootRoomIDByCountryID</h3><span class="id">(18,18029)</span><span class="dir sc">S→C reply</span><span class="status">verified</span></header><div class="body">
+<pre class="fmt">u32 count | count x ( u32 battlefield id | u32 | str name )</pre>
+    <p>The Training Ground list, polled every 10 s. For each id the client also requests MapInfo and MapStatus.</p></div></div>
+  <div class="msg" id="m-17-17008"><header><h3>MapInfo</h3><span class="id">(17,17008)</span><span class="dir sc">S→C reply</span><span class="status">verified</span></header><div class="body">
+<pre class="fmt">u32 id | str name | str desc | 4 x u8 | u8 type | 4 x u32 | str world file ("Atrain01.reb") | 3 x f32 | str</pre></div></div>
+  <div class="msg" id="m-18-18021"><header><h3>MapStatus</h3><span class="id">(18,18021)</span><span class="dir sc">S→C reply</span><span class="status">verified</span></header><div class="body">
+<pre class="fmt">u32 status | u32 count | count x ( u8 nation | u32 value )</pre></div></div>
+  <div class="msg" id="m-18-18000"><header><h3>QS_ApplyEnter</h3><span class="id">(18,18000)</span><span class="dir cs">C→S</span><span class="status">verified</span></header><div class="body"><p>Request: <code>u32 character id | u32 battlefield id | u32 | u16</code>.</p><pre class="fmt">reply: u32 1 | u32 game server ip | u16 game server port | u32 ticket</pre><p>The first u32 must be 1 or the client never connects. The client sends the ticket back as the first (and third) u32 of its FDP connect stream, so the game server knows which character a connection belongs to. The emulator issues a random single-use ticket per Quick Enter.</p></div></div>
+</section>
+
+<section id="hall-msgs">
+  <h2>Hall data</h2>
+  <p class="note">A reply that is too short or malformed shows a popup reading "Waiting to enter arena." That is the English text for <code>GAMEENGINE_DATAUNNORMAL</code> (bad data), not an arena queue.</p>
+  <p>Requests the hall sends after login. All are gate requests with a token; the reply echoes it.</p>
+  <div class="msg" id="m-21-21047"><header><h3>UpdateAllAnnouncement</h3><span class="id">(21,21047)</span><span class="dir sc">S→C reply</span><span class="status">verified</span></header><div class="body"><pre class="fmt">u32 count | count x ( u32 id | str text | u32 )</pre><p>Lines for the hall's scrolling announcement bar.</p></div></div>
+  <div class="msg" id="m-24-24019"><header><h3>GS_UpdateCharacterMoney</h3><span class="id">(24,24019)</span><span class="dir sc">S→C reply</span><span class="status">verified</span></header><div class="body"><p>Request: <code>u32 character id</code>. Reply: <code>u32 money</code>, shown as Crystal in the shop.</p></div></div>
+  <div class="msg" id="m-24-24020"><header><h3>GS_UpdateCharacterPoint</h3><span class="id">(24,24020)</span><span class="dir sc">S→C reply</span><span class="status">verified</span></header><div class="body"><p>Request: <code>u32 character id</code>. Reply: <code>u32 points</code>, shown as Credit in the shop.</p></div></div>
+  <div class="msg" id="m-14-14057"><header><h3>CGS_GetCharacterTodayMilitary</h3><span class="id">(14,14057)</span><span class="dir sc">S→C reply</span><span class="status">verified</span></header><div class="body"><pre class="fmt">u32 battlefield time (s) | u32 kills | u32 deaths | u32 honor | u32 crystal
+| u32 arena time (s) | u32 kills | u32 deaths | u32 honor | u32 crystal</pre><p>The Battle Report panel. Honor and crystal are shown as battlefield + arena. A reply shorter than 40 bytes crashes the client.</p></div></div>
+  <div class="msg" id="m-14-14010"><header><h3>CG_Character_Get_Exploit</h3><span class="id">(14,14010)</span><span class="dir sc">S→C reply</span><span class="status">partial</span></header><div class="body"><pre class="fmt">u32 exploit | 4 x u32 | u8 | u32</pre><p>Rank experience, shown as "exploit / next rank".</p></div></div>
+  <div class="msg" id="m-14-14040"><header><h3>CGS_GetAllMilitaryRank</h3><span class="id">(14,14040)</span><span class="dir sc">S→C reply</span><span class="status">verified</span></header><div class="body"><pre class="fmt">u32 count | count x ( u8 level | str name | u32 exploit needed )</pre><p>Rank names come from the client (ENG.xml <code>CHARACTER_EXPLOIT0</code>–<code>70</code>, Recruit to Marshal). The rank level itself is the u8 after the two strings in the CS_CharacterOnline descriptor. Recruits only see the Training Ground; higher ranks unlock Grand Battle Field, Arena and Division.</p></div></div>
+  <p class="note">The last u8 of the login reply is an "ID verified" flag. 0 shows the anti-addiction banner in the hall.</p>
+  <div class="msg" id="m-14-14019"><header><h3>CGS_UpdateAllMedalInfo</h3><span class="id">(14,14019)</span><span class="dir sc">S→C reply</span><span class="status">verified</span></header><div class="body"><pre class="fmt">u32 count | count x ( u16 medal id | str name | str description )</pre><p>Icons ship with the client: <code>icon_medal_&lt;id&gt;.dds</code> for 10101–10503.</p></div></div>
+  <div class="msg" id="m-14-14007"><header><h3>CGS_UpdateMyMedal</h3><span class="id">(14,14007)</span><span class="dir sc">S→C reply</span><span class="status">verified</span></header><div class="body"><p>Request: <code>u32 character id</code>.</p><pre class="fmt">u32 count | count x u16 medal id</pre></div></div>
+  <div class="msg" id="m-14-14027"><header><h3>CGS_UpdateAllBadgeInfo</h3><span class="id">(14,14027)</span><span class="dir sc">S→C reply</span><span class="status">verified</span></header><div class="body"><pre class="fmt">u32 count | count x ( u16 badge id | str name | str text | u8 grade )</pre><p>One entry per grade (1–3). The client puts Bronze / Silver / Gold straight in front of the name, so start the name with a space. Icons: <code>icon_badge_&lt;id&gt;_&lt;grade&gt;.dds</code>.</p></div></div>
+  <div class="msg" id="m-14-14028"><header><h3>CGS_UpdateMyBadge</h3><span class="id">(14,14028)</span><span class="dir sc">S→C reply</span><span class="status">verified</span></header><div class="body"><p>Request: <code>u32 character id</code>. When the Info window asks, the reply is read as:</p><pre class="fmt">u32 count | count x ( u16 badge id | u8 grade | u32 progress )</pre><p>A shorter <code>(u16 id | u8 grade)</code> layout also exists in the client (CGS_UpdateMyBadgeObserver), but the Info window throws on it.</p></div></div>
+  <div class="msg" id="m-14-14003"><header><h3>CGS_GetCharacterLog</h3><span class="id">(14,14003)</span><span class="dir sc">S→C reply</span><span class="status">verified</span></header><div class="body"><p>Request: <code>u32 character id | u8 | u32 page | u32 per page</code> (seen 0, 1, 50). The Event Log tab.</p><pre class="fmt">u32 total | u32 count | count x (
+  u32 id | u8 kind | str text | str time | 6 x u32 )</pre><p>Each line shows as "time - text", newest first. The tab has Previous 50 / Next 50 buttons.</p></div></div>
+  <div class="msg" id="m-14-14056"><header><h3>CGS_GetCharacterMilitarySuccesses</h3><span class="id">(14,14056)</span><span class="dir sc">S→C reply</span><span class="status">verified</span></header><div class="body"><p>Request: <code>u32 character id | u8 kind</code> (1 battlefield, 2 arena). The Battle tab in the Info window.</p><pre class="fmt">u32 battle time (s) | u32 victories | u32 kills | u32 deaths | u32 vehicles destroyed</pre></div></div>
+</section>
+
+<section id="shop-msgs">
+  <h2>Shop &amp; warehouse</h2>
+  <p>The shop sells <em>goods</em>. Each goods has an <em>item</em> (the product, same id as its weapon or equipment flyweight, e.g. 3101 Viper) and a picture <code>GoodsPic_&lt;item&gt;.dds</code> that ships with the client. Bought goods sit in the warehouse until the player clicks Apply, which starts the rental time.</p>
+  <div class="msg" id="m-24-24010"><header><h3>GS_UpdateGoodsInSell</h3><span class="id">(24,24010)</span><span class="dir sc">S→C reply</span><span class="status">verified</span></header><div class="body"><p>Request: <code>u32 | u32 | u32</code> (seen 2, 1, 0x7fffffff).</p><pre class="fmt">u32 | u32 count | count x (
+  u32 goods id | str | str | str | u8
+  | u32 picture id | u32 item id | u32 credit price | u32
+  | u32 crystal price (-1 = not sold for crystal) | u32 | u32 uses
+  | u32 minutes (over 1000000 = forever) | u8 filter )</pre><p>The filter byte picks the list: 1 = Crystal, 2 = Credit. Items show up after a filter is clicked.</p></div></div>
+  <div class="msg" id="m-24-24002"><header><h3>GS_UpdateItemFlyweight</h3><span class="id">(24,24002)</span><span class="dir sc">S→C reply</span><span class="status">verified</span></header><div class="body"><p>Request: <code>u32 item id</code>. The shop asks once per item it shows.</p><pre class="fmt">str name | u8 | u8 | u8 price kind | str | u32 picture id | u32</pre><p>Price kind must be 2 (rented by days). Other kinds print "per use" prices with <code>GUITEXT_MARKET_*_TIMES_TEMPLATE</code>, which is <code>%dCrystal(%s)</code> in ENG.xml. The client passes a number for the <code>%s</code> and crashes.</p></div></div>
+  <div class="msg" id="m-24-24008"><header><h3>GS_RequestAllGoodsFlyweight</h3><span class="id">(24,24008)</span><span class="dir sc">S→C reply</span><span class="status">verified</span></header><div class="body"><pre class="fmt">u32 count | count x ( u32 goods id | goods record )</pre></div></div>
+  <div class="msg" id="m-24-24009"><header><h3>GS_RequestGoodsFlyweight</h3><span class="id">(24,24009)</span><span class="dir sc">S→C reply</span><span class="status">verified</span></header><div class="body"><p>Request: <code>u32 goods id</code>. Reply: one goods record.</p><pre class="fmt">goods record = str name | u32 item id | u8 | str | str | u8 | u32 | u32 | u32 picture id | u32</pre></div></div>
+  <div class="msg" id="m-24-24021"><header><h3>GS_RequestBuyGoods</h3><span class="id">(24,24021)</span><span class="dir cs">C→S</span><span class="status">verified</span></header><div class="body"><pre class="fmt">u32 character id | u8 | u8 | u32 goods id</pre><p>The reply has no body. Result 0 = bought; the client then asks for money (24019) and items again. Any other result shows that error text.</p></div></div>
+  <div class="msg" id="m-24-24011"><header><h3>GS_RequestMyGoods</h3><span class="id">(24,24011)</span><span class="dir sc">S→C reply</span><span class="status">verified</span></header><div class="body"><p>Request: <code>u32 character id | u8 | u32 | u32</code>.</p><pre class="fmt">u32 | u32 count | count x ( u32 instance id | u32 goods id )</pre><p>Bought goods not applied yet (warehouse "Not Activated").</p></div></div>
+  <div class="msg" id="m-24-24015"><header><h3>GS_RequestActiveGoods</h3><span class="id">(24,24015)</span><span class="dir cs">C→S</span><span class="status">verified</span></header><div class="body"><pre class="fmt">u32 character id | u32 instance id</pre><p>The Apply button. The reply has no body.</p></div></div>
+  <div class="msg" id="m-24-24003"><header><h3>GS_RequestMyActivedGoods</h3><span class="id">(24,24003)</span><span class="dir sc">S→C reply</span><span class="status">verified</span></header><div class="body"><pre class="fmt">u32 | u32 count | count x ( u32 item id | u32 instance id | str expiry date | u8 1 )</pre><p>Applied goods. The client cuts the date at the first <code>:</code>, so send just the date. Empty date = forever. Last byte 0 marks the item expired.</p></div></div>
+  <div class="msg" id="m-24-24006"><header><h3>GS_UpdateItemInUse</h3><span class="id">(24,24006)</span><span class="dir sc">S→C reply</span><span class="status">partial</span></header><div class="body"><pre class="fmt">u32 slots | u32 count | count x ( u32 slot | u32 item id | u8 | u32 minutes left | str )</pre><p>Items listed here count as equipped and are hidden from the warehouse.</p><p class="note">The emulator gives the player the newest applied weapon in battle. The weapon flyweight id is the item id.</p></div></div>
+</section>
+
+<section id="talent-msgs">
+  <h2>Talents (Robot tab)</h2>
+  <p>Each talent is a robot type. The tooltip (skills, armor, type) comes from the robot's own flyweight in the client. Locked talents show "need &lt;rank&gt;".</p>
+  <div class="msg" id="m-14-14042"><header><h3>CGS_UpdateTalentInfo</h3><span class="id">(14,14042)</span><span class="dir sc">S→C reply</span><span class="status">verified</span></header><div class="body"><p>Request: <code>u8</code> (seen 1, probably the nation).</p><pre class="fmt">u32 count | count x (
+  u32 talent id | str name | u8 max level | u8
+  | u8 column (0 Battle, 1 Engineer, 2 Scout) | u8 rank needed | u8 row | u8 1
+  | u32 robot flyweight (e.g. 1311 Walker_Basic) )</pre></div></div>
+  <div class="msg" id="m-14-14043"><header><h3>CGS_UpdateCharacterRemainTalentPoint</h3><span class="id">(14,14043)</span><span class="dir sc">S→C reply</span><span class="status">verified</span></header><div class="body"><p>Request: <code>u32 character id</code>.</p><pre class="fmt">u32 total points | u32 remaining points | str last reset time | u32 | u32</pre><p>Remaining 0 hides the upgrade buttons.</p></div></div>
+  <div class="msg" id="m-14-14044"><header><h3>CGS_UpdateCharacterTalentPoint</h3><span class="id">(14,14044)</span><span class="dir sc">S→C reply</span><span class="status">verified</span></header><div class="body"><p>Request: <code>u32 character id</code>.</p><pre class="fmt">u32 count | count x ( u32 talent id | u8 level )</pre></div></div>
+  <div class="msg" id="m-14-14058"><header><h3>CGS_CharacterLearnTalentCost</h3><span class="id">(14,14058)</span><span class="dir sc">S→C reply</span><span class="status">verified</span></header><div class="body"><pre class="fmt">u32 count | count x ( u32 talent id | u32 levels | levels x u32 points )</pre></div></div>
+  <div class="msg" id="m-14-14047"><header><h3>CGS_CharacterLearnTalent</h3><span class="id">(14,14047)</span><span class="dir cs">C→S</span><span class="status">verified</span></header><div class="body"><pre class="fmt">u32 character id | u32 talent id</pre><p>The upgrade button. Reply: <code>u32 remaining points</code>. The client adds the level itself. An empty reply shows the bad-data popup.</p></div></div>
+</section>
+
+<section id="battle">
+  <h2>Entering a battle</h2>
+  <div class="msg" id="m-9-40851"><header><h3>first game message</h3><span class="id">(9,40851)</span><span class="dir cs">C→S</span><span class="status">partial</span></header><div class="body"><p>First message after the FDP session opens. The server answers with GS_Battle_Initialize.</p></div></div>
+  <div class="msg" id="m-19-40050"><header><h3>GS_Battle_Initialize</h3><span class="id">(19,40050)</span><span class="dir sc">S→C</span><span class="status">verified</span></header><div class="body">
+<pre class="fmt">u32 map id | str world file | u8 | u32 n | n x preload (3 x str) | u32 m | m x (3 x u32) | u32 arena logic [logic data]</pre>
+    <p>Arena logic: 0 none, 1 Big (normal battlefield), 2 GrabMoney, 3 OD, 4 EM, 5 Kill. The client loads the world and shows "Battle initialize success."</p></div></div>
+  <div class="msg" id="m-9-30050"><header><h3>battle loaded</h3><span class="id">(9,30050)</span><span class="dir cs">C→S</span><span class="status">verified</span></header><div class="body"><p>Body <code>u32 0</code>, followed by <code>(9,10006)</code> <code>u32 0 | f32 1.0</code>. This is the cue to spawn the player.</p></div></div>
+  <h3>Spawn sequence</h3>
+  <ol>
+    <li><a href="#m-19-30001">(19,30001)</a> new character</li>
+    <li><a href="#m-19-30500">(19,30500)</a> add to a detachment (robot setup crashes without one)</li>
+    <li><a href="#m-19-30100">(19,30100)</a> set control: before the robot exists, so the robot is created as local</li>
+    <li><a href="#m-19-50001">(19,50001)</a> attach the robot object with its snapshot</li>
+    <li><a href="#m-19-30100">(19,30100)</a> set control again so the camera attaches</li>
+    <li><a href="#m-19-30040">(19,30040)</a> base info: name and robot id</li>
+    <li><a href="#m-19-50105">(19,50105)</a> take up weapon slot 1</li>
+    <li><a href="#m-19-50109">(19,50109)</a> revived: switches to first-person view</li>
+  </ol>
+</section>
+
+<section id="mp-msgs">
+  <h2>Multiplayer</h2>
+  <p>Everyone on one battlefield shares a match. Each client is told about the others' robots the same way as the dummies (New_Character, AddToDetachment, Attach_Object, BaseInfo, then Relive and a parts rebuild). Then the server relays:</p>
+  <div class="msg" id="m-9-40130"><header><h3>position report</h3><span class="id">(9,40130)</span><span class="dir cs">C→S</span><span class="status">verified</span></header><div class="body"><pre class="fmt">u32 | vec3 position</pre><p>Sent several times a second. Relayed to the other players as GS_Robot_Action (19,50100).</p></div></div>
+  <div class="msg" id="m-9-40100"><header><h3>GC_Robot_Action</h3><span class="id">(9,40100)</span><span class="dir cs">C→S</span><span class="status">partial</span></header><div class="body"><pre class="fmt">f32 time | u32 key | vec3 position | vec3 facing</pre><p>Sent now and then; the facing is used for the relayed moves.</p></div></div>
+  <p>Shots: on a trigger pull (9,40122) the server plays the burst on the other clients with the remote-shot event (19,50122), one shot per fire interval until the release (9,40125). Hits on players use the same server-side hit test as the dummies; the armor update (19,50005), death (19,50107) and kill report (19,50151) go to everyone.</p>
+</section>
+
+<section id="char-msgs">
+  <h2>Characters &amp; objects</h2>
+  <div class="msg" id="m-19-30001"><header><h3>GS_Character_New_Character</h3><span class="id">(19,30001)</span><span class="dir sc">S→C</span><span class="status">verified</span></header><div class="body"><pre class="fmt">u32 character id</pre></div></div>
+  <div class="msg" id="m-19-30500"><header><h3>AddToDetachment</h3><span class="id">(19,30500)</span><span class="dir sc">S→C</span><span class="status">verified</span></header><div class="body"><pre class="fmt">u32 detachment id | u32 character id | u32 | str name | vec3 | i32 | i32 | i32</pre></div></div>
+  <div class="msg" id="m-19-30100"><header><h3>GS_Character_SetControl_Character</h3><span class="id">(19,30100)</span><span class="dir sc">S→C</span><span class="status">verified</span></header><div class="body"><pre class="fmt">u32 character id | u32 object id | u32</pre><p>Also shows the battle dialogs and calls the arena logic's OnReadyPlay.</p></div></div>
+  <div class="msg" id="m-19-50001"><header><h3>GS_Object_Attach_Object</h3><span class="id">(19,50001)</span><span class="dir sc">S→C</span><span class="status">verified</span></header><div class="body"><pre class="fmt">u32 owner character id | u32 flyweight id | u32 object id | object snapshot | u8 avatar</pre><p>Walker_Basic robot = flyweight 1311. See <a href="#snapshots">Snapshots</a>.</p></div></div>
+  <div class="msg" id="m-19-30040"><header><h3>GS_Character_Set_BaseInfo</h3><span class="id">(19,30040)</span><span class="dir sc">S→C</span><span class="status">partial</span></header><div class="body"><div class="tablewrap"><table class="fields">
+    <tr><th>Field</th><th>Type</th><th>Notes</th></tr>
+    <tr><td>character id</td><td>u32</td><td>creates the character if it does not exist</td></tr>
+    <tr><td>name</td><td>str</td><td>nameplates, kill feed</td></tr>
+    <tr><td>—</td><td>3 x u32</td><td></td></tr>
+    <tr><td>rank</td><td>u32</td><td>0 = Recruit</td></tr>
+    <tr><td>GM flag</td><td>u8</td><td>non-zero adds a "[GM]" nameplate prefix</td></tr>
+    <tr><td>group id</td><td>u32</td><td>+0xe8</td></tr>
+    <tr><td>—</td><td>u32</td><td>+0x108</td></tr>
+    <tr><td>—</td><td>u8, u8</td><td>+0x168, +0x169</td></tr>
+    <tr><td>no-team flag</td><td>u8</td><td>with no group, 0 shows "[Need Team]"</td></tr>
+    <tr><td>kills</td><td>u32</td><td>K in K/D</td></tr>
+    <tr><td>deaths</td><td>u32</td><td>D in K/D</td></tr>
+    <tr><td>list</td><td>u32 n + n x (u16 | u8)</td><td></td></tr>
+    <tr><td>robot id</td><td>u32</td><td>controlled robot</td></tr>
+  </table></div></div></div>
+</section>
+
+<section id="robot-msgs">
+  <h2>Robots &amp; combat</h2>
+  <div class="msg" id="m-19-50100"><header><h3>GS_Robot_Action (move)</h3><span class="id">(19,50100)</span><span class="dir sc">S→C</span><span class="status">verified</span></header><div class="body"><pre class="fmt">u32 robot | u32 steer flags (1 = walking) | vec3 position | vec3 facing</pre><p>Remote robots only. Also 50101 (turn), 50102 (jump), 50103.</p></div></div>
+  <div class="msg" id="m-19-50104"><header><h3>GS_Robot_SystemPart (rebuild)</h3><span class="id">(19,50104)</span><span class="dir sc">S→C</span><span class="status">verified</span></header><div class="body"><pre class="fmt">u32 robot | u8 full | u8 avatar | system part block</pre><p>Clears the robot and re-reads its parts. Needed after every relive, because Relive and Dead clear the equipment. Rebuilt parts need <b>new object ids</b>, or the weapon slot stays empty.</p></div></div>
+  <div class="msg" id="m-19-50105"><header><h3>GS_Robot_SystemPart (switch weapon)</h3><span class="id">(19,50105)</span><span class="dir sc">S→C</span><span class="status">verified</span></header><div class="body"><pre class="fmt">u32 robot | i32 slot (1-based, 0 = put away) | i32 -1</pre><p>Answer to <a href="#m-9-40105">(9,40105)</a>. A robot has no current weapon, and cannot fire, until this arrives.</p></div></div>
+  <div class="msg" id="m-19-50122"><header><h3>GS_Robot_SystemPart (shot)</h3><span class="id">(19,50122)</span><span class="dir sc">S→C</span><span class="status">verified</span></header><div class="body"><pre class="fmt">u32 robot | u32 weapon object | u32 fire mode | vec3 from | vec3 to | u32 | f32 ammo | u32</pre><p>For a remote robot this plays <code>Weapon::Shoot</code>. Do not send it to the shooter: for the local robot the same message overwrites ammo and an "is usable" flag.</p></div></div>
+  <div class="msg" id="m-19-50005"><header><h3>GS_Object_Armor</h3><span class="id">(19,50005)</span><span class="dir sc">S→C</span><span class="status">verified</span></header><div class="body"><pre class="fmt">u32 object id | armor info | u32 hit kind (1-3 flash the hit effect)</pre><p>How damage reaches the client. Only applies when the object's target type is 1 (robot).</p></div></div>
+  <div class="msg" id="m-19-50107"><header><h3>GS_Robot_Survival (dead)</h3><span class="id">(19,50107)</span><span class="dir sc">S→C</span><span class="status">verified</span></header><div class="body"><pre class="fmt">u32 robot | f32 | f32</pre><p>The local robot's death opens the death screen (dialog 116).</p></div></div>
+  <div class="msg" id="m-19-50108"><header><h3>GS_Robot_Survival (relive)</h3><span class="id">(19,50108)</span><span class="dir sc">S→C</span><span class="status">verified</span></header><div class="body"><pre class="fmt">u32 robot | vec3 position | vec3 facing</pre><p>Facing must be non-zero: a zero vector produces a NaN matrix and an invisible robot.</p></div></div>
+  <div class="msg" id="m-19-50109"><header><h3>GS_Robot_Survival (revived)</h3><span class="id">(19,50109)</span><span class="dir sc">S→C</span><span class="status">verified</span></header><div class="body"><pre class="fmt">u32 robot</pre><p>Switches the local robot to first-person view. Weapons only fire in first person.</p></div></div>
+  <div class="msg" id="m-19-50130"><header><h3>GS_Robot_Malice (honor)</h3><span class="id">(19,50130)</span><span class="dir sc">S→C</span><span class="status">verified</span></header><div class="body"><pre class="fmt">u32 honor | u32 reason (0-6, picks the message) | u32 | u32</pre><p>Added to the owner's robot; shown as Honor.</p></div></div>
+  <div class="msg" id="m-19-50151"><header><h3>GS_Robot_Malice (kill report)</h3><span class="id">(19,50151)</span><span class="dir sc">S→C</span><span class="status">verified</span></header><div class="body"><pre class="fmt">str victim | u32 victim nation | str killer | u32 killer nation | u32 weapon flyweight (0 = no feed line)</pre><p>Kill feed entry. If the victim is the local character it counts a death; if the killer is, it adds a kill streak.</p></div></div>
+  <div class="msg" id="m-19-30204"><header><h3>GS_UpdateKillInfo</h3><span class="id">(19,30204)</span><span class="dir sc">S→C</span><span class="status">verified</span></header><div class="body"><pre class="fmt">u32 kind | i32 value | u32 total kills</pre><p>Sets the K in K/D. Kinds 5-8 also show a kill-streak banner for <i>value</i>.</p></div></div>
+  <div class="msg" id="m-19-30201"><header><h3>GS_Character_Wage</h3><span class="id">(19,30201)</span><span class="dir sc">S→C</span><span class="status">verified</span></header><div class="body"><pre class="fmt">u32 character id | u32 pay | u32 reason (0 = no message)</pre><p>Bonus. Shows "earned N crystal".</p></div></div>
+</section>
+
+<section id="client-msgs">
+  <h2>Client reports</h2>
+  <div class="msg" id="m-9-40105"><header><h3>switch weapon request</h3><span class="id">(9,40105)</span><span class="dir cs">C→S</span><span class="status">verified</span></header><div class="body"><pre class="fmt">i32 | i32 slot</pre><p>Hotkeys 1-9, 0 and Q. Ignored by the client for a few seconds after spawning.</p></div></div>
+  <div class="msg" id="m-9-40122"><header><h3>trigger pulled</h3><span class="id">(9,40122)</span><span class="dir cs">C→S</span><span class="status">verified</span></header><div class="body"><pre class="fmt">u32 | u32 weapon object | u32 | vec3 eye/muzzle | vec3 hit point | u32 | u32</pre><p>Sent once per trigger pull. Automatic weapons keep firing client-side until <a href="#m-9-40125">(9,40125)</a>. Hits are decided by the server; the client's own raycast passes through remote robots.</p></div></div>
+  <div class="msg" id="m-9-40125"><header><h3>trigger released</h3><span class="id">(9,40125)</span><span class="dir cs">C→S</span><span class="status">verified</span></header><div class="body"><pre class="fmt">u32 | u32 weapon object | u32</pre></div></div>
+  <div class="msg" id="m-9-40100"><header><h3>robot move</h3><span class="id">(9,40100)</span><span class="dir cs">C→S</span><span class="status">partial</span></header><div class="body"><pre class="fmt">f32 | u32 steer flags | vec3 position | vec3 facing</pre></div></div>
+  <div class="msg" id="m-9-40130"><header><h3>position</h3><span class="id">(9,40130)</span><span class="dir cs">C→S</span><span class="status">verified</span></header><div class="body"><pre class="fmt">u32 | vec3 position</pre></div></div>
+  <div class="msg" id="m-9-40133"><header><h3>position + facing</h3><span class="id">(9,40133)</span><span class="dir cs">C→S</span><span class="status">partial</span></header><div class="body"><pre class="fmt">u32 | vec3 position | vec3 facing | f32</pre></div></div>
+  <div class="msg" id="m-9-40101"><header><h3>robot action</h3><span class="id">(9,40101)</span><span class="dir cs">C→S</span><span class="status">partial</span></header><div class="body"><pre class="fmt">f32 | f32 | f32 | f32</pre><p>Sent about once a second.</p></div></div>
+  <div class="msg" id="m-9-20001"><header><h3>clock</h3><span class="id">(9,20001)</span><span class="dir cs">C→S</span><span class="status">partial</span></header><div class="body"><pre class="fmt">u32 | f64 client absolute time</pre><p>Every 60 s. No reply needed.</p></div></div>
+  <div class="msg" id="m-9-9001"><header><h3>ping</h3><span class="id">(9,9001)</span><span class="dir cs">C→S</span><span class="status">verified</span></header><div class="body"><p>Unreliable. Echo it back unchanged. Other periodic reports, (9,10108) and (9,40140) every 5 s and (9,40901), need no answer.</p></div></div>
+</section>
+
+<section id="snapshots">
+  <h2>Snapshots</h2>
+  <p>Objects are sent as snapshots. The client functions that read them are named <code>WriteSnapshot</code>, even though they read. Each class reads its base class first, then its own fields. Missing fields at the end are fine, but every nested part must be complete.</p>
+  <div class="tablewrap"><table class="fields">
+    <tr><th>Class</th><th>Layout</th><th>Notes</th></tr>
+    <tr><td>WorldObject</td><td>vec3 pos | 16 x f32 matrix | u32 owner char | u32 | u32 target type | u8 | u32 | u32 | u32 n auras | i32 skill (-1)</td><td>target type 1 = robot, 2 = establishment, 4/8/0x10 robot parts, 0x20 plain, 0x40 booty. Parts inherit the owner, and weapons need it.</td></tr>
+    <tr><td>SystemPart</td><td>WorldObject | f32 | f32</td><td></td></tr>
+    <tr><td>RobotBody</td><td>SystemPart | 7 x u32</td><td>flyweight 221010</td></tr>
+    <tr><td>RobotArmor</td><td>SystemPart | 5 x u32</td><td>221020 (2 primary + 2 secondary slots)</td></tr>
+    <tr><td>RobotCore</td><td>SystemPart | 2 x u32</td><td>2101</td></tr>
+    <tr><td>Equip</td><td>SystemPart | i32 robot | i32 estab | u32 | i32 -1 | u32 | f32 ammo | f32 max ammo | f32</td><td>ammo 0 makes the weapon reload instead of fire</td></tr>
+    <tr><td>Weapon</td><td>Equip | u32 fire mode | u32 state | 6 x f32 timing | i32 -1 | i32 -1</td><td>state 0 idle, 1 firing, 6 reloading. Timing = per mode (shot interval, …); zeros fire every frame. Viper = 3101: 120 rounds, 4 per shot, 0.142 s.</td></tr>
+    <tr><td>Robot</td><td>WorldObject | system part block | i32 skill</td><td>flyweight 1311</td></tr>
+    <tr><td>Func_Power</td><td>u8 | f64 rate | f64 energy | f64 hyper | f64 max | 3 x f64 | u8 | u8 | u8</td><td>512001 Func_BasicCore_Energy; reloading spends energy</td></tr>
+  </table></div>
+  <h3>System part block</h3>
+<pre class="fmt">u32 part count | count x ( u32 flyweight | u32 object id | part snapshot )   -- or i32 -1 for an empty slot
+                  order: body, armor, core, then one entry per armor slot
+u32 function flyweight (-1 = none) [u32 object id | function snapshot]
+i32 skill (-1) | i32 skill (-1)
+u32 | 3 x f32 | 10 x u32 | vec3 | vec3 | i32 establishment (-1 = none) | u32
+u32 n | n x u32 | f32 | str | armor info</pre>
+  <h3>Armor info</h3>
+<pre class="fmt">u32 count | count x ( i32 type | i32 max hp | f32 current hp | 4 x f32 | i32 -1 )</pre>
+  <p class="note">An empty list crashes the client. The HUD shows entry 0 as current / max, so max can't be 0. Set establishment to -1, or the armor/energy HUD never appears.</p>
+</section>
+
+<section id="tools">
+  <h2>Tools &amp; method</h2>
+  <ul>
+    <li>Game.dll exports about 7,500 real function names. Each message handler is a class whose vtable slot 2 is <code>OnBegin</code>.</li>
+    <li>Live tracing: Frida 16.5.9 attached to <code>MarsWar.exe</code> (17.x crashes it).</li>
+    <li>Item, robot and weapon data unpacks from <code>ENGFlyweights.opt</code> into XML.</li>
+    <li>Emulator: one Python script for login, gate and game server, plus <code>fdp.py</code> and <code>snapshots.py</code>.</li>
+  </ul>
+</section>
+</main>
+</div>
+
+<script>
+// Build the sidebar index from the message cards, then wire up the filter.
+(function () {
+  var groups = [
+    ["Transport", [["#kx", "Key exchange", ""], ["#packets", "Packets", ""], ["#message", "Message header", ""], ["#fdp", "FDP", ""], ["#envelope", "Event envelope", ""]]],
+  ];
+  document.querySelectorAll("main > section").forEach(function (sec) {
+    var cards = sec.querySelectorAll(".msg[id]");
+    if (!cards.length) return;
+    var items = [];
+    cards.forEach(function (c) {
+      var id = c.querySelector(".id"), h = c.querySelector("h3");
+      items.push(["#" + c.id, h.textContent, id ? id.textContent : ""]);
+    });
+    groups.push([sec.querySelector("h2").textContent, items]);
+  });
+  groups.push(["Reference", [["#types", "Data types", ""], ["#snapshots", "Snapshots", ""], ["#tools", "Tools & method", ""]]]);
+  var root = document.getElementById("navgroups");
+  groups.forEach(function (g) {
+    var div = document.createElement("div"); div.className = "navgroup";
+    var h = document.createElement("h4"); h.textContent = g[0]; div.appendChild(h);
+    g[1].forEach(function (it) {
+      var a = document.createElement("a"); a.href = it[0];
+      var s = document.createElement("span"); s.className = "id"; s.textContent = it[2];
+      var t = document.createElement("span"); t.textContent = it[1];
+      a.appendChild(s); a.appendChild(t); div.appendChild(a);
+    });
+    root.appendChild(div);
+  });
+  var input = document.getElementById("filter");
+  input.addEventListener("input", function () {
+    var q = input.value.trim().toLowerCase();
+    root.querySelectorAll(".navgroup").forEach(function (g) {
+      var any = false;
+      g.querySelectorAll("a").forEach(function (a) {
+        var hit = !q || a.textContent.toLowerCase().indexOf(q) !== -1;
+        a.classList.toggle("hidden-by-filter", !hit); any = any || hit;
+      });
+      g.classList.toggle("hidden-by-filter", !any);
+    });
+  });
+})();
+</script>
