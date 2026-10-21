@@ -100,3 +100,13 @@ reply layout, and answer with real data.
 - [ ] Teams (all players are on their own side now), leave/disconnect cleanup visuals (uses Dead), respawn point choice
 - [ ] Hit detection is generous (HIT_RADIUS 6 around the robot or the client's ray end point): shots at the ground next to a player count
 - [x] Test tooling: tools/vinput.py drives a client's DirectInput keyboard/mouse (even minimized); tools/quickenter.js presses Quick Enter; MW_FORCE_BF=1 sends every Quick Enter to one battlefield. The client saves LastAccount after login, so set Welkin4591.ini right before each launch.
+
+## Admin / moderation (planned)
+- [ ] Kick: close the player's gate connection and FDP game session (and take their robot out of the match)
+- [ ] Ban / timed ban per account: refuse login with the client's own texts -- 12001 "Account has been locked,
+      please contact GM.", 12011 "Account being punished, you can not login game for the time being."
+- [ ] IP ban (and IP range ban): refuse at login and at connect -- 10003 "IP is locked, please contact GM."
+- [ ] Ban reason, who banned, expiry; unban; ban list
+- [ ] Where admins issue these: admin command line / web admin page, and in-game GM chat commands later
+- [ ] Log all admin actions (audit trail)
+- [ ] GM / admin roles per account (who may kick/ban)
