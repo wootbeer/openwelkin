@@ -4,6 +4,8 @@ server/data/
 # Live server state and logs
 server/characters.json
 server/accounts.json
+server/bans.json
+server/admin.key
 *.json.tmp
 *.log
 

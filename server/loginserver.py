@@ -30,7 +30,8 @@ First packet seen (SYN, resent every 3s, released after 3 tries):
 Server side builder to copy: Dgram_Accept_Bluider_Process::make_respond_packet (IONetwork.dll 0x100407c0).
 SAP NAT detection (ADServer, UDP 5876) sends: fb 00 00 dc ff 12 00 00 00 00 00 00 83 04 "1000".
 """
-import hashlib, hmac, json, math, os, random, re, secrets, socket, struct, sys, threading, time
+import hashlib, heapq, hmac, ipaddress, itertools, json, math, os, random, re, secrets, socket, struct, sys
+import threading, time, traceback
 
 import fdp
 import snapshots
@@ -40,14 +41,19 @@ from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+STATE_DIR = os.environ.get("MW_STATE_DIR") or HERE  # accounts, characters, bans and logs
+PORT_OFFSET = int(os.environ.get("MW_PORT_OFFSET", "0") or 0)  # added to every port (a second server on one machine)
+LOGIN_PORT = 6001 + PORT_OFFSET
+NAT_PORT = 5876 + PORT_OFFSET    # client NAT probe (only logged)
+ADMIN_PORT = 6010 + PORT_OFFSET  # admin commands from tools/admin.py; listens on 127.0.0.1 only
 MAGIC = b"0001"
 # Address clients are told to connect to for the gate and game servers. Set MW_PUBLIC_IP to this machine's
 # LAN or internet address when others play; 127.0.0.1 only works for a client on the same PC.
 PUBLIC_IP = os.environ.get("MW_PUBLIC_IP", "127.0.0.1")
 GATE_IP = int.from_bytes(socket.inet_aton(PUBLIC_IP), "big")  # host byte order
-GATE_PORT = 6002
+GATE_PORT = 6002 + PORT_OFFSET
 GAME_IP = GATE_IP
-GAME_PORT = 6003
+GAME_PORT = 6003 + PORT_OFFSET
 SPAWN_FACING = (0.953, 0.0, -0.304)  # facing used when (re)spawning the player (per-battlefield spawn points: BATTLEFIELDS)
 WEAPON_AMMO = 120.0  # Viper (3101): flyweight magazine +0x160 (fire mode 0 costs 4, +0x9d8)
 DUMMY_HP, WEAPON_DAMAGE, RESPAWN_DELAY = 1000, 40.0, 5.0  # target dummy armor, Viper damage per shot, seconds
@@ -82,6 +88,9 @@ LOGIN_FAILS_MAX, LOGIN_FAILS_WINDOW = 5, 300.0  # failed logins allowed per IP p
 # Result codes: the client shows Language/ErrorInfoENG.xml text for them.
 LOGIN_FAILED = 10001    # "Invalid account or password."
 LOGIN_LOCKED = 10002    # "Excessive number of retries, the account is locked, ... waiting for 5 minutes"
+IP_BANNED = 10003       # "IP is locked, please contact GM."
+ACCOUNT_BANNED = 12001  # "Account has been locked, please contact GM." (permanent ban)
+ACCOUNT_SUSPENDED = 12011  # "Account being punished, you can not login game for the time being." (timed ban)
 ERR_UNKNOWN, ERR_PROTOCOL = 3, 6
 AUTH_TIMEOUT = 30.0     # seconds a connection may stay open without logging in
 MAX_CONNECTIONS = 1024  # open TCP connections (login + gate together)
@@ -319,7 +328,7 @@ def load_event_names():
 
 
 EVENT_NAMES = load_event_names()
-LOG = open(os.path.join(HERE, "loginserver.log"), "a", buffering=1)
+LOG = open(os.path.join(STATE_DIR, "loginserver.log"), "a", buffering=1)
 
 
 def wstr(s):
@@ -350,8 +359,9 @@ def read_wstr(b, off):
 
 class Store:
     """Accounts and their characters, persisted to characters.json."""
-    path = os.path.join(HERE, "characters.json")
+    path = os.path.join(STATE_DIR, "characters.json")
     lock = threading.Lock()
+    indexed = None  # the data the character id index was built from
 
     def __init__(self):
         try:
@@ -394,11 +404,22 @@ class Store:
         with self.lock:
             cid = self.data["next_id"]; self.data["next_id"] += 1
             self.data["accounts"].setdefault(account, []).append(dict(id=cid, name=name, **fields))
+            self.indexed = None
             self.save()
             return cid
 
+    def lookup(self, cid):
+        """(account, character) for a character id, or (None, None). The index is rebuilt after a create."""
+        if self.indexed is not self.data:
+            self.ids = {c["id"]: (a, c) for a, chars in self.data["accounts"].items() for c in chars}
+            self.indexed = self.data
+        return self.ids.get(cid, (None, None))
+
     def by_id(self, cid):
-        return next((c for chars in self.data["accounts"].values() for c in chars if c["id"] == cid), None)
+        return self.lookup(cid)[1]
+
+    def account_of(self, cid):
+        return self.lookup(cid)[0]
 
     def add_stats(self, cid, **deltas):
         """Add to a character's saved battle stats (kills, deaths, honor, crystal, battle_time, money)."""
@@ -494,8 +515,9 @@ atexit.register(STORE.flush)
 class Accounts:
     """Account names and salted password hashes, kept apart from game data (accounts.json).
     The release design moves this to the login server's own database."""
-    path = os.path.join(HERE, "accounts.json")
+    path = os.path.join(STATE_DIR, "accounts.json")
     lock = threading.Lock()
+    ROLES = ("player", "gm", "admin")
 
     def __init__(self):
         try:
@@ -517,15 +539,83 @@ class Accounts:
                 salt = os.urandom(16)
                 self.data[account] = {"salt": salt.hex(), "hash": self.hash(password, salt).hex(),
                                       "created": int(time.time())}
-                tmp = self.path + ".tmp"
-                json.dump(self.data, open(tmp, "w", encoding="utf-8"), indent=2)
-                os.replace(tmp, self.path)
+                self.save()
                 return "created"
         good = hmac.compare_digest(self.hash(password, bytes.fromhex(rec["salt"])), bytes.fromhex(rec["hash"]))
         return "ok" if good else "bad"
 
+    def save(self):
+        """Write now (call with the lock held); atomic like Store.save."""
+        tmp = self.path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(self.data, f, indent=2)
+        os.replace(tmp, self.path)
+
+    def role(self, account):
+        return self.data.get(account, {}).get("role", "player")
+
+    def set_role(self, account, role):
+        with self.lock:
+            if account not in self.data:
+                return False
+            self.data[account]["role"] = role
+            self.save()
+            return True
+
+
+class Bans:
+    """Account and IP bans (bans.json): key -> {until (0 = permanent), reason, by, at}. IP keys are networks
+    (1.2.3.4/32 for one address). Expired bans are ignored and stay in the file until unbanned."""
+    path = os.path.join(STATE_DIR, "bans.json")
+    lock = threading.Lock()
+
+    def __init__(self):
+        try:
+            self.data = json.load(open(self.path, encoding="utf-8"))
+        except (OSError, ValueError):
+            self.data = {}
+        self.data.setdefault("accounts", {})
+        self.data.setdefault("ips", {})
+
+    def save(self):
+        tmp = self.path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(self.data, f, indent=2)
+        os.replace(tmp, self.path)
+
+    def add(self, kind, key, until, reason, by):
+        with self.lock:
+            self.data[kind][key] = {"until": int(until), "reason": reason, "by": by, "at": int(time.time())}
+            self.save()
+
+    def remove(self, kind, key):
+        with self.lock:
+            found = self.data[kind].pop(key, None) is not None
+            if found:
+                self.save()
+            return found
+
+    def active(self, kind):
+        now = time.time()
+        with self.lock:
+            return {k: r for k, r in self.data[kind].items() if not r["until"] or r["until"] > now}
+
+    def account(self, name):
+        return self.active("accounts").get(name)
+
+    def ip(self, ip):
+        """The ban covering this address, or None."""
+        try:
+            addr = ipaddress.ip_address(ip)
+        except ValueError:
+            return None
+        return next((r for net, r in self.active("ips").items() if addr in ipaddress.ip_network(net)), None)
+
 
 ACCOUNTS = Accounts()
+BANS = Bans()
+ONLINE = {}  # account -> its gate Session; one per account, a second login closes the first
+ONLINE_LOCK = threading.Lock()
 LOGIN_FAILS = {}  # ip -> [failure times]
 LOGIN_FAILS_LOCK = threading.Lock()
 
@@ -546,11 +636,8 @@ def login_throttled(ip, failed=False):
 
 def character_name(cid):
     """Name of a stored character by id (any account), as the client knows it from the hall."""
-    for chars in STORE.data["accounts"].values():
-        for c in chars:
-            if c["id"] == cid:
-                return c["name"]
-    return ""
+    c = STORE.by_id(cid)
+    return c["name"] if c else ""
 
 
 def log(msg):
@@ -646,6 +733,13 @@ class Session:
         self.key_index = 7  # server picks rand()%32+1; client only checks the range
         self.rbuf = b""
         self.account = None
+
+    def close(self):
+        """Drop the connection (kick): the session's own thread sees it close and cleans up."""
+        try:
+            self.conn.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
 
     # --- transport ---------------------------------------------------------------------------
     def aes(self, decrypt, data):
@@ -1173,6 +1267,9 @@ class Session:
             log(f"{self.addr} malformed login")
             return self.reply(msg, result=LOGIN_FAILED)
         ip = self.addr[0]
+        if BANS.ip(ip):
+            log(f"{self.addr} login refused: IP banned")
+            return self.reply(msg, result=IP_BANNED)
         if login_throttled(ip):
             log(f"{self.addr} login refused: too many failures")
             return self.reply(msg, result=LOGIN_LOCKED)
@@ -1185,6 +1282,10 @@ class Session:
             login_throttled(ip, failed=True)
             log(f"{self.addr} login refused: wrong password for {account!r}")
             return self.reply(msg, result=LOGIN_FAILED)
+        ban = BANS.account(account)  # checked after the password, so a ban never tells strangers an account exists
+        if ban:
+            log(f"{self.addr} login refused: {account!r} is banned")
+            return self.reply(msg, result=ACCOUNT_SUSPENDED if ban["until"] else ACCOUNT_BANNED)
         log(f"{self.addr} LOGIN account={account!r} ({status}) version={version} region={region} unk={unk} "
             f"machine={machine}")
         # success body as read by the (10,10000) observer in Game.dll (0x103fe961):
@@ -1214,6 +1315,7 @@ class Session:
             if account and expiry >= time.time():
                 self.account = account
                 log(f"{self.addr} gate session for account {self.account!r}")
+                go_online(self)
         pub = serialization.load_der_public_key(der)
         plain = struct.pack("<iH", self.key_index, 0) + self.aes_key
         ct = pub.encrypt(plain, padding.OAEP(mgf=padding.MGF1(hashes.SHA1()), algorithm=hashes.SHA1(), label=None))
@@ -1238,6 +1340,47 @@ class Session:
             log(f"{self.addr} closed")
             self.conn.close()
             CONNECTIONS.release()
+            go_offline(self)
+
+
+def go_online(session):
+    """Make a gate connection its account's session. An older one is closed: logged in again elsewhere."""
+    with ONLINE_LOCK:
+        old, ONLINE[session.account] = ONLINE.get(session.account), session
+    if old:
+        log(f"{old.addr} closing: account {session.account!r} logged in again from {session.addr}")
+        old.close()
+        leave_game(session.account, "logged in again")
+
+
+def go_offline(session):
+    """A connection closed. If it was its account's gate session the player quit: take them out of the game."""
+    with ONLINE_LOCK:
+        gone = session.account is not None and ONLINE.get(session.account) is session
+        if gone:
+            del ONLINE[session.account]
+    if gone:
+        leave_game(session.account, "logged out")
+
+
+def leave_game(account, reason):
+    """Close the account's game-server sessions (quit, kicked, banned, logged in again)."""
+    if GAME_SERVER is None:
+        return
+    with GAME_LOCK:
+        for peer in list(GAME_SERVER.peers.values()):
+            if STORE.account_of(getattr(peer, "cid", None)) == account:
+                GAME_SERVER.close(peer, reason)
+
+
+def kick(account, reason):
+    """Disconnect an account from the hall and any battle. True if it was online."""
+    with ONLINE_LOCK:
+        session = ONLINE.get(account)
+    if session:
+        session.close()
+    leave_game(account, reason)
+    return session is not None
 
 
 # (event catalog, event type) -> handler. Names come from the client's observer class names (RTTI).
@@ -1291,6 +1434,10 @@ def serve(port):
     log(f"listening on {port}")
     while True:
         c, a = s.accept()
+        if port != LOGIN_PORT and BANS.ip(a[0]):  # the login port answers with the client's "IP is locked" text
+            log(f"[{port}] connect from {a} refused: IP banned")
+            c.close()
+            continue
         if not CONNECTIONS.acquire(blocking=False):
             log(f"[{port}] connect from {a} refused: {MAX_CONNECTIONS} connections open")
             c.close()
@@ -1309,11 +1456,12 @@ def send_game_event(server, peer, catalog, type_, body, reliable=True):
     """
     with GAME_LOCK:
         peer.event_key = getattr(peer, "event_key", 0) + 1
-        # the float is handed to EventAttemper::AddEvent as the event time; 0 = dispatch immediately
-        envelope = struct.pack("<fI", 0.0, peer.event_key)
-        # unreliable events are the high-rate AI updates: keep them out of the log
-        server.send_messages(peer, [Message(catalog, type_, body=envelope + body).pack()], reliable=reliable,
-                             quiet=not reliable)
+        # message header (flags: has type) + envelope; the float is handed to EventAttemper::AddEvent as the event
+        # time, 0 = dispatch immediately. Queued: the game loop sends each player's events once per tick, batched.
+        server.queue(peer, EVENT_HEAD.pack(MSG_HAS_TYPE, catalog, type_, 0.0, peer.event_key) + body, reliable)
+
+
+EVENT_HEAD = struct.Struct("<BBHfI")  # u8 flags | u8 catalog | u16 type | f32 event time | u32 unique key
 
 
 def ray_hits(origin, target, center, radius):
@@ -1331,7 +1479,7 @@ def ray_hits(origin, target, center, radius):
 
 TICKETS = {}          # battle ticket -> (character id, battlefield id, expiry); issued by QS_ApplyEnter
 TICKET_TTL = 120.0    # seconds between Quick Enter and the game server connection
-MATCHES = {}          # battlefield id -> Match
+MATCHES = {}          # match id -> Match
 PLAYER_RID_STEP = 1_000_000  # player robot ids: slot * step + 1; part ids follow the robot id (+20 per rebuild)
 DUMMY_CID_BASE = 900_000     # character ids for the target dummies (real characters start at 1000)
 STALE_PEER = 15.0     # seconds without any packet before a player is taken out of the match
@@ -1340,6 +1488,17 @@ FORCE_BF = int(os.environ.get("MW_FORCE_BF", "0") or 0)  # dev: every Quick Ente
 MOVE_SPEED, JUMP_SPEED = 8.0, 5.0  # Walker body flyweight NormalSpeed / JumpSpeed
 SPAWN_DROP = 3.0      # spawn this far above the battlefield's spawn height
 SLOT_OFFSET = 5.0     # players spawn this far apart along x (slot 1 on the battlefield's spawn point)
+MAX_MATCH_PLAYERS = int(os.environ.get("MW_MATCH_PLAYERS", "32") or 32)  # players per match; a full one opens another
+MAX_SLOTS = 4000      # joins per match before it takes nobody new (robot ids are slot * 1,000,000 + 1, a u32)
+TICK_HZ = 30          # game loop rate: timers, AI, and each player's queued events go out once per tick
+FAR_DISTANCE = 250.0  # robots farther than this from a viewer...
+FAR_EVERY = 5         # ...have their moves sent to it only every FAR_EVERY ticks
+REMOVE_LEFT_PLAYERS = True  # delete a leaving player's robot and character on the other clients (not yet tried in
+                            # game: if a client crashes when someone leaves, set False to only show the robot destroyed)
+STATS_EVERY = float(os.environ.get("MW_STATS_EVERY", "60") or 0)  # seconds between [stats] log lines, 0 = off
+GAME_SERVER = None    # the fdp.Server once serve_udp runs
+MATCH_IDS = itertools.count(1)
+TIMER_IDS = itertools.count()
 
 
 def issue_ticket(cid, bfid):
@@ -1364,19 +1523,22 @@ def redeem_ticket(peer):
 
 
 class Match:
-    """Everyone on one battlefield shares one world: the players' robots and the target dummies."""
+    """Everyone in one match shares one world: the players' robots and the target dummies. A battlefield can have
+    several matches at once (MAX_MATCH_PLAYERS each). The game loop calls tick() TICK_HZ times a second."""
 
     def __init__(self, server, bfid):
         self.server, self.bfid, self.bf = server, bfid, BATTLEFIELDS[bfid]
+        self.id = next(MATCH_IDS)
         self.peers = []
         self.next_slot = 1
+        self.timers = []  # heap of (time, sequence, function, args)
+        self.tick_no, self.next_ai = 0, 0.0
         self.targets = {}
         for i, dpos in enumerate(self.bf["dummies"]):
             self.targets[100_000 * (i + 1) + 1] = {
                 "home": dpos, "pos": dpos, "name": f"Target {i + 1}", "cid": DUMMY_CID_BASE + i + 1,
                 "detachment": 2 + i, "hp": float(DUMMY_HP), "dead": False, "phase": 0.0, "cooldown": AI_PAUSE,
                 "burst": 0}
-        threading.Thread(target=ai_loop, args=(self,), daemon=True).start()
 
     def broadcast(self, catalog, type_, body_for, reliable=True, skip=None):
         """Send an event to every player; body_for(viewer) builds the body (object ids can differ per viewer)."""
@@ -1384,6 +1546,44 @@ class Match:
             if p is not skip:
                 send_game_event(self.server, p, catalog, type_, body_for(p) if callable(body_for) else body_for,
                                 reliable=reliable)
+
+    def later(self, delay, fn, *args):
+        """Run fn(*args) on the game loop after delay seconds (respawns, automatic fire)."""
+        heapq.heappush(self.timers, (time.time() + delay, next(TIMER_IDS), fn, args))
+
+    def move(self, rid, body, pos, skip=None):
+        """A robot moved (GS_Robot_Action 19,50100 body). Each viewer keeps only the newest move per robot until
+        the next tick sends it."""
+        for p in self.peers:
+            if p is not skip:
+                p.moves[rid] = (body, pos)
+
+    def is_open(self):
+        return self.peers is not None and len(self.peers) < MAX_MATCH_PLAYERS and self.next_slot <= MAX_SLOTS
+
+    def tick(self, now):
+        """Due timers, players who stopped sending, the dummies' AI, then everyone's pending moves."""
+        self.tick_no += 1
+        while self.timers and self.timers[0][0] <= now and self.peers is not None:
+            _, _, fn, args = heapq.heappop(self.timers)
+            fn(*args)
+        if self.peers is None:
+            return
+        for p in [p for p in self.peers if now - getattr(p, "last_seen", now) > STALE_PEER]:
+            self.server.close(p, "stopped sending")
+        if self.peers is None:
+            return
+        if now >= self.next_ai:
+            self.next_ai = now + AI_TICK
+            ai_step(self, now)
+        far2 = FAR_DISTANCE ** 2
+        for v in self.peers:
+            for rid, (body, pos) in list(v.moves.items()):
+                # far robots: only every FAR_EVERY ticks (spread over the viewers by slot)
+                if (self.tick_no + v.slot) % FAR_EVERY and (pos[0] - v.pos[0]) ** 2 + (pos[2] - v.pos[2]) ** 2 > far2:
+                    continue
+                del v.moves[rid]
+                send_game_event(self.server, v, 19, 50100, body, reliable=False)
 
 
 def is_player(cid):
@@ -1437,12 +1637,21 @@ def spawn_point(m, slot):
     return (x + SLOT_OFFSET * ((slot - 1) % 8), y + SPAWN_DROP, z)
 
 
+def find_match(server, bfid):
+    """A match of this battlefield with room, or a new one."""
+    m = next((m for m in MATCHES.values() if m.bfid == bfid and m.is_open()), None)
+    if m is None:
+        m = Match(server, bfid)
+        MATCHES[m.id] = m
+    return m
+
+
 def join_match(server, peer):
     """Client finished loading the world (9,30050): create its robot, show it the dummies and the other players,
     and show it to them."""
-    m = MATCHES.get(peer.bfid)
-    if m is None or m.peers is None:
-        m = MATCHES[peer.bfid] = Match(server, peer.bfid)
+    for old in [p for m in MATCHES.values() for p in (m.peers or []) if p.cid == peer.cid and p is not peer]:
+        server.close(old, "joined again")  # same character on a new connection (client restarted)
+    m = find_match(server, peer.bfid)
     slot, m.next_slot = m.next_slot, m.next_slot + 1
     peer.match, peer.slot = m, slot
     peer.player_rid = PLAYER_RID_STEP * slot + 1
@@ -1452,6 +1661,7 @@ def join_match(server, peer):
     peer.player_hp, peer.player_dead = float(PLAYER_HP), False
     peer.trigger, peer.kills, peer.deaths, peer.fire, peer.steer = 0, 0, 0, None, 0
     peer.stats_clock = time.time()
+    peer.moves = {}  # robot id -> newest move not yet sent to this player
     peer.protected_until = time.time() + SPAWN_PROTECTION
     peer.fire_interval = weapon_stats(loadout_weapon(peer.cid))[1][0]
     rid = peer.player_rid
@@ -1468,21 +1678,40 @@ def join_match(server, peer):
         show_player(server, peer, other)
         show_player(server, other, peer)
     m.peers.append(peer)
-    log(f"[game] {peer.name} (cid {peer.cid}) joined {m.bf['name']} as slot {slot}; {len(m.peers)} player(s)")
+    log(f"[game] {peer.name} (cid {peer.cid}) joined {m.bf['name']} (match {m.id}) as slot {slot}; "
+        f"{len(m.peers)} player(s)")
 
 
 def leave_match(peer):
+    """Take a player out of their match: save the time played and remove their robot from the other clients."""
     m = getattr(peer, "match", None)
-    if not m or peer not in m.peers:
+    if not m or not m.peers or peer not in m.peers:
         return
     m.peers.remove(peer)
     peer.match = None
-    log(f"[game] {peer.name} left {m.bf['name']}; {len(m.peers)} player(s)")
-    # no detach event known yet: show the robot as destroyed
-    m.broadcast(19, 50107, struct.pack("<Iff", peer.player_rid, 0.0, 0.0))
+    record_stats(peer)
+    log(f"[game] {peer.name} left {m.bf['name']} (match {m.id}); {len(m.peers)} player(s)")
+    rid = peer.player_rid
+    for p in m.peers:
+        p.moves.pop(rid, None)
+    # show the robot destroyed; then GS_Object_Detach_Object (19,50002): u32 object id -> drops a reference and
+    # deletes the object at zero (observer Game.dll 0x1022ce40), and GS_Character_Delete_Character (19,30002):
+    # u32 char id -> CharacterManager removes it (0x10353850), so the character can join again later
+    m.broadcast(19, 50107, struct.pack("<Iff", rid, 0.0, 0.0))
+    if REMOVE_LEFT_PLAYERS:
+        m.broadcast(19, 50002, struct.pack("<I", rid))
+        m.broadcast(19, 30002, struct.pack("<I", peer.cid))
     if not m.peers:
-        m.peers = None  # stops the AI loop
-        MATCHES.pop(m.bfid, None)
+        m.peers = None  # stops its timers and AI
+        MATCHES.pop(m.id, None)
+
+
+def on_game_close(server, peer, reason):
+    """FDP session ended: left the battle, timed out, kicked, or reconnected."""
+    if getattr(peer, "cid", None) is not None:
+        log(f"[game] {character_name(peer.cid) or peer.addr} disconnected ({reason})")
+    with GAME_LOCK:
+        leave_match(peer)
 
 
 def kill_report(m, victim_name, killer_name, weapon):
@@ -1510,7 +1739,7 @@ def hit_dummy(server, m, shooter, rid):
     m.broadcast(19, 50107, struct.pack("<Iff", rid, 0.0, 0.0))
     kill_report(m, t["name"], shooter.name, loadout_weapon(shooter.cid))
     credit_kill(server, shooter, "a target robot")
-    threading.Timer(RESPAWN_DELAY, relive_target, (m, rid)).start()
+    m.later(RESPAWN_DELAY, relive_target, m, rid)
     return True
 
 
@@ -1532,7 +1761,7 @@ def hit_player(server, m, victim, damage, killer_name, killer=None):
     kill_report(m, victim.name, killer_name, loadout_weapon(killer.cid) if killer else DEFAULT_WEAPON)
     if killer:
         credit_kill(server, killer, victim.name)
-    threading.Timer(RESPAWN_DELAY, relive_player, (server, victim)).start()
+    m.later(RESPAWN_DELAY, relive_player, server, victim)
     return True
 
 
@@ -1560,7 +1789,7 @@ def fire_tick(server, peer, trig, n):
         rid = peer.player_rid
         m.broadcast(19, 50122, lambda v: struct.pack("<III3f3fIfI", rid, part_base(v, rid) + 4, 0, *origin, *aim,
                                                       0, WEAPON_AMMO, 1), reliable=False, skip=peer)
-    threading.Timer(peer.fire_interval, fire_tick, (server, peer, trig, n + 1)).start()
+        m.later(peer.fire_interval, fire_tick, server, peer, trig, n + 1)
 
 
 def pick_victim(m, shooter, origin, aim):
@@ -1645,59 +1874,49 @@ def relive_player(server, peer):
             relive_on(server, p, peer.player_rid, peer.cid, peer.pos, peer.facing, PLAYER_HP, PLAYER_HP)
 
 
-def ai_loop(m):
-    """Drive one match's target dummies: GS_Robot_Action (19,50100) u32 robot | u32 steer flags (1 = walking)
-    | vec3 pos | vec3 facing moves a remote robot (Robot::Move + MoveTo); 50122 plays their shots. Each dummy
-    fights the nearest player in range. Also takes players who stopped sending packets out of the match."""
-    while m.peers is not None:
-        time.sleep(AI_TICK)
-        with GAME_LOCK:
-            if m.peers is None:
-                return
-            now = time.time()
-            for p in [p for p in m.peers if now - getattr(p, "last_seen", now) > STALE_PEER]:
-                leave_match(p)
-            if m.peers is None:
-                return
-            for rid, t in m.targets.items():
-                if t["dead"]:
-                    continue
-                hx, hy, hz = t["home"]
-                best, dist, dx, dz = None, AI_RANGE, 0.0, 0.0
-                for p in m.peers:
-                    if p.player_dead or now < p.protected_until:
-                        continue
-                    ddx, ddz = p.pos[0] - t["pos"][0], p.pos[2] - t["pos"][2]
-                    d = math.hypot(ddx, ddz)
-                    if d < dist:
-                        best, dist, dx, dz = p, d, ddx, ddz
-                if best:  # stand and face the player
-                    face, flags = ((dx / dist, 0.0, dz / dist) if dist else (0.0, 0.0, 1.0)), 0
-                else:     # patrol along x around home
-                    t["phase"] += AI_TICK * AI_SPEED / AI_PATROL
-                    t["pos"] = (hx + AI_PATROL * math.sin(t["phase"]), hy, hz)
-                    face, flags = (1.0 if math.cos(t["phase"]) >= 0 else -1.0, 0.0, 0.0), 1
-                m.broadcast(19, 50100, struct.pack("<II3f3f", rid, flags, *t["pos"], *face), reliable=False)
-                if not best or PASSIVE_DUMMIES:
-                    continue
-                t["cooldown"] -= AI_TICK
-                if t["cooldown"] > 0:
-                    continue
-                t["burst"] += 1
-                t["cooldown"] = WEAPON_TIMING[0] * 2 if t["burst"] < AI_BURST else AI_PAUSE
-                if t["burst"] >= AI_BURST:
-                    t["burst"] = 0
-                hit = random.random() < AI_HIT_CHANCE
-                spread = 0.5 if hit else 4.0
-                muzzle = (t["pos"][0] + face[0] * 2, t["pos"][1] + 4.0, t["pos"][2] + face[2] * 2)
-                # hits aim at the robot's body; misses at the ground around it, so their tracers end in visible
-                # impacts instead of passing next to the first-person camera (which looks like a shot into the sky)
-                aim = (best.pos[0] + random.uniform(-spread, spread), best.pos[1] + (2.0 if hit else 0.3),
-                       best.pos[2] + random.uniform(-spread, spread))
-                m.broadcast(19, 50122, lambda v: struct.pack("<III3f3fIfI", rid, part_base(v, rid) + 4, 0, *muzzle,
-                                                              *aim, 0, WEAPON_AMMO, 1), reliable=False)
-                if hit:
-                    hit_player(m.server, m, best, AI_DAMAGE, t["name"])
+def ai_step(m, now):
+    """Drive one match's target dummies (every AI_TICK seconds): GS_Robot_Action (19,50100) u32 robot | u32 steer
+    flags (1 = walking) | vec3 pos | vec3 facing moves a remote robot (Robot::Move + MoveTo); 50122 plays their
+    shots. Each dummy fights the nearest player in range."""
+    for rid, t in m.targets.items():
+        if t["dead"]:
+            continue
+        hx, hy, hz = t["home"]
+        best, dist, dx, dz = None, AI_RANGE, 0.0, 0.0
+        for p in m.peers:
+            if p.player_dead or now < p.protected_until:
+                continue
+            ddx, ddz = p.pos[0] - t["pos"][0], p.pos[2] - t["pos"][2]
+            d = math.hypot(ddx, ddz)
+            if d < dist:
+                best, dist, dx, dz = p, d, ddx, ddz
+        if best:  # stand and face the player
+            face, flags = ((dx / dist, 0.0, dz / dist) if dist else (0.0, 0.0, 1.0)), 0
+        else:     # patrol along x around home
+            t["phase"] += AI_TICK * AI_SPEED / AI_PATROL
+            t["pos"] = (hx + AI_PATROL * math.sin(t["phase"]), hy, hz)
+            face, flags = (1.0 if math.cos(t["phase"]) >= 0 else -1.0, 0.0, 0.0), 1
+        m.move(rid, struct.pack("<II3f3f", rid, flags, *t["pos"], *face), t["pos"])
+        if not best or PASSIVE_DUMMIES:
+            continue
+        t["cooldown"] -= AI_TICK
+        if t["cooldown"] > 0:
+            continue
+        t["burst"] += 1
+        t["cooldown"] = WEAPON_TIMING[0] * 2 if t["burst"] < AI_BURST else AI_PAUSE
+        if t["burst"] >= AI_BURST:
+            t["burst"] = 0
+        hit = random.random() < AI_HIT_CHANCE
+        spread = 0.5 if hit else 4.0
+        muzzle = (t["pos"][0] + face[0] * 2, t["pos"][1] + 4.0, t["pos"][2] + face[2] * 2)
+        # hits aim at the robot's body; misses at the ground around it, so their tracers end in visible
+        # impacts instead of passing next to the first-person camera (which looks like a shot into the sky)
+        aim = (best.pos[0] + random.uniform(-spread, spread), best.pos[1] + (2.0 if hit else 0.3),
+               best.pos[2] + random.uniform(-spread, spread))
+        m.broadcast(19, 50122, lambda v: struct.pack("<III3f3fIfI", rid, part_base(v, rid) + 4, 0, *muzzle,
+                                                      *aim, 0, WEAPON_AMMO, 1), reliable=False)
+        if hit:
+            hit_player(m.server, m, best, AI_DAMAGE, t["name"])
 
 
 def part_base(peer, rid):
@@ -1757,7 +1976,8 @@ def on_game_message(server, peer, raw):
     except (IndexError, struct.error):
         debug(f"[game] {peer.addr} unparsable message\n{hexdump(raw)}")
         return
-    debug(f"[game] {peer.addr} <- {EVENT_NAMES.get((msg.catalog, msg.type), '?')} {msg}\n{hexdump(msg.body)}")
+    if DEBUG:
+        debug(f"[game] {peer.addr} <- {EVENT_NAMES.get((msg.catalog, msg.type), '?')} {msg}\n{hexdump(msg.body)}")
     key, body = (msg.catalog, msg.type), msg.body
     if key == (9, 40851) and not getattr(peer, "battle_sent", False):
         # First message after the FDP session opens. The connect stream carries the battle ticket from
@@ -1790,8 +2010,8 @@ def on_game_message(server, peer, raw):
         pos = struct.unpack_from("<3f", body, 4)
         if all(math.isfinite(v) for v in pos):
             peer.pos = pos
-            m.broadcast(19, 50100, struct.pack("<II3f3f", peer.player_rid, peer.steer, *pos, *peer.facing),
-                        reliable=False, skip=peer)
+            m.move(peer.player_rid, struct.pack("<II3f3f", peer.player_rid, peer.steer, *pos, *peer.facing), pos,
+                   skip=peer)
     elif key == (9, 40100) and len(body) >= 32:
         # GC_Robot_Action, sent by Robot::Move when the steer flags change: f32 | u32 steer flags (ROBOT_STEER_FLAG,
         # 0 = standing) | vec3 pos | vec3 facing -- the same layout as GS_Robot_Action (19,50100), relayed as is.
@@ -1801,8 +2021,8 @@ def on_game_message(server, peer, raw):
             peer.steer, peer.pos = steer, pos
             if any(abs(v) > 1e-3 for v in facing):
                 peer.facing = facing
-            m.broadcast(19, 50100, struct.pack("<II3f3f", peer.player_rid, steer, *pos, *peer.facing),
-                        reliable=False, skip=peer)
+            m.move(peer.player_rid, struct.pack("<II3f3f", peer.player_rid, steer, *pos, *peer.facing), pos,
+                   skip=peer)
     elif key == (9, 40105) and len(body) >= 8:
         # Weapon switch request (hotkey 1-9 / 0 / Q in Robot::UpdateInput): i32 | i32 equipment slot (1-based,
         # 0 = take off). The robot only gets a current equip (and Weapon::UpdateInput, i.e. firing) once the server
@@ -1827,14 +2047,263 @@ def on_game_message(server, peer, raw):
                     fire_tick(server, peer, peer.trigger, 0)
 
 
+def game_tick(server, now):
+    """One game loop step: every match, then everyone's queued events go out."""
+    for m in list(MATCHES.values()):
+        try:
+            m.tick(now)
+        except Exception:  # noqa: BLE001 -- one broken match must not stop the others
+            log(f"[game] match {m.id} tick error\n{traceback.format_exc()}")
+    server.flush(now)
+
+
+def game_loop(server):
+    """Runs every match TICK_HZ times a second on one thread, and logs load figures every STATS_EVERY seconds."""
+    period = 1.0 / TICK_HZ
+    due = time.perf_counter()
+    times, cpu0, wall0, net0 = [], time.process_time(), time.time(), dict(server.stats)
+    while True:
+        due += period
+        wait = due - time.perf_counter()
+        if wait > 0:
+            time.sleep(wait)
+        else:
+            due = time.perf_counter()  # running late: carry on from now instead of rushing to catch up
+        t0 = time.perf_counter()
+        with GAME_LOCK:
+            try:
+                game_tick(server, time.time())
+            except Exception:  # noqa: BLE001
+                log(f"[game] tick error\n{traceback.format_exc()}")
+        times.append(time.perf_counter() - t0)
+        wall = time.time() - wall0
+        if STATS_EVERY and wall >= STATS_EVERY:
+            d = {k: (v - net0[k]) / wall for k, v in server.stats.items()}
+            players = sum(len(m.peers or []) for m in MATCHES.values())
+            log(f"[stats] {len(MATCHES)} matches, {players} players, {len(server.peers)} sessions | tick avg "
+                f"{1000 * sum(times) / len(times):.2f} ms, max {1000 * max(times):.2f} ms ({len(times) / wall:.0f}/s)"
+                f" | cpu {(time.process_time() - cpu0) / wall:.0%} | out {d['pkts_out']:.0f} pkt/s "
+                f"{d['bytes_out'] / 1024:.0f} KB/s | in {d['pkts_in']:.0f} pkt/s {d['bytes_in'] / 1024:.0f} KB/s"
+                f" | resent {d['resent'] * wall:.0f}")
+            times, cpu0, wall0, net0 = [], time.process_time(), time.time(), dict(server.stats)
+
+
+ADMIN_LOG = os.path.join(STATE_DIR, "admin.log")
+ADMIN_KEY = os.path.join(STATE_DIR, "admin.key")
+ADMIN_HELP = """commands:
+  who                                    who is online, and in which battle
+  matches                                running matches and their players
+  kick <account>                         disconnect an account (hall and battle)
+  ban <account> [time] [reason]          ban and kick; time like 30m, 12h, 7d, 2w (default: permanent)
+  unban <account>
+  ipban <address or network> [time] [reason]   e.g. 1.2.3.4 or 1.2.3.0/24; kicks everyone on it
+  unipban <address or network>
+  bans                                   list bans
+  role <account> [player|gm|admin]       show or set an account's role
+  help"""
+
+
+def parse_duration(s):
+    """'30m', '12h', '7d', '2w' -> seconds; 'perm' -> 0; None if s is not a duration."""
+    if s.lower() in ("perm", "permanent"):
+        return 0
+    m = re.fullmatch(r"(\d{1,6})([mhdw])", s.lower())
+    return int(m[1]) * {"m": 60, "h": 3600, "d": 86400, "w": 604800}[m[2]] if m else None
+
+
+def ban_args(args):
+    """[time] [reason ...] -> (until, reason); until 0 = permanent."""
+    secs = parse_duration(args[0]) if args else None
+    if secs is not None:
+        args = args[1:]
+    return (time.time() + secs if secs else 0), " ".join(args)[:200]
+
+
+def fmt_until(until):
+    return "permanent" if not until else "until " + time.strftime("%Y-%m-%d %H:%M", time.localtime(until))
+
+
+def cmd_who(args, actor):
+    with ONLINE_LOCK:
+        online = dict(ONLINE)
+    where = {}
+    with GAME_LOCK:
+        for m in MATCHES.values():
+            for p in m.peers or []:
+                where[STORE.account_of(p.cid)] = f"{p.name} in {m.bf['name']} (match {m.id})"
+    rows = [f"{a}  {s.addr[0]}  {where.get(a, 'in the hall')}" for a, s in sorted(online.items())]
+    return "\n".join(rows) or "nobody online"
+
+
+def cmd_matches(args, actor):
+    with GAME_LOCK:
+        rows = [f"match {m.id}: {m.bf['name']}, {len(m.peers)} player(s): {', '.join(p.name for p in m.peers)}"
+                for m in MATCHES.values() if m.peers]
+    return "\n".join(rows) or "no matches"
+
+
+def cmd_kick(args, actor):
+    if len(args) != 1:
+        return "usage: kick <account>"
+    return f"kicked {args[0]}" if kick(args[0], f"kicked by {actor}") else f"{args[0]} is not online"
+
+
+def cmd_ban(args, actor):
+    if not args:
+        return "usage: ban <account> [time] [reason]"
+    if args[0] not in ACCOUNTS.data:
+        return f"no account {args[0]!r}"
+    until, reason = ban_args(args[1:])
+    BANS.add("accounts", args[0], until, reason, actor)
+    kick(args[0], "banned")
+    return f"banned {args[0]} {fmt_until(until)}" + (f": {reason}" if reason else "")
+
+
+def cmd_unban(args, actor):
+    if len(args) != 1:
+        return "usage: unban <account>"
+    return f"unbanned {args[0]}" if BANS.remove("accounts", args[0]) else f"{args[0]} is not banned"
+
+
+def ip_network(s):
+    try:
+        return ipaddress.ip_network(s, strict=False)
+    except ValueError:
+        return None
+
+
+def cmd_ipban(args, actor):
+    net = ip_network(args[0]) if args else None
+    if net is None:
+        return "usage: ipban <address or network> [time] [reason]"
+    until, reason = ban_args(args[1:])
+    BANS.add("ips", str(net), until, reason, actor)
+    with ONLINE_LOCK:
+        hit = [a for a, s in ONLINE.items() if ipaddress.ip_address(s.addr[0]) in net]
+    for a in hit:
+        kick(a, "IP banned")
+    if GAME_SERVER:
+        with GAME_LOCK:
+            for peer in [p for p in GAME_SERVER.peers.values() if ipaddress.ip_address(p.addr[0]) in net]:
+                GAME_SERVER.close(peer, "IP banned")
+    return f"banned {net} {fmt_until(until)}" + (f": {reason}" if reason else "") + f"; kicked {len(hit)}"
+
+
+def cmd_unipban(args, actor):
+    net = ip_network(args[0]) if len(args) == 1 else None
+    if net is None:
+        return "usage: unipban <address or network>"
+    return f"unbanned {net}" if BANS.remove("ips", str(net)) else f"{net} is not banned"
+
+
+def cmd_bans(args, actor):
+    rows = [f"account {k}  {fmt_until(r['until'])}  by {r['by']}  {r['reason']}".rstrip()
+            for k, r in sorted(BANS.active("accounts").items())]
+    rows += [f"ip {k}  {fmt_until(r['until'])}  by {r['by']}  {r['reason']}".rstrip()
+             for k, r in sorted(BANS.active("ips").items())]
+    return "\n".join(rows) or "no bans"
+
+
+def cmd_role(args, actor):
+    if not args or args[0] not in ACCOUNTS.data:
+        return "usage: role <account> [player|gm|admin]" if not args else f"no account {args[0]!r}"
+    if len(args) == 1:
+        return f"{args[0]}: {ACCOUNTS.role(args[0])}"
+    if len(args) == 2 and args[1] in Accounts.ROLES and ACCOUNTS.set_role(args[0], args[1]):
+        return f"{args[0]} is now {args[1]}"
+    return "usage: role <account> [player|gm|admin]"
+
+
+ADMIN_COMMANDS = {"who": cmd_who, "matches": cmd_matches, "kick": cmd_kick, "ban": cmd_ban, "unban": cmd_unban,
+                  "ipban": cmd_ipban, "unipban": cmd_unipban, "bans": cmd_bans, "role": cmd_role,
+                  "help": lambda args, actor: ADMIN_HELP}
+
+
+def admin_command(line, actor):
+    """Run one admin command (server console or tools/admin.py) and return the reply. Every command and its
+    result go to admin.log."""
+    words = line.split()
+    if not words:
+        return ""
+    fn = ADMIN_COMMANDS.get(words[0].lower())
+    try:
+        reply = fn(words[1:], actor) if fn else f"unknown command {words[0]!r}\n{ADMIN_HELP}"
+    except Exception as e:  # noqa: BLE001
+        reply = f"error: {e!r}"
+    first = reply.splitlines()[0] if reply else ""
+    with open(ADMIN_LOG, "a", encoding="utf-8") as f:
+        f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {actor}: {line[:300]} -> {first}\n")
+    log(f"[admin] {actor}: {line[:300]} -> {first}")
+    return reply
+
+
+def admin_key():
+    """The secret tools/admin.py sends first (admin.key next to the server's data, made on first start)."""
+    try:
+        key = open(ADMIN_KEY, encoding="ascii").read().strip()
+        if key:
+            return key
+    except OSError:
+        pass
+    key = secrets.token_hex(16)
+    with open(ADMIN_KEY, "w", encoding="ascii") as f:
+        f.write(key)
+    return key
+
+
+def serve_admin(port):
+    """Admin commands over TCP from this machine only: line 1 = admin.key, line 2 = command; one reply."""
+    key = admin_key().encode()
+    s = socket.socket()
+    # exclusive on Windows: no other program may bind the same port and read the key
+    s.setsockopt(socket.SOL_SOCKET, getattr(socket, "SO_EXCLUSIVEADDRUSE", socket.SO_REUSEADDR), 1)
+    s.bind(("127.0.0.1", port))
+    s.listen(4)
+    log(f"admin commands on 127.0.0.1:{port}")
+    while True:
+        c, a = s.accept()
+        threading.Thread(target=admin_connection, args=(c, a, key), daemon=True).start()
+
+
+def admin_connection(c, addr, key):
+    try:
+        c.settimeout(10)
+        f = c.makefile("rwb")
+        given = f.readline(256).strip()
+        if not hmac.compare_digest(given, key):
+            log(f"[admin] {addr} wrong admin key")
+            return
+        line = f.readline(1024).decode("utf-8", "replace").strip()
+        f.write((admin_command(line, "admin tool") + "\n").encode("utf-8"))
+        f.flush()
+    except OSError:
+        pass
+    finally:
+        c.close()
+
+
+def console_loop():
+    """Admin commands typed into the server window."""
+    print("type 'help' for admin commands", flush=True)
+    for line in sys.stdin:
+        reply = admin_command(line.strip(), "console")
+        if reply:
+            print(reply, flush=True)
+
+
 def serve_udp(port):
     """UDP listener: FDP game-server sessions on GAME_PORT, capture-only for anything else (SAP NAT detection)."""
+    global GAME_SERVER
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.bind(("0.0.0.0", port))
     log(f"listening on udp {port}")
-    server = fdp.Server(s, log, hexdump, debug=debug) if port == GAME_PORT else None
+    server = fdp.Server(s, log, hexdump, debug=debug, trace=DEBUG) if port == GAME_PORT else None
     if server:
+        GAME_SERVER = server
         server.on_message = on_game_message
+        server.on_close = on_game_close
+        server.allow = lambda addr: not BANS.ip(addr[0])
+        threading.Thread(target=game_loop, args=(server,), daemon=True).start()
     while True:
         try:
             data, addr = s.recvfrom(65536)
@@ -1855,9 +2324,12 @@ if __name__ == "__main__":
     if not PRODUCTS or not ROBOTS:
         log("WARNING: game data missing (data/flyweights). Run: python setup_data.py <your MarsWar install folder>")
     threading.Thread(target=STORE.flush_loop, daemon=True).start()
-    for p in (GAME_PORT, 5876):
+    for p in (GAME_PORT, NAT_PORT):
         threading.Thread(target=serve_udp, args=(p,), daemon=True).start()
-    for p in (6001, GATE_PORT, GAME_PORT):
+    for p in (LOGIN_PORT, GATE_PORT, GAME_PORT):
         threading.Thread(target=serve, args=(p,), daemon=True).start()
+    threading.Thread(target=serve_admin, args=(ADMIN_PORT,), daemon=True).start()
+    if sys.stdin and sys.stdin.isatty():
+        threading.Thread(target=console_loop, daemon=True).start()
     while True:
         time.sleep(1)

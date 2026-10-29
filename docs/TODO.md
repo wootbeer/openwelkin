@@ -97,16 +97,56 @@ reply layout, and answer with real data.
 - [x] Players spawn 5 units apart (slot offset); MW_PASSIVE_DUMMIES=1 for PvP tests
 - [x] Walking: robots had speed 0 -- GS_Robot_Skill (19,50132) u32 robot | f32 speed | f32 up speed | vec3 velocity now sent on spawn/respawn
 - [x] Movement relay verified both ways with two clients (40100 steer flags + 40130 positions -> 50100)
-- [ ] Teams (all players are on their own side now), leave/disconnect cleanup visuals (uses Dead), respawn point choice
+- [ ] Teams (all players are on their own side now), respawn point choice
 - [ ] Hit detection is generous (HIT_RADIUS 6 around the robot or the client's ray end point): shots at the ground next to a player count
 - [x] Test tooling: tools/vinput.py drives a client's DirectInput keyboard/mouse (even minimized); tools/quickenter.js presses Quick Enter; MW_FORCE_BF=1 sends every Quick Enter to one battlefield. The client saves LastAccount after login, so set Welkin4591.ini right before each launch.
 
-## Admin / moderation (planned)
-- [ ] Kick: close the player's gate connection and FDP game session (and take their robot out of the match)
-- [ ] Ban / timed ban per account: refuse login with the client's own texts -- 12001 "Account has been locked,
-      please contact GM.", 12011 "Account being punished, you can not login game for the time being."
-- [ ] IP ban (and IP range ban): refuse at login and at connect -- 10003 "IP is locked, please contact GM."
-- [ ] Ban reason, who banned, expiry; unban; ban list
-- [ ] Where admins issue these: admin command line / web admin page, and in-game GM chat commands later
-- [ ] Log all admin actions (audit trail)
-- [ ] GM / admin roles per account (who may kick/ban)
+## Admin / moderation (2026-10-29, tested offline)
+- [x] Kick: closes the player's gate connection and game session, and takes their robot out of the match
+- [x] Ban / timed ban per account (bans.json): refused with the client's own texts -- 12001 "Account has been
+      locked, please contact GM." (permanent), 12011 "Account being punished, ..." (timed). Checked after the
+      password, so a ban never tells strangers that an account exists
+- [x] IP and network ban (1.2.3.4, 1.2.3.0/24): 10003 "IP is locked, please contact GM." at login; gate and game
+      connections from it are dropped
+- [x] Reason, who banned, expiry; unban; ban list
+- [x] Server console (type commands in the server window) and tools/admin.py (127.0.0.1 only, needs admin.key)
+- [x] Every admin command goes to admin.log
+- [x] Roles per account (player / gm / admin, stored in accounts.json); nothing uses them yet
+- [x] A second login of the same account closes the first one
+- [ ] In-game GM chat commands (use the roles)
+- [ ] Web admin page
+- [ ] Tell a kicked player why: DisconnectByServer (19,30150) takes one f32 and opens the arena score window --
+      try it in game; GMKickRes (13,13041) may be the hall-side message
+
+## Disconnects (2026-10-29, tested offline, not yet in game)
+- [x] The client sends an FDP close packet (system, split id 4) when it leaves a battle: the player leaves at once
+      (before: only after 15 s of silence)
+- [x] Gate connection closed (client quit), logged in again, kicked, banned, new connection from the same client:
+      the old game session closes
+- [x] Others are told: robot shown destroyed, then GS_Object_Detach_Object (19,50002, u32 object id) and
+      GS_Character_Delete_Character (19,30002, u32 char id). Check in game that this removes the robot and does not
+      crash; if it crashes set REMOVE_LEFT_PLAYERS = False
+- [x] Time played is saved when a player leaves
+
+## Performance (2026-10-29)
+- [x] One game loop thread for all matches at 30 ticks/s instead of a thread per match and a timer thread per shot
+- [x] Events queued per player and sent once per tick, several to a packet (join: 43 messages in 16 packets)
+- [x] Moves merged: each player gets only the newest position of each robot per tick
+- [x] Robots more than 250 units away get position updates every 5th tick
+- [x] Lost reliable packets are resent (the client repeats its ack 3 times, or 4 s pass; it acks slowly)
+- [x] Full matches: a battlefield opens another match after MW_MATCH_PLAYERS (32) players
+- [x] Packet hex dumps were built for every packet even with MW_DEBUG off: now skipped (about a third of tick time)
+- [x] tools/loadtest.py: fake players over the real protocol. Results on the dev PC (16 threads), 30 s in battle,
+      players walking, firing and pinging:
+
+      | players | matches | tick (of 33 ms) | server CPU | out | move delay median / 99% |
+      |---------|---------|-----------------|------------|-----|-------------------------|
+      | 64      | 2       | 5 ms            | 18%        | 1.4 MB/s | 36 / 42 ms |
+      | 256     | 8       | 11 ms           | 37%        | 5.8 MB/s | -- |
+      | 400     | 13      | 17 ms           | 60%        | 8.8 MB/s | 39 / 56 ms |
+
+      One Python process should hold about 600 players before ticks run late. Past that: run matches in more
+      processes (the split-server plan), or move the game server to a faster language.
+- [ ] Check the batched packets and resends with real clients (largest packet is 1024 bytes; the client has taken 953)
+- [ ] Bandwidth per player is about 22 KB/s at 32 per match; most of it is moves. Send fewer for robots behind or
+      far away, or pack moves smaller, if hosting costs matter

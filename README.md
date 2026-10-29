@@ -41,6 +41,10 @@ Use the server's address instead of 127.0.0.1 when it runs on another machine. S
 | 6002 | TCP | gate (hall, shop, characters) |
 | 6003 | UDP | game server (battles) |
 | 5876 | UDP | client NAT probe (only logged) |
+| 6010 | TCP | admin commands (`tools/admin.py`), 127.0.0.1 only |
+
+`MW_PORT_OFFSET` adds to all of them, e.g. `100` gives 6101-6110 (to run a second server on one machine; the
+client then needs the moved login port).
 
 ## Settings (environment variables)
 
@@ -50,6 +54,10 @@ Use the server's address instead of 127.0.0.1 when it runs on another machine. S
 | `MW_AUTO_REGISTER` | `1` | A new account name with a password creates the account on first login. `0` = only existing accounts. |
 | `MW_DEBUG` | `0` | `1` logs every packet with hex dumps (reverse-engineering only; large logs). |
 | `MW_BADGES` | `1` | `0` turns badges off. |
+| `MW_MATCH_PLAYERS` | `32` | Players per match. When a battlefield's match is full, the next player starts another one. |
+| `MW_STATE_DIR` | the `server` folder | Where accounts, characters, bans and logs are kept. |
+| `MW_PORT_OFFSET` | `0` | Added to every port (see Ports). |
+| `MW_STATS_EVERY` | `60` | Seconds between `[stats]` lines in the log (players, tick time, CPU, traffic). `0` = off. |
 | `MW_ROBOT` | (empty) | Dev only: force the player's robot type, e.g. `1313` (Walker Scout). |
 | `MW_PASSIVE_DUMMIES` | `0` | Dev only: `1` stops the target dummies from shooting (PvP tests). |
 | `MW_FORCE_BF` | `0` | Dev only: every Quick Enter goes to this battlefield id (multi-client tests). |
@@ -61,10 +69,36 @@ Use the server's address instead of 127.0.0.1 when it runs on another machine. S
 |------|------|
 | `accounts.json` | Account names and salted scrypt password hashes. Never contains passwords. |
 | `characters.json` | Characters, stats, items, talents, event log. Battle stats are saved every few seconds. |
+| `bans.json` | Account and IP bans. |
+| `admin.key` | Secret for `tools/admin.py`, made on first start. Anyone who can read it can run admin commands. |
+| `admin.log` | Every admin command, who ran it and the result. |
 | `loginserver.log` | Server log. Contains no passwords or keys. With `MW_DEBUG=1` it grows fast. |
 | `data/flyweights/` | Item, weapon and robot data unpacked from your client by `setup_data.py`. |
 
 Back up `accounts.json` and `characters.json` together. Stop the server with Ctrl+C so pending stats are saved.
+
+## Admin commands
+
+Type them into the server window, or from another window on the same machine:
+
+```
+python server/tools/admin.py who
+```
+
+| Command | What |
+|---------|------|
+| `who` | Who is online, and in which battle |
+| `matches` | Running matches and their players |
+| `kick <account>` | Disconnect an account (hall and battle) |
+| `ban <account> [time] [reason]` | Ban and kick. Time like `30m`, `12h`, `7d`, `2w`; without it the ban is permanent |
+| `unban <account>` | |
+| `ipban <address or network> [time] [reason]` | e.g. `1.2.3.4` or `1.2.3.0/24`. Kicks everyone on it |
+| `unipban <address or network>` | |
+| `bans` | List bans |
+| `role <account> [player\|gm\|admin]` | Show or set an account's role (for GM commands later) |
+
+Banned players see the client's own message: "Account has been locked" (permanent), "Account being punished"
+(timed) or "IP is locked".
 
 ## Security notes
 
@@ -73,6 +107,7 @@ Back up `accounts.json` and `characters.json` together. Stop the server with Ctr
 - 5 failed logins from one IP lock that IP out for 5 minutes.
 - Nothing but login is accepted before a connection logs in; idle unauthenticated connections close after 30 s.
 - Connection limits: 1024 TCP connections, 512 game sessions (idle sessions expire after 60 s).
+- The admin port only listens on 127.0.0.1 and wants the key from `admin.key` first.
 - Every request is length-checked; `tools/fuzz_handlers.py` and `tools/fuzz_game.py` throw random data at all
   handlers, and `tools/test_login.py` checks the login rules. Run them after changes:
 
@@ -82,6 +117,18 @@ python -I server/tools/fuzz_game.py
 python -I server/tools/test_login.py
 python -I server/tools/test_match.py
 ```
+
+## Load test
+
+`server/tools/loadtest.py` starts a private server (temporary folder, ports 6101-6110) and connects fake players
+to it over the real protocol. They log in, make a character, Quick Enter, then walk, fire and ping. It prints
+the server's tick time, CPU and traffic, and how late other players' moves arrive:
+
+```
+python -I server/tools/loadtest.py --bots 128 --seconds 60
+```
+
+Results on a 16-thread PC are in `docs/TODO.md` (Performance).
 
 ## More
 
