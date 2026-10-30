@@ -115,17 +115,23 @@ reply layout, and answer with real data.
 - [x] A second login of the same account closes the first one
 - [ ] In-game GM chat commands (use the roles)
 - [ ] Web admin page
-- [ ] Tell a kicked player why: DisconnectByServer (19,30150) takes one f32 and opens the arena score window --
-      try it in game; GMKickRes (13,13041) may be the hall-side message
+- [x] Checked in game 2026-10-30: kick drops the client to the login screen with no message; timed ban, permanent
+      ban and IP ban each show their text at login; login works again after unban
+- [ ] Tell a kicked player why: nothing found yet. GMKickRes (13,13041) is only the reply to a GM ("Kick %s
+      Success!"). Idea: send a [Notice] line, wait a second, then close
+- [ ] DisconnectByServer (19,30150, f32 seconds) ends the battle for that player: Record window with a countdown,
+      then back to the lobby, no crash (in game 2026-10-30). No reason text. Use it for match end, or to remove a
+      player from a battle but keep them in the hall
 
-## Disconnects (2026-10-29, tested offline, not yet in game)
+## Disconnects (2026-10-29, in game 2026-10-30)
 - [x] The client sends an FDP close packet (system, split id 4) when it leaves a battle: the player leaves at once
       (before: only after 15 s of silence)
 - [x] Gate connection closed (client quit), logged in again, kicked, banned, new connection from the same client:
       the old game session closes
 - [x] Others are told: robot shown destroyed, then GS_Object_Detach_Object (19,50002, u32 object id) and
-      GS_Character_Delete_Character (19,30002, u32 char id). Check in game that this removes the robot and does not
-      crash; if it crashes set REMOVE_LEFT_PLAYERS = False
+      GS_Character_Delete_Character (19,30002, u32 char id). In game: 7 fake players left a real client's match, the
+      client's robot list dropped them and it did not crash. If it ever does, set REMOVE_LEFT_PLAYERS = False
+- [ ] Watch a robot vanish on screen, and leave with a real second client (only fake players tried so far)
 - [x] Time played is saved when a player leaves
 
 ## Performance (2026-10-29)
@@ -147,6 +153,6 @@ reply layout, and answer with real data.
 
       One Python process should hold about 600 players before ticks run late. Past that: run matches in more
       processes (the split-server plan), or move the game server to a faster language.
-- [ ] Check the batched packets and resends with real clients (largest packet is 1024 bytes; the client has taken 953)
+- [x] Real client on the batched server (2026-10-30): login, join, walk, fire, die, respawn all fine, one resend seen
 - [ ] Bandwidth per player is about 22 KB/s at 32 per match; most of it is moves. Send fewer for robots behind or
       far away, or pack moves smaller, if hosting costs matter
