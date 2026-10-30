@@ -77,6 +77,48 @@ client then needs the moved login port).
 
 Back up `accounts.json` and `characters.json` together. Stop the server with Ctrl+C so pending stats are saved.
 
+## Split servers
+
+By default one program does everything. For more players, run login, gate and game servers as separate programs:
+
+```
+python server/start_split.py --games 3
+```
+
+| Server | Keeps | Does |
+|--------|-------|------|
+| login | accounts, bans, admin commands | Checks passwords, sends players to the emptiest gate |
+| gate | characters | Hall, shop, characters. Sends players to the emptiest game server |
+| game | nothing | Battles. Reports kills and stats to the gate |
+
+Each game server is one process, so more of them use more CPU cores. Each server gets a folder under `split/`.
+To move an existing server, put `accounts.json` and `bans.json` in `split/login/`, and `characters.json` in
+`split/gate/`. Admin commands go to the login server:
+
+```
+MW_STATE_DIR=server/split/login python server/tools/admin.py who
+```
+
+`start_split.py` does not restart a server that dies.
+
+### On several machines
+
+Set these yourself on each machine and run `python loginserver.py`:
+
+| Setting | On | What |
+|---------|----|------|
+| `MW_ROLE` | all | `login`, `gate` or `game` |
+| `MW_PUBLIC_IP` | gate, game | The address players connect to |
+| `MW_LINK_BIND` | login, gate | Address of the private ports (6011, 6012). Use a private network address |
+| `MW_LOGIN_LINK` | gate | Address of the login server |
+| `MW_GATE_LINK` | game | Address of the gate |
+| `MW_GAME_PORT` | game | UDP port, if a machine runs more than one |
+
+Copy `internal.key` to every server and `ticket.pub` from login to each gate. Never copy `ticket.key`: it makes logins.
+
+The private ports check `internal.key` and sign every message, but they are not encrypted. Keep them off the
+internet: use a private network or a VPN between machines.
+
 ## Admin commands
 
 Type them into the server window, or from another window on the same machine:

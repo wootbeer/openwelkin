@@ -6,6 +6,10 @@ server/characters.json
 server/accounts.json
 server/bans.json
 server/admin.key
+server/internal.key
+server/ticket.key
+server/ticket.pub
+server/split/
 *.json.tmp
 *.log
 

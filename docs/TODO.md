@@ -134,6 +134,25 @@ reply layout, and answer with real data.
 - [ ] Watch a robot vanish on screen, and leave with a real second client (only fake players tried so far)
 - [x] Time played is saved when a player leaves
 
+## Split servers (2026-10-30, tested offline, not yet with the real client)
+- [x] MW_ROLE = login, gate or game; start_split.py runs them on one machine; tools/test_split.py checks them
+- [x] Login signs the session key with Ed25519, a gate holds only the public key, each key works once. The battle
+      ticket is a u32 and cannot be signed: the gate announces it to the game server, with the character
+- [x] Private links (cluster.py): both ends prove they hold internal.key, every message is signed and numbered
+- [x] Players go to the emptiest gate and game server; stats and log lines go to the gate, and wait if it is away
+- [x] who, matches, kick, ban and IP ban work across servers
+- [ ] Try it with the real client: the signed session key is about 170 characters, the client has only had 32.
+      If the client breaks on it, have login announce a short key to the gate over the link instead
+- [ ] One gate has been tested, more should work: login already picks the emptiest. Bans must reach all, kick asks all
+- [ ] A game server that dies: players see nothing until they time out; tell them
+- [ ] Not tested yet: restarting a gate or game server while the others run, and reports waiting while the gate is away
+- [ ] SQLite or MariaDB in place of the JSON files; web site
+- Load test, 2026-10-30: 800 fake players on 3 game servers, about 267 each: 12 ms tick (of 33), 38% of one core each,
+  6 MB/s out each, no errors, 2237 log lines reached the gate. Move delay not measured: the load tester was removed
+  from disk during the run (see below)
+- Windows note: COMODO on the dev PC appears to delete server/tools/loadtest.py (and copies of it) shortly after it
+  runs. `git restore server/tools/loadtest.py` brings it back. An exclusion for C:\dev\openwelkin should stop this
+
 ## Performance (2026-10-29)
 - [x] One game loop thread for all matches at 30 ticks/s instead of a thread per match and a timer thread per shot
 - [x] Events queued per player and sent once per tick, several to a packet (join: 43 messages in 16 packets)

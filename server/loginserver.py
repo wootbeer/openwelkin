@@ -30,18 +30,21 @@ First packet seen (SYN, resent every 3s, released after 3 tries):
 Server side builder to copy: Dgram_Accept_Bluider_Process::make_respond_packet (IONetwork.dll 0x100407c0).
 SAP NAT detection (ADServer, UDP 5876) sends: fb 00 00 dc ff 12 00 00 00 00 00 00 83 04 "1000".
 """
-import hashlib, heapq, hmac, ipaddress, itertools, json, math, os, random, re, secrets, socket, struct, sys
+import collections, hashlib, heapq, hmac, ipaddress, itertools, json, math, os, random, re, secrets, socket, struct, sys
 import threading, time, traceback
 
+import cluster
 import fdp
 import snapshots
 
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric import ed25519, padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATE_DIR = os.environ.get("MW_STATE_DIR") or HERE  # accounts, characters, bans and logs
+ROLE = os.environ.get("MW_ROLE", "all").lower()  # all = one program; login, gate, game = split servers (cluster.py)
 PORT_OFFSET = int(os.environ.get("MW_PORT_OFFSET", "0") or 0)  # added to every port (a second server on one machine)
 LOGIN_PORT = 6001 + PORT_OFFSET
 NAT_PORT = 5876 + PORT_OFFSET    # client NAT probe (only logged)
@@ -53,7 +56,12 @@ PUBLIC_IP = os.environ.get("MW_PUBLIC_IP", "127.0.0.1")
 GATE_IP = int.from_bytes(socket.inet_aton(PUBLIC_IP), "big")  # host byte order
 GATE_PORT = 6002 + PORT_OFFSET
 GAME_IP = GATE_IP
-GAME_PORT = 6003 + PORT_OFFSET
+GAME_PORT = int(os.environ.get("MW_GAME_PORT", "0") or 0) or 6003 + PORT_OFFSET  # one per game server
+LOGIN_LINK_PORT = 6011 + PORT_OFFSET  # gates connect here (private)
+GATE_LINK_PORT = 6012 + PORT_OFFSET   # game servers connect here (private)
+LINK_BIND = os.environ.get("MW_LINK_BIND", "127.0.0.1")  # address the private ports listen on
+LOGIN_LINK = os.environ.get("MW_LOGIN_LINK", "127.0.0.1")  # where a gate finds the login server
+GATE_LINK = os.environ.get("MW_GATE_LINK", "127.0.0.1")    # where a game server finds its gate
 SPAWN_FACING = (0.953, 0.0, -0.304)  # facing used when (re)spawning the player (per-battlefield spawn points: BATTLEFIELDS)
 WEAPON_AMMO = 120.0  # Viper (3101): flyweight magazine +0x160 (fire mode 0 costs 4, +0x9d8)
 DUMMY_HP, WEAPON_DAMAGE, RESPAWN_DELAY = 1000, 40.0, 5.0  # target dummy armor, Viper damage per shot, seconds
@@ -926,6 +934,11 @@ class Session:
             return self.reply(msg, result=13000)
         if bfid not in BATTLEFIELDS:
             return self.reply(msg, result=17000)
+        if ROLE == "gate":
+            place = place_in_game(self.account, cid, bfid)
+            if place is None:
+                return self.reply(msg, result=1)  # no game server: "Request Timeout"
+            return self.reply(msg, struct.pack("<IIHI", 1, *place))
         self.reply(msg, struct.pack("<IIHI", 1, GAME_IP, GAME_PORT, issue_ticket(cid, bfid)))
 
     def on_announcements(self, msg):
@@ -1291,14 +1304,23 @@ class Session:
         # success body as read by the (10,10000) observer in Game.dll (0x103fe961):
         #   u32 user id | u32 next-server ip | u16 next-server port | str session key | 8 bytes | 4 bytes | u32 ip2 | u8 flag
         self.account = account
-        key = secrets.token_hex(16)
-        with SESSION_LOCK:
-            now = time.time()
-            for k in [k for k, (_, exp) in SESSIONS.items() if exp < now]:
-                del SESSIONS[k]
-            SESSIONS[key] = (account, now + SESSION_TTL)
-        body = (struct.pack("<IIH", 1, GATE_IP, GATE_PORT) + wstr(key)
-                + b"\0" * 8 + b"\0" * 4 + struct.pack("<IB", GATE_IP, 1))  # last u8: ID verified (LocalUser +0x7d); 0 shows the anti-addiction banner
+        gate_ip, gate_port = GATE_IP, GATE_PORT
+        if ROLE == "login":
+            gate = min(LINKS, key=lambda g: g.load, default=None)
+            if gate is None:
+                log(f"{self.addr} login refused: no gate server connected")
+                return self.reply(msg, result=1)  # "Request Timeout"
+            gate_ip, gate_port = gate.ip, gate.port
+            key = signed_session(account)
+        else:
+            key = secrets.token_hex(16)
+            with SESSION_LOCK:
+                now = time.time()
+                for k in [k for k, (_, exp) in SESSIONS.items() if exp < now]:
+                    del SESSIONS[k]
+                SESSIONS[key] = (account, now + SESSION_TTL)
+        body = (struct.pack("<IIH", 1, gate_ip, gate_port) + wstr(key)
+                + b"\0" * 8 + b"\0" * 4 + struct.pack("<IB", gate_ip, 1))  # last u8: ID verified (LocalUser +0x7d); 0 shows the anti-addiction banner
         self.reply(msg, body)
 
     def key_exchange(self):
@@ -1310,8 +1332,11 @@ class Session:
         # gate connections send "<session key> <hash>" as the first message; recover the account from it
         if len(first_msg) > 4:
             key, _ = read_wstr(first_msg, 0)
-            with SESSION_LOCK:
-                account, expiry = SESSIONS.pop(key.split(" ")[0], (None, 0))
+            if ROLE == "gate":
+                account, expiry = redeem_signed_session(key.split(" ")[0])
+            else:
+                with SESSION_LOCK:
+                    account, expiry = SESSIONS.pop(key.split(" ")[0], (None, 0))
             if account and expiry >= time.time():
                 self.account = account
                 log(f"{self.addr} gate session for account {self.account!r}")
@@ -1351,6 +1376,7 @@ def go_online(session):
         log(f"{old.addr} closing: account {session.account!r} logged in again from {session.addr}")
         old.close()
         leave_game(session.account, "logged in again")
+    report_load()
 
 
 def go_offline(session):
@@ -1361,10 +1387,10 @@ def go_offline(session):
             del ONLINE[session.account]
     if gone:
         leave_game(session.account, "logged out")
+        report_load()
 
 
-def leave_game(account, reason):
-    """Close the account's game-server sessions (quit, kicked, banned, logged in again)."""
+def leave_game_local(account, reason):
     if GAME_SERVER is None:
         return
     with GAME_LOCK:
@@ -1373,8 +1399,19 @@ def leave_game(account, reason):
                 GAME_SERVER.close(peer, reason)
 
 
+def leave_game(account, reason):
+    """Close the account's game-server sessions (quit, kicked, banned, logged in again)."""
+    if ROLE == "gate":
+        for g in list(LINKS):
+            g.send("leave", account=account, reason=reason)
+        return
+    leave_game_local(account, reason)
+
+
 def kick(account, reason):
     """Disconnect an account from the hall and any battle. True if it was online."""
+    if ROLE == "login":
+        return any([ask(g, "kick", False, account=account, reason=reason) for g in list(LINKS)])
     with ONLINE_LOCK:
         session = ONLINE.get(account)
     if session:
@@ -1426,6 +1463,270 @@ HANDLERS = {
 CONNECTIONS = threading.BoundedSemaphore(MAX_CONNECTIONS)
 
 
+# --- split servers: login <- gate <- game (cluster.py) ---------------------------------------------------------------
+# The client only gives the game server a u32 ticket, too small to sign, so the gate announces each ticket to the game
+# server over the private link, with the character. The session key is a string: login signs it, and a gate needs only
+# the public key, so a gate never holds what makes logins.
+LINKS = []            # login: its gates; gate: its game servers
+UPLINK = None         # gate: link to login; game: link to its gate
+IP_BANS = []          # gate, game: [network, until] from login (bans.json lives only there)
+TICKET_KEY_FILE, TICKET_PUB_FILE = "ticket.key", "ticket.pub"
+TICKET_SIGNER, TICKET_VERIFIER = None, None
+SIGNED_PAYLOAD = struct.Struct("<I8s")  # u32 expiry | 8 random bytes; then the account name, then the signature
+SPENT_SESSIONS = {}   # gate: random part of used session keys -> expiry
+LINK_LOCK = threading.Lock()
+LOAD_EVERY = 2.0      # seconds between a game server's load reports
+
+
+def link_key():
+    return cluster.load_key(os.path.join(STATE_DIR, "internal.key"))
+
+
+def ask(link, kind, default, **fields):
+    """A request that treats a lost server as no answer: admin commands report what the others could say."""
+    try:
+        return link.request(kind, **fields)
+    except ConnectionError as e:
+        log(f"[link] {kind}: {e}")
+        return default
+
+
+def ticket_private_key():
+    """login: the signing key, made on first start. Copy ticket.pub next to each gate's data."""
+    path = os.path.join(STATE_DIR, TICKET_KEY_FILE)
+    try:
+        return ed25519.Ed25519PrivateKey.from_private_bytes(bytes.fromhex(open(path, encoding="ascii").read()))
+    except (OSError, ValueError):
+        pass
+    key = ed25519.Ed25519PrivateKey.generate()
+    raw = key.private_bytes(serialization.Encoding.Raw, serialization.PrivateFormat.Raw,
+                            serialization.NoEncryption())
+    with open(path, "w", encoding="ascii") as f:
+        f.write(raw.hex())
+    pub = key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    with open(os.path.join(STATE_DIR, TICKET_PUB_FILE), "w", encoding="ascii") as f:
+        f.write(pub.hex())
+    return key
+
+
+def signed_session(account):
+    """A session key the gate can check by itself: hex of payload | account | Ed25519 signature."""
+    data = SIGNED_PAYLOAD.pack(int(time.time() + SESSION_TTL), secrets.token_bytes(8)) + account.encode("latin-1")
+    return (data + TICKET_SIGNER.sign(data)).hex()
+
+
+def redeem_signed_session(key):
+    """(account, expiry) for a good unused key, else (None, 0). Each key works once."""
+    try:
+        raw = bytes.fromhex(key)
+        data, signature = raw[:-64], raw[-64:]
+        TICKET_VERIFIER.verify(signature, data)
+        expiry, nonce = SIGNED_PAYLOAD.unpack_from(data)
+        account = data[SIGNED_PAYLOAD.size:].decode("latin-1")
+    except (ValueError, struct.error, InvalidSignature):
+        return None, 0
+    now = time.time()
+    with SESSION_LOCK:
+        for k in [k for k, exp in SPENT_SESSIONS.items() if exp < now]:
+            del SPENT_SESSIONS[k]
+        if nonce in SPENT_SESSIONS:
+            return None, 0
+        SPENT_SESSIONS[nonce] = expiry
+    return account, expiry
+
+
+def report_load():
+    if ROLE == "gate" and UPLINK:
+        with ONLINE_LOCK:
+            n = len(ONLINE)
+        UPLINK.send("load", players=n)
+
+
+def place_in_game(account, cid, bfid):
+    """gate: announce a player to the emptiest game server: (ip, port, ticket), or None if none answers."""
+    for g in sorted(LINKS, key=lambda g: g.load):
+        ticket = secrets.randbits(32) or 1
+        if ask(g, "expect", False, ticket=ticket, account=account, cid=cid, bfid=bfid, character=STORE.by_id(cid)):
+            g.load += 1  # until its next report
+            return g.ip, g.port, ticket
+    log(f"no game server for {account!r}")
+    return None
+
+
+class RemoteStore(Store):
+    """game: the characters of players the gate announced. Changes are made here and reported to the gate, which
+    owns characters.json."""
+    pending = collections.deque(maxlen=10000)  # kept while the gate is away
+
+    def __init__(self):
+        self.data = {"next_id": 0, "accounts": {}}
+
+    def save(self):
+        pass
+
+    def announce(self, account, character):
+        with self.lock:
+            chars = self.data["accounts"].setdefault(account, [])
+            chars[:] = [c for c in chars if c["id"] != character["id"]] + [character]
+            self.indexed = None
+
+    def add_stats(self, cid, **deltas):
+        super().add_stats(cid, **deltas)
+        self.report("stats", cid=cid, deltas=deltas)
+
+    def add_log(self, cid, text, kind=0):
+        super().add_log(cid, text, kind)
+        self.report("log", cid=cid, text=text, level=kind)
+
+    def report(self, what, **fields):
+        self.pending.append((what, fields))
+        drain_reports()
+
+
+def drain_reports():
+    with LINK_LOCK:
+        while UPLINK and STORE.pending:
+            what, fields = STORE.pending[0]
+            if not UPLINK.send(what, **fields):
+                return
+            STORE.pending.popleft()
+
+
+def player_count():
+    with GAME_LOCK:
+        return sum(len(m.peers or []) for m in MATCHES.values())
+
+
+def active_ip_bans():
+    return [[net, r["until"]] for net, r in BANS.active("ips").items()]
+
+
+def push_bans():
+    nets = active_ip_bans() if ROLE == "login" else IP_BANS
+    for g in list(LINKS):
+        g.send("bans", nets=nets)
+
+
+def lower_server_opened(link):
+    """login: a gate connected; gate: a game server connected. Ask where clients find it."""
+    link.load, link.port = 0, 0
+    spawn(register_lower_server, link)  # not on the reader thread: it has to read the answer
+
+
+def register_lower_server(link):
+    info = ask(link, "hello", None)
+    if not info:
+        return link.close()
+    link.ip, link.port = info["ip"], info["port"]
+    with LINK_LOCK:
+        LINKS.append(link)
+    link.send("bans", nets=active_ip_bans() if ROLE == "login" else IP_BANS)
+    log(f"[link] server on port {link.port} connected")
+
+
+def lower_server_closed(link):
+    with LINK_LOCK:
+        if link in LINKS:
+            LINKS.remove(link)
+            log(f"[link] server on port {link.port} left")
+
+
+def on_gate_message(link, msg):
+    """login: messages from a gate."""
+    if msg["t"] == "load":
+        link.load = msg["players"]
+
+
+def on_login_message(link, msg):
+    """gate: requests from login."""
+    global IP_BANS
+    kind = msg["t"]
+    if kind == "hello":
+        return {"ip": GATE_IP, "port": GATE_PORT}
+    if kind == "bans":
+        IP_BANS = msg["nets"]
+        return push_bans()
+    if kind == "kick":
+        return kick(msg["account"], msg["reason"])
+    if kind == "ipkick":
+        return ip_kick(msg["net"])
+    if kind == "who":
+        return who_rows()
+    if kind == "matches":
+        return match_rows()
+    return None
+
+
+def on_game_server_message(link, msg):
+    """gate: messages from a game server."""
+    kind = msg["t"]
+    if kind == "stats":
+        STORE.add_stats(msg["cid"], **msg["deltas"])
+    elif kind == "log":
+        STORE.add_log(msg["cid"], msg["text"], msg["level"])
+    elif kind == "load":
+        link.load = msg["players"]
+
+
+def on_gate_request(link, msg):
+    """game: requests from the gate."""
+    global IP_BANS
+    kind = msg["t"]
+    if kind == "hello":
+        return {"ip": GAME_IP, "port": GAME_PORT}
+    if kind == "expect":
+        STORE.announce(msg["account"], msg["character"])
+        with GAME_LOCK:
+            TICKETS[msg["ticket"]] = (msg["cid"], msg["bfid"], time.time() + TICKET_TTL)
+        return True
+    if kind == "leave":
+        leave_game_local(msg["account"], msg["reason"])
+    elif kind == "ipkick":
+        ip_kick_game(msg["net"])
+    elif kind == "bans":
+        IP_BANS = msg["nets"]
+    elif kind == "where":
+        return local_where()
+    elif kind == "matches":
+        return local_match_rows()
+    return None
+
+
+def uplink_opened(link):
+    global UPLINK
+    UPLINK = link
+    if ROLE == "gate":
+        report_load()
+    else:
+        drain_reports()
+
+
+def uplink_closed(link):
+    global UPLINK
+    if UPLINK is link:
+        UPLINK = None
+
+
+def load_loop():
+    """game: tell the gate how full this server is, for placing players."""
+    while True:
+        time.sleep(LOAD_EVERY)
+        if UPLINK:
+            UPLINK.send("load", players=player_count())
+
+
+def banned_ip(ip):
+    """Does an IP ban cover this address? bans.json on login; the list login sent on gate and game servers."""
+    if ROLE in ("all", "login"):
+        return BANS.ip(ip)
+    now = time.time()
+    try:
+        addr = ipaddress.ip_address(ip)
+        return any((not until or until > now) and addr in ipaddress.ip_network(net) for net, until in IP_BANS)
+    except ValueError:
+        return False
+
+
 def serve(port):
     s = socket.socket()
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -1434,7 +1735,7 @@ def serve(port):
     log(f"listening on {port}")
     while True:
         c, a = s.accept()
-        if port != LOGIN_PORT and BANS.ip(a[0]):  # the login port answers with the client's "IP is locked" text
+        if port != LOGIN_PORT and banned_ip(a[0]):  # the login port answers with the client's "IP is locked" text
             log(f"[{port}] connect from {a} refused: IP banned")
             c.close()
             continue
@@ -2123,23 +2424,50 @@ def fmt_until(until):
     return "permanent" if not until else "until " + time.strftime("%Y-%m-%d %H:%M", time.localtime(until))
 
 
-def cmd_who(args, actor):
+def local_where():
+    """account -> where its player is, for this process's matches."""
+    with GAME_LOCK:
+        return {STORE.account_of(p.cid): f"{p.name} in {m.bf['name']} (match {m.id})"
+                for m in MATCHES.values() for p in m.peers or []}
+
+
+def who_rows():
     with ONLINE_LOCK:
         online = dict(ONLINE)
     where = {}
+    if ROLE == "gate":
+        for g in list(LINKS):
+            where.update({a: f"{w}, game port {g.port}" for a, w in ask(g, "where", {}).items()})
+    else:
+        where = local_where()
+    return [f"{a}  {s.addr[0]}  {where.get(a, 'in the hall')}" for a, s in sorted(online.items())]
+
+
+def local_match_rows():
     with GAME_LOCK:
-        for m in MATCHES.values():
-            for p in m.peers or []:
-                where[STORE.account_of(p.cid)] = f"{p.name} in {m.bf['name']} (match {m.id})"
-    rows = [f"{a}  {s.addr[0]}  {where.get(a, 'in the hall')}" for a, s in sorted(online.items())]
-    return "\n".join(rows) or "nobody online"
+        return [f"match {m.id}: {m.bf['name']}, {len(m.peers)} player(s): {', '.join(p.name for p in m.peers)}"
+                for m in MATCHES.values() if m.peers]
+
+
+def match_rows():
+    if ROLE == "gate":
+        return [f"game port {g.port} {r}" for g in list(LINKS) for r in ask(g, "matches", [])]
+    return local_match_rows()
+
+
+def gather(kind, local):
+    """Rows from every gate when this is the login server, else from this process."""
+    if ROLE == "login":
+        return [r for g in list(LINKS) for r in ask(g, kind, [])]
+    return local()
+
+
+def cmd_who(args, actor):
+    return "\n".join(gather("who", who_rows)) or "nobody online"
 
 
 def cmd_matches(args, actor):
-    with GAME_LOCK:
-        rows = [f"match {m.id}: {m.bf['name']}, {len(m.peers)} player(s): {', '.join(p.name for p in m.peers)}"
-                for m in MATCHES.values() if m.peers]
-    return "\n".join(rows) or "no matches"
+    return "\n".join(gather("matches", match_rows)) or "no matches"
 
 
 def cmd_kick(args, actor):
@@ -2178,22 +2506,45 @@ def cmd_ipban(args, actor):
         return "usage: ipban <address or network> [time] [reason]"
     until, reason = ban_args(args[1:])
     BANS.add("ips", str(net), until, reason, actor)
+    if ROLE == "login":
+        push_bans()
+        hit = sum(ask(g, "ipkick", 0, net=str(net)) for g in list(LINKS))
+    else:
+        hit = ip_kick(str(net))
+    return f"banned {net} {fmt_until(until)}" + (f": {reason}" if reason else "") + f"; kicked {hit}"
+
+
+def ip_kick(net):
+    """Disconnect everyone on a network from this process, and a gate's game servers. Returns how many accounts."""
+    network = ipaddress.ip_network(net)
     with ONLINE_LOCK:
-        hit = [a for a, s in ONLINE.items() if ipaddress.ip_address(s.addr[0]) in net]
+        hit = [a for a, s in ONLINE.items() if ipaddress.ip_address(s.addr[0]) in network]
     for a in hit:
         kick(a, "IP banned")
+    if ROLE == "gate":
+        for g in list(LINKS):
+            g.send("ipkick", net=net)
+    else:
+        ip_kick_game(net)
+    return len(hit)
+
+
+def ip_kick_game(net):
+    network = ipaddress.ip_network(net)
     if GAME_SERVER:
         with GAME_LOCK:
-            for peer in [p for p in GAME_SERVER.peers.values() if ipaddress.ip_address(p.addr[0]) in net]:
+            for peer in [p for p in GAME_SERVER.peers.values() if ipaddress.ip_address(p.addr[0]) in network]:
                 GAME_SERVER.close(peer, "IP banned")
-    return f"banned {net} {fmt_until(until)}" + (f": {reason}" if reason else "") + f"; kicked {len(hit)}"
 
 
 def cmd_unipban(args, actor):
     net = ip_network(args[0]) if len(args) == 1 else None
     if net is None:
         return "usage: unipban <address or network>"
-    return f"unbanned {net}" if BANS.remove("ips", str(net)) else f"{net} is not banned"
+    found = BANS.remove("ips", str(net))
+    if ROLE == "login":
+        push_bans()
+    return f"unbanned {net}" if found else f"{net} is not banned"
 
 
 def cmd_bans(args, actor):
@@ -2302,7 +2653,7 @@ def serve_udp(port):
         GAME_SERVER = server
         server.on_message = on_game_message
         server.on_close = on_game_close
-        server.allow = lambda addr: not BANS.ip(addr[0])
+        server.allow = lambda addr: not banned_ip(addr[0])
         threading.Thread(target=game_loop, args=(server,), daemon=True).start()
     while True:
         try:
@@ -2320,16 +2671,62 @@ def serve_udp(port):
             debug(f"[udp {port}] {addr} {len(data)} bytes\n{hexdump(data)}")
 
 
-if __name__ == "__main__":
-    if not PRODUCTS or not ROBOTS:
-        log("WARNING: game data missing (data/flyweights). Run: python setup_data.py <your MarsWar install folder>")
-    threading.Thread(target=STORE.flush_loop, daemon=True).start()
+def spawn(target, *args):
+    threading.Thread(target=target, args=args, daemon=True).start()
+
+
+def start_all():
+    spawn(STORE.flush_loop)
     for p in (GAME_PORT, NAT_PORT):
-        threading.Thread(target=serve_udp, args=(p,), daemon=True).start()
+        spawn(serve_udp, p)
     for p in (LOGIN_PORT, GATE_PORT, GAME_PORT):
-        threading.Thread(target=serve, args=(p,), daemon=True).start()
-    threading.Thread(target=serve_admin, args=(ADMIN_PORT,), daemon=True).start()
-    if sys.stdin and sys.stdin.isatty():
-        threading.Thread(target=console_loop, daemon=True).start()
+        spawn(serve, p)
+
+
+def start_login():
+    global TICKET_SIGNER
+    TICKET_SIGNER = ticket_private_key()
+    for key in [k for k in HANDLERS if k != (10, 10000)]:  # this server holds accounts and does nothing else
+        del HANDLERS[key]
+    spawn(cluster.listen, LINK_BIND, LOGIN_LINK_PORT, link_key(), on_gate_message, lower_server_opened,
+          lower_server_closed, log)
+    spawn(serve_udp, NAT_PORT)
+    spawn(serve, LOGIN_PORT)
+
+
+def start_gate():
+    global TICKET_VERIFIER
+    with open(os.path.join(STATE_DIR, TICKET_PUB_FILE), encoding="ascii") as f:
+        TICKET_VERIFIER = ed25519.Ed25519PublicKey.from_public_bytes(bytes.fromhex(f.read().strip()))
+    PRE_AUTH.clear()         # accounts are checked by the login server only
+    del HANDLERS[(10, 10000)]
+    secret = link_key()
+    spawn(STORE.flush_loop)
+    spawn(cluster.listen, LINK_BIND, GATE_LINK_PORT, secret, on_game_server_message, lower_server_opened,
+          lower_server_closed, log)
+    spawn(cluster.connect_forever, LOGIN_LINK, LOGIN_LINK_PORT, secret, on_login_message, uplink_opened, uplink_closed,
+          log)
+    spawn(serve, GATE_PORT)
+
+
+def start_game():
+    global STORE
+    STORE = RemoteStore()
+    spawn(cluster.connect_forever, GATE_LINK, GATE_LINK_PORT, link_key(), on_gate_request, uplink_opened,
+          uplink_closed, log)
+    spawn(load_loop)
+    spawn(serve_udp, GAME_PORT)
+
+
+if __name__ == "__main__":
+    if ROLE not in ("all", "login", "gate", "game"):
+        sys.exit(f"MW_ROLE must be all, login, gate or game, not {ROLE!r}")
+    if ROLE != "login" and (not PRODUCTS or not ROBOTS):
+        log("WARNING: game data missing (data/flyweights). Run: python setup_data.py <your MarsWar install folder>")
+    {"all": start_all, "login": start_login, "gate": start_gate, "game": start_game}[ROLE]()
+    if ROLE in ("all", "login"):
+        spawn(serve_admin, ADMIN_PORT)
+        if sys.stdin and sys.stdin.isatty():
+            spawn(console_loop)
     while True:
         time.sleep(1)
