@@ -5,11 +5,11 @@
     python start_split.py --games 2
 
 Each gets a folder under --state (default: split):
-    login/   accounts.json, bans.json, admin.key, admin.log, ticket.key
-    gate/    characters.json
+    login/   accounts.db, admin.key, admin.log, ticket.key
+    gate/    characters.db
     game1/   only a log
 
-To move an existing one-program server: put accounts.json and bans.json in login/ and characters.json in gate/.
+To move an existing one-program server: put accounts.db in login/ and characters.db in gate/.
 Ctrl+C stops all of them. A server that dies is not restarted; this prints a line when one does. For admin commands:
     MW_STATE_DIR=split/login python tools/admin.py who
 

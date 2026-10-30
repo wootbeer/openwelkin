@@ -5,6 +5,10 @@ server/data/
 server/characters.json
 server/accounts.json
 server/bans.json
+server/*.imported
+server/*.db
+server/*.db-wal
+server/*.db-shm
 server/admin.key
 server/internal.key
 server/ticket.key

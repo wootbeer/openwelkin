@@ -8,14 +8,15 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+os.environ.setdefault("MW_STATE_DIR", tempfile.mkdtemp(prefix="mw-test-"))  # never the real save files
 import loginserver as ls  # noqa: E402
 
 ls.log = lambda *a, **k: None
 ls.STORE.save = lambda: None
 tmp = tempfile.mkdtemp()
-ls.Accounts.path = os.path.join(tmp, "accounts.json")
+ls.Accounts.path = os.path.join(tmp, "accounts.db")
 ls.ACCOUNTS = ls.Accounts()
-ls.Bans.path = os.path.join(tmp, "bans.json")
+ls.Bans.path = os.path.join(tmp, "accounts.db")
 ls.BANS = ls.Bans()
 ls.ADMIN_LOG = os.path.join(tmp, "admin.log")
 

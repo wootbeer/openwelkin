@@ -67,15 +67,18 @@ client then needs the moved login port).
 
 | File | What |
 |------|------|
-| `accounts.json` | Account names and salted scrypt password hashes. Never contains passwords. |
-| `characters.json` | Characters, stats, items, talents, event log. Battle stats are saved every few seconds. |
-| `bans.json` | Account and IP bans. |
+| `accounts.db` | SQLite: account names, salted scrypt password hashes (never passwords), and account and IP bans. |
+| `characters.db` | SQLite: characters, stats, items, talents, event log. Battle stats are saved every few seconds. |
 | `admin.key` | Secret for `tools/admin.py`, made on first start. Anyone who can read it can run admin commands. |
 | `admin.log` | Every admin command, who ran it and the result. |
 | `loginserver.log` | Server log. Contains no passwords or keys. With `MW_DEBUG=1` it grows fast. |
 | `data/flyweights/` | Item, weapon and robot data unpacked from your client by `setup_data.py`. |
 
-Back up `accounts.json` and `characters.json` together. Stop the server with Ctrl+C so pending stats are saved.
+Stop the server with Ctrl+C before you back up, so pending stats are saved, then copy `accounts.db` and
+`characters.db` together. Do not copy them while the server runs.
+
+Old `accounts.json`, `bans.json` and `characters.json` files are imported on the first start, then renamed to
+`*.imported`. You can keep those as a backup or delete them.
 
 ## Split servers
 
@@ -87,13 +90,14 @@ python server/start_split.py --games 3
 
 | Server | Keeps | Does |
 |--------|-------|------|
-| login | accounts, bans, admin commands | Checks passwords, sends players to the emptiest gate |
-| gate | characters | Hall, shop, characters. Sends players to the emptiest game server |
+| login | `accounts.db`, admin commands | Checks passwords, sends players to the emptiest gate |
+| gate | `characters.db` | Hall, shop, characters. Sends players to the emptiest game server |
 | game | nothing | Battles. Reports kills and stats to the gate |
 
 Each game server is one process, so more of them use more CPU cores. Each server gets a folder under `split/`.
-To move an existing server, put `accounts.json` and `bans.json` in `split/login/`, and `characters.json` in
-`split/gate/`. Admin commands go to the login server:
+To move an existing server, put `accounts.db` in `split/login/` and `characters.db` in `split/gate/`. Each database
+stays on its own server: a gate never sees password hashes, and a game server holds no database at all. Admin commands
+go to the login server:
 
 ```
 MW_STATE_DIR=server/split/login python server/tools/admin.py who

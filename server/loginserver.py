@@ -30,10 +30,11 @@ First packet seen (SYN, resent every 3s, released after 3 tries):
 Server side builder to copy: Dgram_Accept_Bluider_Process::make_respond_packet (IONetwork.dll 0x100407c0).
 SAP NAT detection (ADServer, UDP 5876) sends: fb 00 00 dc ff 12 00 00 00 00 00 00 83 04 "1000".
 """
-import collections, hashlib, heapq, hmac, ipaddress, itertools, json, math, os, random, re, secrets, socket, struct, sys
+import collections, hashlib, heapq, hmac, ipaddress, itertools, math, os, random, re, secrets, socket, struct, sys
 import threading, time, traceback
 
 import cluster
+import db
 import fdp
 import snapshots
 
@@ -366,30 +367,41 @@ def read_wstr(b, off):
 
 
 class Store:
-    """Accounts and their characters, persisted to characters.json."""
-    path = os.path.join(STATE_DIR, "characters.json")
+    """Accounts and their characters: all in memory for reading, saved to characters.db (gate only)."""
+    path = os.path.join(STATE_DIR, "characters.db")
     lock = threading.Lock()
     indexed = None  # the data the character id index was built from
 
     def __init__(self):
-        try:
-            self.data = json.load(open(self.path, encoding="utf-8"))
-        except (OSError, ValueError):
-            self.data = {"next_id": 1000, "accounts": {}}
+        self.data = {"next_id": 1000, "accounts": {}}
+        self.con = None
+        self.changed, self.lines = set(), []  # character ids and event log lines not saved yet
+        if ROLE in ("all", "gate"):
+            self.con = db.open_characters(self.path)
+            self.data = db.load_characters(self.con)
+        self.names = {c["name"].lower() for chars in self.data["accounts"].values() for c in chars}
 
     dirty = False
     SAVE_INTERVAL = 5.0  # seconds; battle stats and log lines are written in batches
 
     def save(self):
-        """Write now (call with the lock held). Atomic: a crash never leaves a half-written file."""
-        tmp = self.path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(self.data, f, indent=2)
-        os.replace(tmp, self.path)
+        """Write what changed now (call with the lock held), all or nothing."""
+        with self.con:
+            for cid in self.changed:
+                account, c = self.lookup(cid)
+                if c:
+                    db.write_character(self.con, account, c)
+            db.add_log_lines(self.con, self.lines, LOG_KEEP)
+        self.changed.clear()
+        self.lines.clear()
         self.dirty = False
 
-    def mark_dirty(self):
+    def mark_dirty(self, cid, line=None):
         """Save later (call with the lock held): for frequent, low-value changes like kills and log lines."""
+        if line:
+            self.lines.append((cid, *line))
+        else:
+            self.changed.add(cid)
         self.dirty = True
 
     def flush(self):
@@ -402,17 +414,22 @@ class Store:
             time.sleep(self.SAVE_INTERVAL)
             try:
                 self.flush()
-            except OSError as e:
+            except (OSError, db.Error) as e:
                 log(f"store: save failed: {e!r}")
 
     def characters(self, account):
         return self.data["accounts"].get(account, [])
 
     def create(self, account, name, **fields):
+        """The new character's id, or None if the name was taken."""
         with self.lock:
+            if name.lower() in self.names:
+                return None
+            self.names.add(name.lower())
             cid = self.data["next_id"]; self.data["next_id"] += 1
             self.data["accounts"].setdefault(account, []).append(dict(id=cid, name=name, **fields))
             self.indexed = None
+            self.mark_dirty(cid)
             self.save()
             return cid
 
@@ -438,7 +455,7 @@ class Store:
             st = c.setdefault("stats", {})
             for k, v in deltas.items():
                 st[k] = st.get(k, START_MONEY if k == "money" else START_POINTS if k == "points" else 0) + v
-            self.mark_dirty()
+            self.mark_dirty(cid)
 
     def buy(self, cid, item, field, price):
         """Charge price from stats[field] and add item to the character's items. False if not enough."""
@@ -452,6 +469,7 @@ class Store:
                 return False
             st[field] = have - price
             c.setdefault("items", []).append(item)
+            self.mark_dirty(cid)
             self.save()
             return True
 
@@ -465,6 +483,7 @@ class Store:
             it["active"] = True
             days = it.get("days", 0)
             it["expires"] = 0 if days == 0 else int(time.time()) + days * 86400
+            self.mark_dirty(cid)
             self.save()
             return True
 
@@ -478,6 +497,7 @@ class Store:
                 return False
             t[str(tid)] = t.get(str(tid), 0) + 1
             c["robot"] = TALENTS[tid][0]  # fight in the robot just learned
+            self.mark_dirty(cid)
             self.save()
             return True
 
@@ -488,9 +508,10 @@ class Store:
             if not c:
                 return
             log_ = c.setdefault("log", [])
-            log_.append([int(time.time()), kind, text])
+            line = [int(time.time()), kind, text]
+            log_.append(line)
             del log_[:-LOG_KEEP]
-            self.mark_dirty()
+            self.mark_dirty(cid, line)
 
     def event_log(self, cid):
         return list((self.by_id(cid) or {}).get("log", []))
@@ -508,8 +529,7 @@ class Store:
         return st
 
     def name_taken(self, name):
-        low = name.lower()
-        return any(c["name"].lower() == low for chars in self.data["accounts"].values() for c in chars)
+        return name.lower() in self.names
 
     def find(self, account, cid):
         return next((c for c in self.characters(account) if c["id"] == cid), None)
@@ -521,17 +541,17 @@ atexit.register(STORE.flush)
 
 
 class Accounts:
-    """Account names and salted password hashes, kept apart from game data (accounts.json).
-    The release design moves this to the login server's own database."""
-    path = os.path.join(STATE_DIR, "accounts.json")
+    """Account names and salted password hashes, kept apart from game data (accounts.db, login server only)."""
+    path = os.path.join(STATE_DIR, "accounts.db")
     lock = threading.Lock()
     ROLES = ("player", "gm", "admin")
 
     def __init__(self):
-        try:
-            self.data = json.load(open(self.path, encoding="utf-8"))
-        except (OSError, ValueError):
-            self.data = {}
+        self.con = db.open_accounts(self.path) if ROLE in ("all", "login") else None
+
+    def get(self, account):
+        """(salt, hash, role) or None (call with the lock held)."""
+        return self.con.execute("SELECT salt, hash, role FROM accounts WHERE name = ?", (account,)).fetchone()
 
     @staticmethod
     def hash(password, salt):
@@ -540,68 +560,52 @@ class Accounts:
     def check(self, account, password):
         """'ok', 'created' or 'bad'. password is the raw bytes the client sent."""
         with self.lock:
-            rec = self.data.get(account)
+            rec = self.get(account)
             if rec is None:
                 if not AUTO_REGISTER:
                     return "bad"
                 salt = os.urandom(16)
-                self.data[account] = {"salt": salt.hex(), "hash": self.hash(password, salt).hex(),
-                                      "created": int(time.time())}
-                self.save()
+                with self.con:
+                    self.con.execute("INSERT INTO accounts (name, salt, hash, created) VALUES (?, ?, ?, ?)",
+                                     (account, salt.hex(), self.hash(password, salt).hex(), int(time.time())))
                 return "created"
-        good = hmac.compare_digest(self.hash(password, bytes.fromhex(rec["salt"])), bytes.fromhex(rec["hash"]))
+        good = hmac.compare_digest(self.hash(password, bytes.fromhex(rec[0])), bytes.fromhex(rec[1]))
         return "ok" if good else "bad"
 
-    def save(self):
-        """Write now (call with the lock held); atomic like Store.save."""
-        tmp = self.path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(self.data, f, indent=2)
-        os.replace(tmp, self.path)
+    def exists(self, account):
+        with self.lock:
+            return self.get(account) is not None
 
     def role(self, account):
-        return self.data.get(account, {}).get("role", "player")
+        with self.lock:
+            rec = self.get(account)
+        return rec[2] if rec else "player"
 
     def set_role(self, account, role):
-        with self.lock:
-            if account not in self.data:
-                return False
-            self.data[account]["role"] = role
-            self.save()
-            return True
+        with self.lock, self.con:
+            return self.con.execute("UPDATE accounts SET role = ? WHERE name = ?", (role, account)).rowcount > 0
 
 
 class Bans:
-    """Account and IP bans (bans.json): key -> {until (0 = permanent), reason, by, at}. IP keys are networks
-    (1.2.3.4/32 for one address). Expired bans are ignored and stay in the file until unbanned."""
-    path = os.path.join(STATE_DIR, "bans.json")
+    """Account and IP bans (in memory, saved to accounts.db): key -> {until (0 = permanent), reason, by, at}. IP keys
+    are networks (1.2.3.4/32 for one address). Expired bans are ignored and stay saved until unbanned."""
+    path = os.path.join(STATE_DIR, "accounts.db")
     lock = threading.Lock()
 
     def __init__(self):
-        try:
-            self.data = json.load(open(self.path, encoding="utf-8"))
-        except (OSError, ValueError):
-            self.data = {}
-        self.data.setdefault("accounts", {})
-        self.data.setdefault("ips", {})
-
-    def save(self):
-        tmp = self.path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(self.data, f, indent=2)
-        os.replace(tmp, self.path)
+        self.con = db.open_accounts(self.path) if ROLE in ("all", "login") else None
+        self.data = db.load_bans(self.con) if self.con else {"accounts": {}, "ips": {}}
 
     def add(self, kind, key, until, reason, by):
-        with self.lock:
-            self.data[kind][key] = {"until": int(until), "reason": reason, "by": by, "at": int(time.time())}
-            self.save()
+        with self.lock, self.con:
+            now = int(time.time())
+            self.con.execute("INSERT OR REPLACE INTO bans VALUES (?, ?, ?, ?, ?, ?)", (kind, key, int(until), reason, by, now))
+            self.data[kind][key] = {"until": int(until), "reason": reason, "by": by, "at": now}
 
     def remove(self, kind, key):
-        with self.lock:
-            found = self.data[kind].pop(key, None) is not None
-            if found:
-                self.save()
-            return found
+        with self.lock, self.con:
+            self.con.execute("DELETE FROM bans WHERE kind = ? AND target = ?", (kind, key))
+            return self.data[kind].pop(key, None) is not None
 
     def active(self, kind):
         now = time.time()
@@ -855,6 +859,9 @@ class Session:
         gender = rest[0] if rest else 0
         model = struct.unpack_from("<I", rest, 1)[0] if len(rest) >= 5 else 0
         cid = STORE.create(self.account, name, gender=gender, model=model, state=1, raw=rest.hex())
+        if cid is None:  # someone else took the name just now
+            self.reply(msg, result=13002)
+            return
         log(f"{self.addr} created character {name!r} id={cid} for {self.account!r} extra={rest.hex()}")
         self.reply(msg, struct.pack("<I", cid))
 
@@ -1469,7 +1476,7 @@ CONNECTIONS = threading.BoundedSemaphore(MAX_CONNECTIONS)
 # the public key, so a gate never holds what makes logins.
 LINKS = []            # login: its gates; gate: its game servers
 UPLINK = None         # gate: link to login; game: link to its gate
-IP_BANS = []          # gate, game: [network, until] from login (bans.json lives only there)
+IP_BANS = []          # gate, game: [network, until] from login (bans are saved only there)
 TICKET_KEY_FILE, TICKET_PUB_FILE = "ticket.key", "ticket.pub"
 TICKET_SIGNER, TICKET_VERIFIER = None, None
 SIGNED_PAYLOAD = struct.Struct("<I8s")  # u32 expiry | 8 random bytes; then the account name, then the signature
@@ -1555,13 +1562,16 @@ def place_in_game(account, cid, bfid):
 
 class RemoteStore(Store):
     """game: the characters of players the gate announced. Changes are made here and reported to the gate, which
-    owns characters.json."""
+    owns characters.db."""
     pending = collections.deque(maxlen=10000)  # kept while the gate is away
 
     def __init__(self):
         self.data = {"next_id": 0, "accounts": {}}
 
-    def save(self):
+    def mark_dirty(self, cid, line=None):
+        pass
+
+    def flush(self):
         pass
 
     def announce(self, account, character):
@@ -1716,7 +1726,7 @@ def load_loop():
 
 
 def banned_ip(ip):
-    """Does an IP ban cover this address? bans.json on login; the list login sent on gate and game servers."""
+    """Does an IP ban cover this address? The saved bans on login; the list login sent on gate and game servers."""
     if ROLE in ("all", "login"):
         return BANS.ip(ip)
     now = time.time()
@@ -2479,7 +2489,7 @@ def cmd_kick(args, actor):
 def cmd_ban(args, actor):
     if not args:
         return "usage: ban <account> [time] [reason]"
-    if args[0] not in ACCOUNTS.data:
+    if not ACCOUNTS.exists(args[0]):
         return f"no account {args[0]!r}"
     until, reason = ban_args(args[1:])
     BANS.add("accounts", args[0], until, reason, actor)
@@ -2556,7 +2566,7 @@ def cmd_bans(args, actor):
 
 
 def cmd_role(args, actor):
-    if not args or args[0] not in ACCOUNTS.data:
+    if not args or not ACCOUNTS.exists(args[0]):
         return "usage: role <account> [player|gm|admin]" if not args else f"no account {args[0]!r}"
     if len(args) == 1:
         return f"{args[0]}: {ACCOUNTS.role(args[0])}"

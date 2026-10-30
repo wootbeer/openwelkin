@@ -146,7 +146,17 @@ reply layout, and answer with real data.
 - [ ] One gate has been tested, more should work: login already picks the emptiest. Bans must reach all, kick asks all
 - [ ] A game server that dies: players see nothing until they time out; tell them
 - [ ] Not tested yet: restarting a gate or game server while the others run, and reports waiting while the gate is away
-- [ ] SQLite or MariaDB in place of the JSON files; web site
+- [ ] Web site
+- [ ] MariaDB for a server too big for SQLite on one disk (db.py is the only file that would change much)
+
+## Storage (2026-10-30, tested offline)
+- [x] db.py: SQLite. accounts.db (accounts, bans) only on login, characters.db only on the gate, none on game servers
+- [x] Every query uses bound parameters; tools/test_db.py tries hostile names and checks no query is built from strings
+- [x] Only what changed is written. 10000 characters saved, 800 of them playing: 49 ms per batch, a purchase 0.1 ms.
+      The old JSON file took about 1 s per write at that size, before the disk
+- [x] JSON files are imported once and renamed to *.imported; a broken one stops the server and is left alone
+- [ ] All characters are still loaded into memory at start. Load on login if this ever matters
+- [ ] Only safe to copy the .db files with the server stopped. An admin backup command would allow it while running
 - Load test, 2026-10-30: 800 fake players on 3 game servers, about 267 each: 12 ms tick (of 33), 38% of one core each,
   6 MB/s out each, no errors, 2237 log lines reached the gate. Move delay not measured: the load tester was removed
   from disk during the run (see below)

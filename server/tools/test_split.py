@@ -3,11 +3,10 @@
 """test_split.py -- start login, gate and two game servers in a temporary folder and try them from outside.
 
 Fake players use tools/loadtest.py's client. Checks: the servers link up, a player goes login -> gate -> game, stats
-and event log lines reach the gate's characters.json, admin commands reach all servers, forged and reused session
+and event log lines reach the gate's characters.db, admin commands reach all servers, forged and reused session
 keys and wrong link keys are refused, a gate takes no logins, IP bans reach the gate."""
 import asyncio
 import collections
-import json
 import os
 import re
 import shutil
@@ -28,6 +27,7 @@ root = tempfile.mkdtemp(prefix="mw-split-")
 os.environ["MW_STATE_DIR"] = os.path.join(root, "tool")
 os.makedirs(os.environ["MW_STATE_DIR"])
 import cluster  # noqa: E402
+import db  # noqa: E402
 import fdp  # noqa: E402
 import loadtest as lt  # noqa: E402
 import loginserver as ls  # noqa: E402
@@ -141,9 +141,12 @@ class Player:
 
 def stored():
     try:
-        with open(os.path.join(root, "gate", "characters.json"), encoding="utf-8") as f:
-            return json.load(f)["accounts"]
-    except (OSError, ValueError, KeyError):
+        con = db.connect(os.path.join(root, "gate", "characters.db"), db.CHARACTERS)
+        try:
+            return db.load_characters(con)["accounts"]
+        finally:
+            con.close()
+    except db.Error:
         return {}
 
 
@@ -199,7 +202,7 @@ async def scenario():
     p1left = await asyncio.to_thread(wait_for, lambda: seen("left") or seen("closed"), 3)
     ok = await asyncio.to_thread(wait_for, lambda: any(
         c.get("stats", {}).get("battle_time", 0) > 0 for c in stored().get("bob", [])), 8)
-    check("time played reaches characters.json on the gate", p1left and ok, str(stored().get("bob")))
+    check("time played reaches characters.db on the gate", p1left and ok, str(stored().get("bob")))
 
     # --- kick across servers ---
     reply = await asyncio.to_thread(admin, "kick carol")
@@ -279,7 +282,9 @@ def main():
         linked = wait_for(lambda: sum("connected" in l and "[link] server on port" in l for l in lines) >= 3, 15)
         check("gate and two game servers link up", linked, "\n".join(lines[-20:]))
         check("signing key stays on login", not os.path.exists(os.path.join(root, "gate", "ticket.key")))
-        check("accounts stay on login", not os.path.exists(os.path.join(root, "gate", "accounts.json")))
+        check("accounts stay on login", not os.path.exists(os.path.join(root, "gate", "accounts.db")))
+        check("characters stay on the gate", not os.path.exists(os.path.join(root, "login", "characters.db")))
+        check("game servers have no database", not [f for f in os.listdir(os.path.join(root, "game1")) if ".db" in f])
         link_attack()
         reports()
         asyncio.run(scenario())

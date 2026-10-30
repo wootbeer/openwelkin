@@ -1,0 +1,159 @@
+# MarsWar server emulator. Copyright (C) 2026 the MarsWar emulator contributors.
+# Licensed under the GNU Affero General Public License v3 or later; see LICENSE.
+"""test_db.py -- the SQLite storage: everything survives a restart, old JSON files are imported once, a character name
+is taken only once, and hostile text stays plain text. Runs in a temporary folder."""
+import json
+import os
+import re
+import shutil
+import sys
+import tempfile
+
+TOOLS = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(TOOLS))
+root = tempfile.mkdtemp(prefix="mw-db-")
+os.environ["MW_STATE_DIR"] = root
+import db  # noqa: E402
+import loginserver as ls  # noqa: E402
+
+fails = []
+EVIL = "x'); DROP TABLE characters;--"
+
+
+def check(name, ok, detail=""):
+    print(("ok   " if ok else "FAIL ") + name + (f"  ({detail})" if detail and not ok else ""), flush=True)
+    if not ok:
+        fails.append(name)
+
+
+def reopen():
+    """What a restart sees."""
+    ls.STORE.flush()
+    ls.STORE.con.close()
+    ls.STORE = ls.Store()
+
+
+def counts(table):
+    return ls.STORE.con.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+
+
+def characters():
+    cid = ls.STORE.create("alice", "Alpha", gender=1, model=32, state=1, raw="00ff")
+    check("second use of a name is refused", ls.STORE.create("bob", "ALPHA", gender=0, model=0, state=1, raw="") is None)
+    ls.STORE.add_stats(cid, kills=2, money=-50, battle_time=1.5)
+    ls.STORE.add_log(cid, "first")
+    ls.STORE.add_log(cid, EVIL)
+    ls.STORE.buy(cid, {"goods": 3, "item": 3103, "days": 30, "expires": 0, "active": False}, "money", 100)
+    ls.STORE.activate(cid, 1)
+    talent = next(iter(ls.TALENTS))
+    ls.STORE.learn_talent(cid, talent, 5)
+    before = json.dumps(ls.STORE.by_id(cid), sort_keys=True)
+    reopen()
+    check("a character survives a restart unchanged", json.dumps(ls.STORE.by_id(cid), sort_keys=True) == before,
+          f"{before}\n{ls.STORE.by_id(cid)}")
+    check("money stays a whole number", isinstance(ls.STORE.stats(cid)["money"], int))
+    check("ids carry on after a restart", ls.STORE.create("bob", "Bravo", gender=0, model=0, state=1, raw="") == cid + 1)
+    check("names are remembered after a restart", ls.STORE.name_taken("alpha"))
+    for n in range(ls.LOG_KEEP + 20):
+        ls.STORE.add_log(cid, f"line {n}")
+    reopen()
+    log_ = ls.STORE.event_log(cid)
+    check("the event log keeps the newest lines", len(log_) == ls.LOG_KEEP and log_[-1][2] == f"line {ls.LOG_KEEP + 19}")
+    check("the database trims it too", counts("event_log") == ls.LOG_KEEP)
+
+
+def hostile():
+    """Text a player controls, sent straight to the storage calls (the handlers refuse most of it earlier)."""
+    cid = ls.STORE.create(EVIL, EVIL, gender=0, model=0, state=1, raw="")
+    ls.STORE.add_log(cid, EVIL)
+    reopen()
+    check("hostile character text is stored as text", ls.STORE.by_id(cid)["name"] == EVIL and ls.STORE.account_of(cid) == EVIL)
+    check("the characters table is still there", counts("characters") >= 3)
+    check("hostile login makes one plain account", ls.ACCOUNTS.check(EVIL, b"pw") == "created" and ls.ACCOUNTS.exists(EVIL))
+    check("' OR '1'='1 finds nothing", not ls.ACCOUNTS.exists("' OR '1'='1"))
+    ls.BANS.add("accounts", EVIL, 0, EVIL, EVIL)
+    ls.BANS = ls.Bans()
+    check("a ban survives a restart", ls.BANS.account(EVIL)["reason"] == EVIL)
+    check("unban", ls.BANS.remove("accounts", EVIL) and not ls.Bans().account(EVIL))
+    source = open(db.__file__, encoding="utf-8").read() + open(ls.__file__, encoding="utf-8").read()
+    built = re.findall(r'(?:execute|executemany)\(f["\']|(?:execute|executemany)\([^)\n]*["\'] *[%+]', source)
+    check("no query is built from strings", not built, str(built))
+
+
+def accounts():
+    check("new account", ls.ACCOUNTS.check("erin", b"pw") == "created")
+    check("right password", ls.ACCOUNTS.check("erin", b"pw") == "ok")
+    check("wrong password", ls.ACCOUNTS.check("erin", b"no") == "bad")
+    check("role", ls.ACCOUNTS.set_role("erin", "gm") and ls.ACCOUNTS.role("erin") == "gm")
+    check("role of nobody", not ls.ACCOUNTS.set_role("nobody", "gm") and ls.ACCOUNTS.role("nobody") == "player")
+
+
+def rollback():
+    """A failed save loses nothing: the change is kept and written by the next one."""
+    cid = ls.STORE.create("carl", "Charlie", gender=0, model=0, state=1, raw="")
+    ls.STORE.add_stats(cid, kills=7)
+    good, ls.STORE.lines = ls.STORE.lines, [(999999, 0, 0, "no such character")]
+    try:
+        ls.STORE.flush()
+        check("a bad save fails", False)
+    except db.Error:
+        pass
+    ls.STORE.lines = good
+    reopen()
+    check("a failed save loses nothing", ls.STORE.stats(cid).get("kills") == 7)
+
+
+def importing():
+    folder = os.path.join(root, "old")
+    os.makedirs(folder)
+    salt = os.urandom(16)
+    with open(os.path.join(folder, "accounts.json"), "w", encoding="utf-8") as f:
+        json.dump({"old": {"salt": salt.hex(), "hash": ls.Accounts.hash(b"pw", salt).hex(), "created": 5, "role": "gm"}}, f)
+    with open(os.path.join(folder, "bans.json"), "w", encoding="utf-8") as f:
+        json.dump({"accounts": {"old": {"until": 0, "reason": "r", "by": "me", "at": 1}}, "ips": {}}, f)
+    old = {"id": 1000, "name": "tester", "gender": 0, "model": 32, "state": 1, "raw": "00", "robot": 1311,
+           "stats": {"kills": 11, "money": 97755, "battle_time": 2258.9},
+           "items": [{"item": 3101, "expires": 1795053302, "goods": 1, "active": True, "days": 30}],
+           "talents": {"5": 1}, "log": [[1792513811, 0, "Bought Viper"]]}
+    with open(os.path.join(folder, "characters.json"), "w", encoding="utf-8") as f:
+        json.dump({"next_id": 1001, "accounts": {"old": [old]}}, f)
+    con = db.open_characters(os.path.join(folder, "characters.db"))
+    data = db.load_characters(con)
+    con.close()
+    check("old characters are imported", data["accounts"]["old"][0] == old and data["next_id"] == 1001,
+          str(data["accounts"]["old"][0]))
+    con = db.open_accounts(os.path.join(folder, "accounts.db"))
+    check("old accounts are imported", con.execute("SELECT role FROM accounts WHERE name = 'old'").fetchone() == ("gm",))
+    check("old bans are imported", db.load_bans(con)["accounts"]["old"]["reason"] == "r")
+    con.close()
+    check("old files are kept, renamed", sorted(f for f in os.listdir(folder) if f.endswith(".imported")) == [
+        "accounts.json.imported", "bans.json.imported", "characters.json.imported"])
+    bad = os.path.join(root, "bad")
+    os.makedirs(bad)
+    with open(os.path.join(bad, "characters.json"), "w", encoding="utf-8") as f:
+        f.write("{not json")
+    try:
+        db.open_characters(os.path.join(bad, "characters.db"))
+        check("a broken old file stops the server", False)
+    except ValueError:
+        check("a broken old file stops the server and stays", os.path.exists(os.path.join(bad, "characters.json")))
+
+
+def main():
+    try:
+        characters()
+        hostile()
+        accounts()
+        rollback()
+        importing()
+    finally:
+        ls.STORE.con.close()
+        ls.ACCOUNTS.con.close()
+        ls.BANS.con.close()
+        shutil.rmtree(root, ignore_errors=True)
+    print(f"{len(fails)} failed" if fails else "all ok")
+    return 1 if fails else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
