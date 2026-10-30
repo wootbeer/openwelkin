@@ -13,6 +13,7 @@ import hashlib
 import hmac
 import itertools
 import json
+import os
 import secrets
 import socket
 import struct
@@ -23,6 +24,7 @@ MAX_FRAME = 1 << 20      # a character record is far smaller
 HANDSHAKE_TIMEOUT = 5.0
 MAX_LINKS = 64           # open links, and connections still proving themselves, per listening port
 RETRY = 2.0              # seconds between attempts to reach the upper server
+SEND_TIMEOUT = 10.0      # a server that stops reading loses its link instead of blocking the sender
 HEAD = struct.Struct("<I")
 SEQ = struct.Struct("<Q")
 
@@ -87,6 +89,8 @@ class Link:
         self.session_key = self.proof(b"session", server_nonce, client_nonce)
         self.out_dir, self.in_dir = (b"c", b"s") if connecting else (b"s", b"c")
         self.sock.settimeout(None)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDTIMEO, int(SEND_TIMEOUT * 1000) if os.name == "nt"
+                             else struct.pack("ll", int(SEND_TIMEOUT), 0))
 
     def mac(self, direction, seq, data):
         return hmac.new(self.session_key, direction + SEQ.pack(seq) + data, hashlib.sha256).digest()

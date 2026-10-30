@@ -1483,6 +1483,9 @@ SIGNED_PAYLOAD = struct.Struct("<I8s")  # u32 expiry | 8 random bytes; then the 
 SPENT_SESSIONS = {}   # gate: random part of used session keys -> expiry
 LINK_LOCK = threading.Lock()
 LOAD_EVERY = 2.0      # seconds between a game server's load reports
+LOST_GRACE = 6.0      # gate: seconds a game server has to come back before its players are sent to the login screen
+BOOT = secrets.token_hex(8)  # game: differs after a restart, so the gate can tell a dropped link from a dead server
+REPORTS = threading.Event()  # game: there are reports to send
 
 
 def link_key():
@@ -1555,6 +1558,7 @@ def place_in_game(account, cid, bfid):
         ticket = secrets.randbits(32) or 1
         if ask(g, "expect", False, ticket=ticket, account=account, cid=cid, bfid=bfid, character=STORE.by_id(cid)):
             g.load += 1  # until its next report
+            g.accounts.append(account)
             return g.ip, g.port, ticket
     log(f"no game server for {account!r}")
     return None
@@ -1564,6 +1568,7 @@ class RemoteStore(Store):
     """game: the characters of players the gate announced. Changes are made here and reported to the gate, which
     owns characters.db."""
     pending = collections.deque(maxlen=10000)  # kept while the gate is away
+    lost = 0
 
     def __init__(self):
         self.data = {"next_id": 0, "accounts": {}}
@@ -1589,12 +1594,26 @@ class RemoteStore(Store):
         self.report("log", cid=cid, text=text, level=kind)
 
     def report(self, what, **fields):
+        """Never sends from here: the game loop calls this and must not wait for the gate."""
+        if len(self.pending) == self.pending.maxlen:
+            self.lost += 1
         self.pending.append((what, fields))
+        REPORTS.set()
+
+
+def report_loop():
+    """game: send reports as they come."""
+    while True:
+        REPORTS.wait()
+        REPORTS.clear()
         drain_reports()
 
 
 def drain_reports():
     with LINK_LOCK:
+        if UPLINK and STORE.lost:
+            log(f"[link] the gate was away too long: {STORE.lost} reports were lost")
+            STORE.lost = 0
         while UPLINK and STORE.pending:
             what, fields = STORE.pending[0]
             if not UPLINK.send(what, **fields):
@@ -1602,9 +1621,10 @@ def drain_reports():
             STORE.pending.popleft()
 
 
-def player_count():
+def players_here():
+    """game: the accounts in this server's matches."""
     with GAME_LOCK:
-        return sum(len(m.peers or []) for m in MATCHES.values())
+        return [STORE.account_of(p.cid) for m in MATCHES.values() for p in m.peers or []]
 
 
 def active_ip_bans():
@@ -1619,7 +1639,7 @@ def push_bans():
 
 def lower_server_opened(link):
     """login: a gate connected; gate: a game server connected. Ask where clients find it."""
-    link.load, link.port = 0, 0
+    link.load, link.port, link.accounts, link.boot = 0, 0, [], None
     spawn(register_lower_server, link)  # not on the reader thread: it has to read the answer
 
 
@@ -1627,9 +1647,15 @@ def register_lower_server(link):
     info = ask(link, "hello", None)
     if not info:
         return link.close()
-    link.ip, link.port = info["ip"], info["port"]
+    link.ip, link.port, link.boot = info["ip"], info["port"], info.get("boot")
     with LINK_LOCK:
-        LINKS.append(link)
+        # every gate keeps its own characters.db, so a second gate would show players different characters
+        other = ROLE == "login" and next((g for g in LINKS if (g.ip, g.port) != (link.ip, link.port)), None)
+        if not other:
+            LINKS.append(link)
+    if other:
+        log(f"[link] refused a second gate (port {link.port}): only one gate per login server for now")
+        return link.close()
     link.send("bans", nets=active_ip_bans() if ROLE == "login" else IP_BANS)
     log(f"[link] server on port {link.port} connected")
 
@@ -1639,6 +1665,20 @@ def lower_server_closed(link):
         if link in LINKS:
             LINKS.remove(link)
             log(f"[link] server on port {link.port} left")
+            if link.accounts:
+                spawn(game_server_lost, link)
+
+
+def game_server_lost(link):
+    """gate: a game server's link went. A battle on a dead server never ends for the client, so unless the server
+    comes back, close its players' gate sessions: that sends the client to the login screen."""
+    time.sleep(LOST_GRACE)
+    if any(g.boot == link.boot for g in list(LINKS)):
+        return
+    elsewhere = {a for g in list(LINKS) for a in g.accounts}
+    for account in set(link.accounts) - elsewhere:
+        log(f"{account!r} was on a game server that is gone (port {link.port})")
+        kick(account, "game server lost")
 
 
 def on_gate_message(link, msg):
@@ -1675,7 +1715,7 @@ def on_game_server_message(link, msg):
     elif kind == "log":
         STORE.add_log(msg["cid"], msg["text"], msg["level"])
     elif kind == "load":
-        link.load = msg["players"]
+        link.load, link.accounts = len(msg["accounts"]), msg["accounts"]
 
 
 def on_gate_request(link, msg):
@@ -1683,7 +1723,7 @@ def on_gate_request(link, msg):
     global IP_BANS
     kind = msg["t"]
     if kind == "hello":
-        return {"ip": GAME_IP, "port": GAME_PORT}
+        return {"ip": GAME_IP, "port": GAME_PORT, "boot": BOOT}
     if kind == "expect":
         STORE.announce(msg["account"], msg["character"])
         with GAME_LOCK:
@@ -1708,7 +1748,7 @@ def uplink_opened(link):
     if ROLE == "gate":
         report_load()
     else:
-        drain_reports()
+        REPORTS.set()
 
 
 def uplink_closed(link):
@@ -1722,7 +1762,7 @@ def load_loop():
     while True:
         time.sleep(LOAD_EVERY)
         if UPLINK:
-            UPLINK.send("load", players=player_count())
+            UPLINK.send("load", accounts=players_here())
 
 
 def banned_ip(ip):
@@ -2725,6 +2765,7 @@ def start_game():
     spawn(cluster.connect_forever, GATE_LINK, GATE_LINK_PORT, link_key(), on_gate_request, uplink_opened,
           uplink_closed, log)
     spawn(load_loop)
+    spawn(report_loop)
     spawn(serve_udp, GAME_PORT)
 
 

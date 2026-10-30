@@ -90,7 +90,7 @@ python server/start_split.py --games 3
 
 | Server | Keeps | Does |
 |--------|-------|------|
-| login | `accounts.db`, admin commands | Checks passwords, sends players to the emptiest gate |
+| login | `accounts.db`, admin commands | Checks passwords, sends players to the gate |
 | gate | `characters.db` | Hall, shop, characters. Sends players to the emptiest game server |
 | game | nothing | Battles. Reports kills and stats to the gate |
 
@@ -103,7 +103,17 @@ go to the login server:
 MW_STATE_DIR=server/split/login python server/tools/admin.py who
 ```
 
-`start_split.py` does not restart a server that dies.
+Use one gate per login server: each gate keeps its own `characters.db`, so login refuses a second one. Add game
+servers for more players.
+
+Any server can stop and start while the others run:
+
+- Login down: nobody can log in. Players already on stay on.
+- Gate down: players in the hall drop. Battles carry on, and their stats reach the gate when it is back. A game server
+  holds up to 10000 reports while it waits, and the log says if any were lost.
+- Game server down: after about 6 seconds its players go back to the login screen. New battles use the other game servers.
+
+`start_split.py` does not restart a server that dies. If a gate crashes, the last few seconds of stats can be lost.
 
 ### On several machines
 

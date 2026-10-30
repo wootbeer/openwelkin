@@ -139,13 +139,19 @@ reply layout, and answer with real data.
 - [x] Login signs the session key with Ed25519, a gate holds only the public key, each key works once. The battle
       ticket is a u32 and cannot be signed: the gate announces it to the game server, with the character
 - [x] Private links (cluster.py): both ends prove they hold internal.key, every message is signed and numbered
-- [x] Players go to the emptiest gate and game server; stats and log lines go to the gate, and wait if it is away
+- [x] Players go to the emptiest game server; stats and log lines go to the gate, and wait if it is away
 - [x] who, matches, kick, ban and IP ban work across servers
 - [ ] Try it with the real client: the signed session key is about 170 characters, the client has only had 32.
       If the client breaks on it, have login announce a short key to the gate over the link instead
-- [ ] One gate has been tested, more should work: login already picks the emptiest. Bans must reach all, kick asks all
-- [ ] A game server that dies: players see nothing until they time out; tell them
-- [ ] Not tested yet: restarting a gate or game server while the others run, and reports waiting while the gate is away
+- [x] One gate per login server: each gate has its own characters.db, so a second would show different characters.
+      Login refuses it. More gates need a shared character database (MariaDB) or one realm per gate
+- [x] tools/test_failover.py kills and restarts login, gate and game servers: stats wait for the gate, logins and bans
+      come back, a restarted server rejoins
+- [x] A game server that dies: after 6 s the gate closes its players' sessions, which sends the client to the login
+      screen. Try it with the real client from inside a battle
+- [x] A hung server loses its link after 10 s; game servers send reports from their own thread, so the game loop never waits
+- [ ] A gate restart forgets used session keys: a stolen key could work once more until it expires (120 s)
+- [ ] A gate crash loses up to 5 s of stats from its memory, and reports still on the way
 - [ ] Web site
 - [ ] MariaDB for a server too big for SQLite on one disk (db.py is the only file that would change much)
 

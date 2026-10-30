@@ -252,6 +252,7 @@ def reports():
     game.announce("erin", {"id": 1000, "name": "Erin"})
     game.add_log(1000, "Destroyed by Target 1")
     game.add_stats(1000, deaths=1)
+    ls.drain_reports()
     ls.STORE = gate
     for kind, fields in Uplink.sent:
         ls.on_game_server_message(None, {"t": kind, **fields})
