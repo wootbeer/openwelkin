@@ -42,6 +42,7 @@ Use the server's address instead of 127.0.0.1 when it runs on another machine. S
 | 6003 | UDP | game server (battles) |
 | 5876 | UDP | client NAT probe (only logged) |
 | 6010 | TCP | admin commands (`tools/admin.py`), 127.0.0.1 only |
+| 6013 | TCP | admin web page (`tools/webadmin.py`, optional), 127.0.0.1 only |
 
 `MW_PORT_OFFSET` adds to all of them, e.g. `100` gives 6101-6110 (to run a second server on one machine; the
 client then needs the moved login port).
@@ -156,6 +157,29 @@ python server/tools/admin.py who
 Banned players see the client's own message: "Account has been locked" (permanent), "Account being punished"
 (timed) or "IP is locked".
 
+### Admin web page
+
+A small page for the same commands. On the login server's machine:
+
+```
+python server/tools/webadmin.py
+```
+
+Open http://127.0.0.1:6013 and log in with the key from `admin.key`. In split mode, set `MW_STATE_DIR=server/split/login`
+first. It has no HTTPS, so never open this port to the internet. From another machine, use an SSH tunnel or a VPN.
+
+The page is one file with no extra packages. Edit `PAGE` to change how it looks. To add a button, add a form to `PAGE`
+and a line to `ACTIONS`.
+
+### Admin port
+
+To build your own panel, use the admin port instead of the database. Connect to 127.0.0.1:6010 and send two lines, the
+key from `admin.key` and one command. The server sends the reply as text and closes the connection. In Python,
+`tools/admin.py` has `send(command)` for this.
+
+Keep your panel on the same machine and check what users type: one command per line, and a line break in a field would
+start a new line. Show replies as plain text, because they contain names and reasons that players or admins typed.
+
 ## Security notes
 
 - Passwords are stored as salted scrypt hashes. On the wire they are protected only by the client's own
@@ -164,6 +188,8 @@ Banned players see the client's own message: "Account has been locked" (permanen
 - Nothing but login is accepted before a connection logs in; idle unauthenticated connections close after 30 s.
 - Connection limits: 1024 TCP connections, 512 game sessions (idle sessions expire after 60 s).
 - The admin port only listens on 127.0.0.1 and wants the key from `admin.key` first.
+- The admin web page only listens on 127.0.0.1, wants the same key, locks after 5 wrong keys, and checks every field
+  before it becomes a command. `tools/test_webadmin.py` attacks it.
 - Every request is length-checked; `tools/fuzz_handlers.py` and `tools/fuzz_game.py` throw random data at all
   handlers, and `tools/test_login.py` checks the login rules. Run them after changes:
 

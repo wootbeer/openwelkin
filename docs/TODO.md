@@ -117,7 +117,8 @@ reply layout, and answer with real data.
 - [x] Roles per account (player / gm / admin, stored in accounts.json); nothing uses them yet
 - [x] A second login of the same account closes the first one
 - [ ] In-game GM chat commands (use the roles)
-- [ ] Web admin page
+- [x] Web admin page (tools/webadmin.py, 2026-10-30): one file, sends admin commands, local only; README explains
+      the admin port so people can build their own. Login and an IP ban tried in a real browser
 - [x] Checked in game 2026-10-30: kick drops the client to the login screen with no message; timed ban, permanent
       ban and IP ban each show their text at login; login works again after unban
 - [ ] Tell a kicked player why: nothing found yet. GMKickRes (13,13041) is only the reply to a GM ("Kick %s
