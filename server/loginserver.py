@@ -73,6 +73,9 @@ SPAWN_PROTECTION = 4.0  # seconds after a respawn before the dummies open fire
 AI_TICK, AI_SPEED, AI_PATROL = 0.2, 4.0, 12.0  # seconds per update, units per second, patrol half-length
 AI_RANGE, AI_BURST, AI_PAUSE, AI_HIT_CHANCE, AI_DAMAGE = 70.0, 6, 1.5, 0.5, 15.0
 HIT_RADIUS, HIT_HEIGHT = 6.0, 2.5  # generous hit sphere: the client raycast passes through remote robots
+MUZZLE_REACH = 15.0     # a shot must start this close to where the server last saw the robot
+RANGE_MARGIN = 1.25     # weapon range is the data's WP1Range times this, for movement between position reports
+DEFAULT_RANGE = 300.0
 WEAPON_TIMING = (0.142, 0.015, 0.02, 0.0, 0.0, 0.0)  # Viper fire modes 0/1: flyweight +0x9d4, +0xa34, +0xa38
 TRAINING_ROOMS = [(1, "Training Ground 1")]  # (battlefield id, name)
 # Battlefield definitions served by MapInfo; "world" is the .reb under ..\Maps\<name>\ (field semantics mostly unknown).
@@ -149,7 +152,7 @@ PRODUCTS = load_products()
 
 
 def load_weapons():
-    """Weapon flyweight id (= product id) -> (magazine, fire interval) from data/flyweights/Weapon."""
+    """Weapon flyweight id (= product id) -> (magazine, fire interval, range) from data/flyweights/Weapon."""
     import xml.etree.ElementTree as ET
     out = {}
     root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "flyweights", "Weapon")
@@ -163,7 +166,8 @@ def load_weapons():
                 elif key and key not in vals:
                     vals[key] = el.get("data", "")
             out[int(vals["ProductID"])] = (float(vals.get("MaxCapacitance") or 120),
-                                           float(vals.get("WP1DaltaShootTime") or 0.142) or 0.142)
+                                           float(vals.get("WP1DaltaShootTime") or 0.142) or 0.142,
+                                           float(vals.get("WP1Range") or 0) or DEFAULT_RANGE)
         except (ET.ParseError, ValueError, KeyError, AttributeError):
             continue
     return out
@@ -235,7 +239,7 @@ def loadout_weapon(cid):
 
 def weapon_stats(wid):
     """(ammo, timing) for the weapon snapshot."""
-    ammo, interval = WEAPONS.get(wid, (WEAPON_AMMO, WEAPON_TIMING[0]))
+    ammo, interval = WEAPONS.get(wid, (WEAPON_AMMO, WEAPON_TIMING[0], 0))[:2]
     return ammo, (interval,) + WEAPON_TIMING[1:]
 # Shop catalog: (product id, crystal price or -1, credit price, days; 0 = forever)
 SHOP = [
@@ -1815,14 +1819,14 @@ def send_game_event(server, peer, catalog, type_, body, reliable=True):
 EVENT_HEAD = struct.Struct("<BBHfI")  # u8 flags | u8 catalog | u16 type | f32 event time | u32 unique key
 
 
-def ray_hits(origin, target, center, radius):
-    """Does the ray from origin through target pass within radius of center (in front of the origin)?"""
+def ray_hits(origin, target, center, radius, reach=math.inf):
+    """Does the ray from origin through target pass within radius of center, in front of the origin and within reach?"""
     d = [t - o for t, o in zip(target, origin)]
     n = sum(x * x for x in d) ** 0.5 or 1.0
     d = [x / n for x in d]
     oc = [c - o for c, o in zip(center, origin)]
     along = sum(a * b for a, b in zip(oc, d))
-    if along < 0:
+    if along < 0 or along > reach:
         return False
     closest = [o + along * x for o, x in zip(origin, d)]
     return sum((c - p) ** 2 for c, p in zip(center, closest)) <= radius * radius
@@ -1883,7 +1887,7 @@ class Match:
         self.peers = []
         self.next_slot = 1
         self.timers = []  # heap of (time, sequence, function, args)
-        self.tick_no, self.next_ai = 0, 0.0
+        self.tick_no, self.next_ai, self.now = 0, 0.0, 0.0
         self.targets = {}
         for i, dpos in enumerate(self.bf["dummies"]):
             self.targets[100_000 * (i + 1) + 1] = {
@@ -1915,6 +1919,7 @@ class Match:
     def tick(self, now):
         """Due timers, players who stopped sending, the dummies' AI, then everyone's pending moves."""
         self.tick_no += 1
+        self.now = now
         while self.timers and self.timers[0][0] <= now and self.peers is not None:
             _, _, fn, args = heapq.heappop(self.timers)
             fn(*args)
@@ -2014,7 +2019,10 @@ def join_match(server, peer):
     peer.stats_clock = time.time()
     peer.moves = {}  # robot id -> newest move not yet sent to this player
     peer.protected_until = time.time() + SPAWN_PROTECTION
-    peer.fire_interval = weapon_stats(loadout_weapon(peer.cid))[1][0]
+    weapon = loadout_weapon(peer.cid)
+    peer.fire_interval = weapon_stats(weapon)[1][0]
+    peer.fire_range = WEAPONS.get(weapon, (0, 0, DEFAULT_RANGE))[2] * RANGE_MARGIN
+    peer.next_shot = 0.0
     rid = peer.player_rid
     spawn_robot(server, peer, peer.cid, rid, peer.pos, peer.detachment, peer.name, local=True)
     send_base_info(server, peer, peer.cid, peer.name, rid, rank=rank_for(STORE.stats(peer.cid).get("honor", 0)))
@@ -2125,15 +2133,18 @@ def fire_tick(server, peer, trig, n):
         m = getattr(peer, "match", None)
         if not m or m.peers is None or peer not in m.peers or peer.trigger != trig or peer.player_dead or n > 600:
             return
+        if m.now < peer.next_shot:  # pulling the trigger again must not beat the weapon's fire rate
+            return m.later(peer.next_shot - m.now, fire_tick, server, peer, trig, n)
+        peer.next_shot = m.now + peer.fire_interval
         origin, aim, victim = peer.fire
         if isinstance(victim, int):
             t = m.targets.get(victim)
-            if t and not t["dead"]:
+            if t and not t["dead"] and in_range(peer, t["pos"]):
                 aim = (t["pos"][0], t["pos"][1] + HIT_HEIGHT, t["pos"][2])
                 if hit_dummy(server, m, peer, victim):
                     peer.fire = (origin, aim, None)
         elif victim is not None:
-            if victim in m.peers and not victim.player_dead:
+            if victim in m.peers and not victim.player_dead and in_range(peer, victim.pos):
                 aim = (victim.pos[0], victim.pos[1] + HIT_HEIGHT, victim.pos[2])
                 if hit_player(server, m, victim, WEAPON_DAMAGE, peer.name, peer):
                     peer.fire = (origin, aim, None)
@@ -2143,13 +2154,14 @@ def fire_tick(server, peer, trig, n):
         m.later(peer.fire_interval, fire_tick, server, peer, trig, n + 1)
 
 
+def in_range(peer, pos):
+    return sum((a - b) ** 2 for a, b in zip(peer.pos, pos)) <= peer.fire_range ** 2
+
+
 def pick_victim(m, shooter, origin, aim):
     """What the trigger-pull ray hits: a dummy rid, another player, or None."""
     def hit(pos):
-        center = (pos[0], pos[1] + HIT_HEIGHT, pos[2])
-        # aim is where the client's own raycast ended, so a hit on a robot ends at the robot
-        near = sum((a - c) ** 2 for a, c in zip(aim, center)) <= (HIT_RADIUS + 1) ** 2
-        return near or ray_hits(origin, aim, center, HIT_RADIUS)
+        return ray_hits(origin, aim, (pos[0], pos[1] + HIT_HEIGHT, pos[2]), HIT_RADIUS, shooter.fire_range)
     for rid, t in m.targets.items():
         if not t["dead"] and hit(t["pos"]):
             return rid
@@ -2390,6 +2402,10 @@ def on_game_message(server, peer, raw):
             if msg.type == 40122 and len(body) >= 36 and not peer.player_dead:
                 origin, aim = struct.unpack_from("<3f", body, 12), struct.unpack_from("<3f", body, 24)
                 if all(math.isfinite(v) for v in origin + aim):
+                    # the muzzle must be at the robot: a client can not shoot from next to its target
+                    if sum((a - b) ** 2 for a, b in zip(origin, peer.pos)) > MUZZLE_REACH ** 2:
+                        log(f"[game] {peer.name} shot from {origin}, robot at {peer.pos}: ignored")
+                        return
                     victim = pick_victim(m, peer, origin, aim)
                     peer.fire = (origin, aim, victim)
                     if victim is not None:

@@ -135,9 +135,11 @@ pb.pos = (10.0, 0.0, 0.0)
 pb.protected_until = pa.protected_until = 0
 for target in m.targets.values():
     target["pos"] = target["home"] = (500.0, 0.0, 500.0)  # dummies out of the way
+pa.pos = (0.0, 0.0, 0.0)
 shots = 0
 while not pb.player_dead and shots < 200:
     msg(A, 40122, struct.pack("<III3f3fII", 0, 0, 0, 0.0, 2.5, 0.0, 10.0, 2.5, 0.0, 0, 0))
+    step(pa.fire_interval)
     shots += 1
 ok &= check(f"B destroyed by A ({shots} bursts)", pb.player_dead and pb.deaths == 1)
 step(ls.RESPAWN_DELAY + 0.1)
@@ -147,6 +149,49 @@ feed = [x for x in got(B, 50151)]
 ok &= check("kill feed reached B", any(b"Alpha" in x and b"Bravo" in x for x in feed))
 ok &= check("shots shown to B, not A", len(got(B, 50122)) > 0 and not any(struct.unpack_from("<I", x)[0] == a_rid for x in got(A, 50122)))
 ok &= check("stats saved per character", ls.STORE.stats(a_cid).get("kills") == 1 and ls.STORE.stats(b_cid).get("deaths") == 1)
+
+# cheating shots
+def pull(origin=(0.0, 2.5, 0.0), aim=(10.0, 2.5, 0.0)):
+    msg(A, 40122, struct.pack("<III3f3fII", 0, 0, 0, *origin, *aim, 0, 0))
+
+
+def shoot(**kw):
+    msg(A, 40125, b"\0" * 4)  # let go of the trigger and wait: nothing left over from the last shot
+    step(pa.fire_interval)
+    pull(**kw)
+
+
+pa.pos, pb.pos = (0.0, 0.0, 0.0), (10.0, 0.0, 0.0)  # the respawn moved B
+pb.protected_until = 0
+step(pa.fire_interval)
+hp = pb.player_hp
+shoot()
+ok &= check("a fair shot hits", pb.player_hp < hp)
+hp = pb.player_hp
+for _ in range(50):
+    pull()
+ok &= check("spamming the trigger does not beat the fire rate", pb.player_hp == hp)
+msg(A, 40125, b"\0" * 4)
+step(pa.fire_interval)
+ok &= check("the spammed shots land at most once", pb.player_hp >= hp - ls.WEAPON_DAMAGE)
+pa.pos = (500.0, 0.0, 500.0)
+hp = pb.player_hp
+shoot(origin=(9.0, 2.5, 0.0))
+ok &= check("a shot not fired from the robot does nothing", pb.player_hp == hp)
+far = pa.fire_range + 50
+pa.pos, pb.pos = (0.0, 0.0, 0.0), (far, 0.0, 0.0)
+shoot(aim=(far, 2.5, 0.0))
+ok &= check("a shot past the weapon's range does nothing", pb.player_hp == hp)
+pb.pos = (pa.fire_range - 20, 0.0, 0.0)
+shoot(aim=(pb.pos[0], 2.5, 0.0))
+ok &= check("a shot inside the range hits", pb.player_hp < hp)
+hp = pb.player_hp
+pb.pos = (far, 0.0, 0.0)
+step(pa.fire_interval)
+step(pa.fire_interval)
+ok &= check("a held trigger stops at the range limit", pb.player_hp == hp)
+msg(A, 40125, b"\0" * 4)
+pb.pos = (10.0, 0.0, 0.0)
 
 # resend: the client repeats the ack of a packet it never got
 server.peers[A].unacked.clear()

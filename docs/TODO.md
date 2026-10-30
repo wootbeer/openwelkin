@@ -85,7 +85,10 @@ reply layout, and answer with real data.
 - [x] Character create: needs login, max 4 per account, malformed name rejected instead of dropping the connection
 - [x] FDP: 512 session cap with 60 s idle expiry; UDP loop catches handler errors
 - [x] Refusals use the client's own codes (Language/ErrorInfoENG.xml): 10001 bad login, 10002 locked, 2401x shop...
-- [ ] Game server trusts the client's aim point for hits (cheat risk; fine for now)
+- [x] Shots are checked on the game server (2026-10-30, offline): the muzzle must be within 15 units of the robot, the
+      target within the weapon's range (WP1Range + 25%), and pulling the trigger again cannot beat the fire rate.
+      Try with the real client: if shots stop hitting, look for "shot from" in the log. WP1Range may not be in map units
+- [ ] Not stopped: aim bots, shots through walls (needs the terrain on the server), teleporting or speed hacks
 - [x] Batched saves: stats/log lines flushed every 5 s (atomic writes); purchases/talents/creates save at once
 - [x] MW_DEBUG gates packet traces; AES and session keys never logged
 - [x] MW_PUBLIC_IP sets the gate/game address sent to clients (was hardcoded 127.0.0.1)
@@ -163,9 +166,9 @@ reply layout, and answer with real data.
 - [x] JSON files are imported once and renamed to *.imported; a broken one stops the server and is left alone
 - [ ] All characters are still loaded into memory at start. Load on login if this ever matters
 - [ ] Only safe to copy the .db files with the server stopped. An admin backup command would allow it while running
-- Load test, 2026-10-30: 800 fake players on 3 game servers, about 267 each: 12 ms tick (of 33), 38% of one core each,
-  6 MB/s out each, no errors, 2237 log lines reached the gate. Move delay not measured: the load tester was removed
-  from disk during the run (see below)
+- Load test, 2026-10-30, with SQLite: 800 of 800 fake players on 3 game servers, about 267 each: 14 ms tick (of 33), 45% of
+  one core each, 6 MB/s out each (22 KB/s per player), no errors. Move delay median 32 ms, 99% 52 ms, max 87 ms. All
+  800 characters reached characters.db. Bandwidth left as it is: far robots already get fewer moves
 - Windows note: COMODO on the dev PC appears to delete server/tools/loadtest.py (and copies of it) shortly after it
   runs. `git restore server/tools/loadtest.py` brings it back. An exclusion for C:\dev\openwelkin should stop this
 
