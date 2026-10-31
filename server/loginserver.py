@@ -76,6 +76,7 @@ HIT_RADIUS, HIT_HEIGHT = 6.0, 2.5  # generous hit sphere: the client raycast pas
 MUZZLE_REACH = 15.0     # a shot must start this close to where the server last saw the robot
 RANGE_MARGIN = 1.25     # weapon range is the data's WP1Range times this, for movement between position reports
 DEFAULT_RANGE = 300.0
+MIN_RANGE = 25.0        # melee weapons have WP1Range 2, but range is checked from robot center to robot center
 WEAPON_TIMING = (0.142, 0.015, 0.02, 0.0, 0.0, 0.0)  # Viper fire modes 0/1: flyweight +0x9d4, +0xa34, +0xa38
 TRAINING_ROOMS = [(1, "Training Ground 1")]  # (battlefield id, name)
 # Battlefield definitions served by MapInfo; "world" is the .reb under ..\Maps\<name>\ (field semantics mostly unknown).
@@ -2021,7 +2022,7 @@ def join_match(server, peer):
     peer.protected_until = time.time() + SPAWN_PROTECTION
     weapon = loadout_weapon(peer.cid)
     peer.fire_interval = weapon_stats(weapon)[1][0]
-    peer.fire_range = WEAPONS.get(weapon, (0, 0, DEFAULT_RANGE))[2] * RANGE_MARGIN
+    peer.fire_range = fire_range(weapon)
     peer.next_shot = 0.0
     rid = peer.player_rid
     spawn_robot(server, peer, peer.cid, rid, peer.pos, peer.detachment, peer.name, local=True)
@@ -2152,6 +2153,10 @@ def fire_tick(server, peer, trig, n):
         m.broadcast(19, 50122, lambda v: struct.pack("<III3f3fIfI", rid, part_base(v, rid) + 4, 0, *origin, *aim,
                                                       0, WEAPON_AMMO, 1), reliable=False, skip=peer)
         m.later(peer.fire_interval, fire_tick, server, peer, trig, n + 1)
+
+
+def fire_range(weapon):
+    return max(WEAPONS.get(weapon, (0, 0, DEFAULT_RANGE))[2] * RANGE_MARGIN, MIN_RANGE)
 
 
 def in_range(peer, pos):
@@ -2408,6 +2413,8 @@ def on_game_message(server, peer, raw):
                         return
                     victim = pick_victim(m, peer, origin, aim)
                     peer.fire = (origin, aim, victim)
+                    if DEBUG:
+                        log(f"[game] {peer.name} aim distance {math.dist(origin, aim):.1f}, range {peer.fire_range}")
                     if victim is not None:
                         what = m.targets[victim]["name"] if isinstance(victim, int) else victim.name
                         log(f"[game] {peer.name} fires at {what}")

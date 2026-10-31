@@ -190,6 +190,9 @@ pb.pos = (far, 0.0, 0.0)
 step(pa.fire_interval)
 step(pa.fire_interval)
 ok &= check("a held trigger stops at the range limit", pb.player_hp == hp)
+ls.WEAPONS[1] = (100.0, 0.5, 2.0)
+ok &= check("a melee weapon can reach a robot", ls.fire_range(1) > ls.HIT_RADIUS + ls.MUZZLE_REACH)
+del ls.WEAPONS[1]
 msg(A, 40125, b"\0" * 4)
 pb.pos = (10.0, 0.0, 0.0)
 

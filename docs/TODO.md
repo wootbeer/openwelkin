@@ -87,7 +87,8 @@ reply layout, and answer with real data.
 - [x] Refusals use the client's own codes (Language/ErrorInfoENG.xml): 10001 bad login, 10002 locked, 2401x shop...
 - [x] Shots are checked on the game server (2026-10-30, offline): the muzzle must be within 15 units of the robot, the
       target within the weapon's range (WP1Range + 25%), and pulling the trigger again cannot beat the fire rate.
-      Try with the real client: if shots stop hitting, look for "shot from" in the log. WP1Range may not be in map units
+      Real client, 2026-10-31: kills count, no false "shot from". WP1Range is in map units: a Viper shot at open sky
+      aims exactly 200.0 away. Melee weapons have WP1Range 2, so MIN_RANGE keeps them able to hit (no melee weapon tried)
 - [ ] Not stopped: aim bots, shots through walls (needs the terrain on the server), teleporting or speed hacks
 - [x] Batched saves: stats/log lines flushed every 5 s (atomic writes); purchases/talents/creates save at once
 - [x] MW_DEBUG gates packet traces; AES and session keys never logged
@@ -138,21 +139,23 @@ reply layout, and answer with real data.
 - [ ] Watch a robot vanish on screen, and leave with a real second client (only fake players tried so far)
 - [x] Time played is saved when a player leaves
 
-## Split servers (2026-10-30, tested offline, not yet with the real client)
+## Split servers (2026-10-30, real client 2026-10-31)
 - [x] MW_ROLE = login, gate or game; start_split.py runs them on one machine; tools/test_split.py checks them
 - [x] Login signs the session key with Ed25519, a gate holds only the public key, each key works once. The battle
       ticket is a u32 and cannot be signed: the gate announces it to the game server, with the character
 - [x] Private links (cluster.py): both ends prove they hold internal.key, every message is signed and numbered
 - [x] Players go to the emptiest game server; stats and log lines go to the gate, and wait if it is away
 - [x] who, matches, kick, ban and IP ban work across servers
-- [ ] Try it with the real client: the signed session key is about 170 characters, the client has only had 32.
-      If the client breaks on it, have login announce a short key to the gate over the link instead
+- [x] Real client with 2 game servers (2026-10-31): the signed session key works, the character and stats load, a
+      battle runs on the second game server
 - [x] One gate per login server: each gate has its own characters.db, so a second would show different characters.
       Login refuses it. More gates need a shared character database (MariaDB) or one realm per gate
 - [x] tools/test_failover.py kills and restarts login, gate and game servers: stats wait for the gate, logins and bans
       come back, a restarted server rejoins
 - [x] A game server that dies: after 6 s the gate closes its players' sessions, which sends the client to the login
-      screen. Try it with the real client from inside a battle
+      screen. Real client, 2026-10-31: killed mid-battle, the client went to the login screen without a crash, logged
+      back in and joined a battle on the other game server
+- [ ] tools/test_failover.py failed 1 check once (2026-10-31) and then passed 4 runs; the failing line was not kept
 - [x] A hung server loses its link after 10 s; game servers send reports from their own thread, so the game loop never waits
 - [ ] A gate restart forgets used session keys: a stolen key could work once more until it expires (120 s)
 - [ ] A gate crash loses up to 5 s of stats from its memory, and reports still on the way
