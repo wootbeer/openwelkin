@@ -7,6 +7,7 @@ hung server can block neither a link nor the game loop."""
 import asyncio
 import collections
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -50,7 +51,7 @@ def stop(name):
 
 
 def links():
-    return sum("[link] server on port" in l and "connected" in l for l in lines)
+    return sum(len(re.findall(r"\[link\] server on port \d+ connected", l)) for l in lines)
 
 
 def linked(n, seconds=15):
@@ -158,6 +159,17 @@ def units():
     check("the same gate may reconnect", first in ls.LINKS and again in ls.LINKS)
     ls.LINKS.clear()
     ls.ROLE = role
+
+    # a gate restart forgets which session keys were used
+    secret = ls.ed25519.Ed25519PrivateKey.generate()
+    ls.TICKET_SIGNER, ls.TICKET_VERIFIER = secret, secret.public_key()
+    key = ls.signed_session("amy")
+    check("a session key works", ls.redeem_signed_session(key)[0] == "amy")
+    check("a session key works once", ls.redeem_signed_session(key)[0] is None)
+    key = ls.signed_session("amy")
+    started, ls.STARTED = ls.STARTED, int(ls.time.time()) + 1
+    check("a key from before a gate restart is refused", ls.redeem_signed_session(key)[0] is None)
+    ls.STARTED = started
 
     # a dropped link to a live game server is not a dead server
     grace, kicked, ls.kick, ls.LOST_GRACE = ls.LOST_GRACE, [], lambda account, reason: kicked.append(account), 0

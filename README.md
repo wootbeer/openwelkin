@@ -75,8 +75,9 @@ client then needs the moved login port).
 | `loginserver.log` | Server log. Contains no passwords or keys. With `MW_DEBUG=1` it grows fast. |
 | `data/flyweights/` | Item, weapon and robot data unpacked from your client by `setup_data.py`. |
 
-Stop the server with Ctrl+C before you back up, so pending stats are saved, then copy `accounts.db` and
-`characters.db` together. Do not copy them while the server runs.
+To back up while the server runs, use the admin command `backup`. It saves pending stats and writes dated copies into
+`backups/` next to each database, on each server's own disk. Copy those somewhere safe. Do not copy `accounts.db` or
+`characters.db` by hand while the server runs.
 
 Old `accounts.json`, `bans.json` and `characters.json` files are imported on the first start, then renamed to
 `*.imported`. You can keep those as a backup or delete them.
@@ -153,6 +154,7 @@ python server/tools/admin.py who
 | `unipban <address or network>` | |
 | `bans` | List bans |
 | `role <account> [player\|gm\|admin]` | Show or set an account's role (for GM commands later) |
+| `backup` | Copy the databases into `backups/` while the server runs |
 
 Banned players see the client's own message: "Account has been locked" (permanent), "Account being punished"
 (timed) or "IP is locked".

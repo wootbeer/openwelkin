@@ -659,7 +659,7 @@ def character_name(cid):
 
 def log(msg):
     line = f"{time.strftime('%H:%M:%S')} {msg}"
-    print(line, flush=True)
+    print(line + "\n", end="", flush=True)  # one write: threads can not join their lines
     LOG.write(line + "\n")
 
 
@@ -1486,6 +1486,7 @@ TICKET_KEY_FILE, TICKET_PUB_FILE = "ticket.key", "ticket.pub"
 TICKET_SIGNER, TICKET_VERIFIER = None, None
 SIGNED_PAYLOAD = struct.Struct("<I8s")  # u32 expiry | 8 random bytes; then the account name, then the signature
 SPENT_SESSIONS = {}   # gate: random part of used session keys -> expiry
+STARTED = int(time.time())  # gate: older keys are refused, they may have been used before a restart
 LINK_LOCK = threading.Lock()
 LOAD_EVERY = 2.0      # seconds between a game server's load reports
 LOST_GRACE = 6.0      # gate: seconds a game server has to come back before its players are sent to the login screen
@@ -1539,6 +1540,8 @@ def redeem_signed_session(key):
         expiry, nonce = SIGNED_PAYLOAD.unpack_from(data)
         account = data[SIGNED_PAYLOAD.size:].decode("latin-1")
     except (ValueError, struct.error, InvalidSignature):
+        return None, 0
+    if expiry - SESSION_TTL < STARTED:
         return None, 0
     now = time.time()
     with SESSION_LOCK:
@@ -1709,6 +1712,8 @@ def on_login_message(link, msg):
         return who_rows()
     if kind == "matches":
         return match_rows()
+    if kind == "backup":
+        return backup_here()
     return None
 
 
@@ -2474,6 +2479,7 @@ ADMIN_HELP = """commands:
   unipban <address or network>
   bans                                   list bans
   role <account> [player|gm|admin]       show or set an account's role
+  backup                                 copy the databases into backups/ while the server runs
   help"""
 
 
@@ -2628,6 +2634,30 @@ def cmd_bans(args, actor):
     return "\n".join(rows) or "no bans"
 
 
+def backup_here():
+    """Copy this server's databases into backups/ while it runs. One line per database."""
+    folder = os.path.join(STATE_DIR, "backups")
+    os.makedirs(folder, exist_ok=True)
+    stamp, rows = time.strftime("%Y%m%d-%H%M%S"), []
+    if ROLE in ("all", "gate"):
+        STORE.flush()  # stats still waiting for the next batch go in the copy too
+    for wanted, path in ((("all", "login"), Accounts.path), (("all", "gate"), Store.path)):
+        if ROLE in wanted:
+            name = os.path.basename(path)
+            copy = os.path.join(folder, f"{stamp}-{name}")
+            try:
+                db.backup(path, copy)
+                rows.append(f"{name} -> {copy}")
+            except (OSError, db.Error) as e:
+                rows.append(f"{name}: backup failed: {e}")
+    return rows
+
+
+def cmd_backup(args, actor):
+    rows = backup_here() + gather("backup", list) if ROLE == "login" else backup_here()
+    return "\n".join(rows)
+
+
 def cmd_role(args, actor):
     if not args or not ACCOUNTS.exists(args[0]):
         return "usage: role <account> [player|gm|admin]" if not args else f"no account {args[0]!r}"
@@ -2639,7 +2669,7 @@ def cmd_role(args, actor):
 
 
 ADMIN_COMMANDS = {"who": cmd_who, "matches": cmd_matches, "kick": cmd_kick, "ban": cmd_ban, "unban": cmd_unban,
-                  "ipban": cmd_ipban, "unipban": cmd_unipban, "bans": cmd_bans, "role": cmd_role,
+                  "ipban": cmd_ipban, "unipban": cmd_unipban, "bans": cmd_bans, "role": cmd_role, "backup": cmd_backup,
                   "help": lambda args, actor: ADMIN_HELP}
 
 

@@ -42,6 +42,16 @@ CREATE INDEX IF NOT EXISTS event_log_character ON event_log (character_id, id);
 """
 
 
+def backup(path, copy):
+    """Copy a database while the server is using it."""
+    source, target = sqlite3.connect(path), sqlite3.connect(copy)
+    try:
+        source.backup(target)
+    finally:
+        source.close()
+        target.close()
+
+
 def connect(path, schema):
     """One connection per database, used from many threads: the caller holds its lock around every use."""
     con = sqlite3.connect(path, timeout=5, check_same_thread=False)

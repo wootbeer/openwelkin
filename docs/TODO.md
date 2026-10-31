@@ -155,9 +155,11 @@ reply layout, and answer with real data.
 - [x] A game server that dies: after 6 s the gate closes its players' sessions, which sends the client to the login
       screen. Real client, 2026-10-31: killed mid-battle, the client went to the login screen without a crash, logged
       back in and joined a battle on the other game server
-- [ ] tools/test_failover.py failed 1 check once (2026-10-31) and then passed 4 runs; the failing line was not kept
+- [x] tools/test_failover.py sometimes failed "game servers rejoin": two threads could print on one log line, and the
+      test counted lines. log() now makes one write and the test counts messages
 - [x] A hung server loses its link after 10 s; game servers send reports from their own thread, so the game loop never waits
-- [ ] A gate restart forgets used session keys: a stolen key could work once more until it expires (120 s)
+- [x] A gate restart forgot used session keys: the gate now refuses keys issued before it started. A player logging
+      in during the restart has to log in again
 - [ ] A gate crash loses up to 5 s of stats from its memory, and reports still on the way
 - [ ] Web site
 - [ ] MariaDB for a server too big for SQLite on one disk (db.py is the only file that would change much)
@@ -169,7 +171,8 @@ reply layout, and answer with real data.
       The old JSON file took about 1 s per write at that size, before the disk
 - [x] JSON files are imported once and renamed to *.imported; a broken one stops the server and is left alone
 - [ ] All characters are still loaded into memory at start. Load on login if this ever matters
-- [ ] Only safe to copy the .db files with the server stopped. An admin backup command would allow it while running
+- [x] Admin command backup copies the databases into backups/ on each server while it runs. Copying the .db files by
+      hand is only safe with the server stopped
 - Load test, 2026-10-30, with SQLite: 800 of 800 fake players on 3 game servers, about 267 each: 14 ms tick (of 33), 45% of
   one core each, 6 MB/s out each (22 KB/s per player), no errors. Move delay median 32 ms, 99% 52 ms, max 87 ms. All
   800 characters reached characters.db. Bandwidth left as it is: far robots already get fewer moves

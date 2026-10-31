@@ -8,6 +8,7 @@ keys and wrong link keys are refused, a gate takes no logins, IP bans reach the 
 import asyncio
 import collections
 import os
+import sqlite3
 import re
 import shutil
 import socket
@@ -205,6 +206,12 @@ async def scenario():
     check("time played reaches characters.db on the gate", p1left and ok, str(stored().get("bob")))
 
     # --- kick across servers ---
+    reply = await asyncio.to_thread(admin, "backup")
+    check("backup copies both databases", "accounts.db ->" in reply and "characters.db ->" in reply, reply)
+    copies = [line.split(" -> ")[1] for line in reply.splitlines()]
+    check("the copies are on their servers' disks", all(os.path.getsize(c) > 0 for c in copies), reply)
+    check("the character copy has the characters", sqlite3.connect(copies[1]).execute(
+        "SELECT COUNT(*) FROM characters").fetchone()[0] > 0, reply)
     reply = await asyncio.to_thread(admin, "kick carol")
     check("kick reaches the gate", reply.strip() == "kicked carol", reply)
     ok = await asyncio.to_thread(wait_for, lambda: "carol" not in admin("matches"), 4)
