@@ -93,6 +93,9 @@ def scenario():
     act("unipban", net="203.0.113.0/24")
     check("removing an IP ban works", "203.0.113.0" not in web.admin.send("bans"))
 
+    act("backup")
+    check("backup works", "characters.db -&gt;" in page())
+
     # --- nothing extra can reach the admin port ---
     act("ban", account="alice\nrole alice admin")
     check("a line break in a name is refused", "bad account" in page() and "alice" not in web.admin.send("bans"))

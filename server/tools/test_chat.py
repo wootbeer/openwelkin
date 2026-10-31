@@ -1,0 +1,138 @@
+# MarsWar server emulator. Copyright (C) 2026 the MarsWar emulator contributors.
+# Licensed under the GNU Affero General Public License v3 or later; see LICENSE.
+"""test_chat.py -- start a server in a temporary folder with fake players: chat reaches the others, nobody can write as
+someone else or send what the client should not get, and only the right roles can use ! commands."""
+import asyncio
+import os
+import shutil
+import struct
+import subprocess
+import sys
+import threading
+import time
+
+import test_split as ts
+
+import loginserver as ls  # noqa: E402
+
+check, wait_for = ts.check, ts.wait_for
+
+
+async def player(name):
+    """(gate connection, character id) of a player in the hall."""
+    code, key, _ = await ts.login(name)
+    gate = await ts.gate_session(key)
+    r = await gate.request(13, 13006, ls.wstr(name) + bytes([1]) + struct.pack("<I", 1) + bytes(8))
+    cid = struct.unpack_from("<I", r.body)[0]
+    await gate.request(13, 13004, struct.pack("<I", cid))
+    return gate, cid
+
+
+def say(gate, text, type_=21513, before=b""):
+    gate.send(ls.Message(21, type_, body=before + ls.wstr(text)))
+
+
+async def heard(gate, seconds=1.5):
+    """(type, id, name, text) of the next chat line, or None."""
+    try:
+        while True:
+            m = await asyncio.wait_for(gate.recv(), seconds)
+            if m.catalog == 21:
+                name, off = ls.read_wstr(m.body, 4)
+                return m.type, struct.unpack_from("<I", m.body)[0], name, ls.read_wstr(m.body, off)[0]
+    except asyncio.TimeoutError:
+        return None
+
+
+async def scenario():
+    amy, amy_id = await player("amy")
+    ben, ben_id = await player("ben")
+    gate = (await ts.login("nochar"))[1]
+    stranger = await ts.gate_session(gate)
+
+    # --- ordinary chat ---
+    say(amy, "hello")
+    check("broadcast reaches the others", await heard(ben) == (21514, amy_id, "amy", "hello"))
+    check("broadcast comes back to the sender", await heard(amy) == (21514, amy_id, "amy", "hello"))
+    await asyncio.sleep(ls.CHAT_EVERY)
+    say(amy, "in battle", 21052)
+    check("battle chat reaches the others", await heard(ben) == (21211, amy_id, "amy", "in battle"))
+    check("the client shows its own battle chat", await heard(amy, 0.3) is None)
+    await asyncio.sleep(ls.CHAT_EVERY)
+    say(amy, "psst", 21032, ls.wstr("BEN"))
+    check("a private line reaches its target", await heard(ben) == (21200, amy_id, "amy", "psst"))
+    await asyncio.sleep(ls.CHAT_EVERY)
+    say(amy, "psst", 21032, ls.wstr("nobody"))
+    check("a private line to nobody says so", await heard(amy) == (21200, 0, "Server", "nobody is not online"))
+
+    # --- bad input ---
+    await asyncio.sleep(ls.CHAT_EVERY)
+    say(amy, "one\r\n[chat] ben: two\0\x1b")
+    check("line breaks and control characters go", (await heard(ben))[3] == "one[chat] ben: two")
+    await heard(amy)
+    await asyncio.sleep(ls.CHAT_EVERY)
+    say(amy, "x" * 900)
+    check("a long line is cut", len((await heard(ben))[3]) == ls.CHAT_MAX)
+    await heard(amy)
+    await asyncio.sleep(ls.CHAT_EVERY)
+    say(amy, " \n ")
+    check("an empty line is dropped", await heard(ben, 0.4) is None)
+    await asyncio.sleep(ls.CHAT_EVERY)
+    for n in range(5):
+        say(amy, f"spam {n}")
+    check("spam is limited", await heard(ben) is not None and await heard(ben, 0.3) is None)
+    await heard(amy)
+    await asyncio.sleep(ls.CHAT_EVERY)
+    amy.send(ls.Message(21, 21513, body=b"\xff\xff\xff\xff\xff"))
+    amy.send(ls.Message(21, 21032, body=b"\x7f"))
+    check("broken strings are ignored", await ts.answers(amy))
+    say(stranger, "no character yet")
+    check("no character, no chat", await heard(ben, 0.4) is None)
+    amy.send(ls.Message(21, 21513, token=7, flags=ls.MSG_REQUEST, body=ls.wstr("request")))
+    check("a request gets its answer", await ts.answers(amy))
+    await asyncio.sleep(ls.CHAT_EVERY)
+
+    # --- commands ---
+    say(amy, "!role amy admin")
+    check("a player can not use commands", await heard(amy) == (21200, 0, "Server", "not allowed"))
+    check("the role did not change", "player" in ts.admin("role amy"))
+    check("commands are not shown to others", await heard(ben, 0.4) is None)
+    ts.admin("role amy gm")
+    await asyncio.sleep(ls.CHAT_EVERY)
+    say(amy, "!who")
+    rows = [await heard(amy), await heard(amy), await heard(amy, 0.3)]
+    check("a GM can use who", any(r and "ben" in r[3] for r in rows), str(rows))
+    await asyncio.sleep(ls.CHAT_EVERY)
+    say(amy, "!role amy admin")
+    check("a GM can not change roles", await heard(amy) == (21200, 0, "Server", "not allowed"))
+    await asyncio.sleep(ls.CHAT_EVERY)
+    say(amy, "!ban ben 1h spam")
+    await heard(amy)
+    check("a GM can ban", wait_for(lambda: "account ben" in ts.admin("bans"), 3))
+    ts.admin("unban ben")
+    ts.admin("role amy admin")
+    await asyncio.sleep(ls.CHAT_EVERY)
+    say(amy, "!backup")
+    check("an admin can back up", "accounts.db ->" in (await heard(amy))[3])
+    check("commands are in the admin log", wait_for(lambda: ts.seen("gm amy: backup"), 3))
+
+
+def main():
+    env = dict(os.environ, MW_STATE_DIR=os.path.join(ts.root, "login"))
+    os.makedirs(env["MW_STATE_DIR"], exist_ok=True)
+    proc = subprocess.Popen([sys.executable, "-u", os.path.join(ts.SERVER, "loginserver.py")], env=env, text=True,
+                            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    threading.Thread(target=ts.pump, args=(proc,), daemon=True).start()
+    try:
+        check("the server starts", wait_for(lambda: ts.seen("admin commands on"), 15))
+        asyncio.run(scenario())
+    finally:
+        proc.kill()
+        time.sleep(0.5)
+        shutil.rmtree(ts.root, ignore_errors=True)
+    print(f"{len(ts.fails)} failed" if ts.fails else "all ok")
+    return 1 if ts.fails else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

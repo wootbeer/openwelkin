@@ -206,6 +206,16 @@ async def scenario():
     check("time played reaches characters.db on the gate", p1left and ok, str(stored().get("bob")))
 
     # --- kick across servers ---
+    code, key, _ = await login("gina")
+    gina = await gate_session(key)
+    r = await gina.request(13, 13006, ls.wstr("gina") + bytes([1]) + struct.pack("<I", 1) + bytes(8))
+    await gina.request(13, 13004, r.body[:4])
+    await asyncio.to_thread(admin, "role gina gm")
+    gina.send(ls.Message(21, 21513, body=ls.wstr("!matches")))
+    m = await asyncio.wait_for(gina.recv(), 5)
+    check("a GM command from a gate reaches login", m.type == 21200 and b"match" in m.body, str(m))
+    check("and login could ask the gate", not seen("no answer to matches"))
+    gina.close()
     reply = await asyncio.to_thread(admin, "backup")
     check("backup copies both databases", "accounts.db ->" in reply and "characters.db ->" in reply, reply)
     copies = [line.split(" -> ")[1] for line in reply.splitlines()]

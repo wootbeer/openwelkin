@@ -156,6 +156,10 @@ python server/tools/admin.py who
 | `role <account> [player\|gm\|admin]` | Show or set an account's role (for GM commands later) |
 | `backup` | Copy the databases into `backups/` while the server runs |
 
+A player with the role `gm` or `admin` can also type commands in game chat, starting with `!`, like `!kick bob`. A `gm` can
+use `who`, `matches`, `kick`, `ban`, `unban` and `bans`. An `admin` can also use `ipban`, `unipban`, `role` and `backup`.
+The reply comes as a private message from Server, and the command goes in `admin.log`.
+
 Banned players see the client's own message: "Account has been locked" (permanent), "Account being punished"
 (timed) or "IP is locked".
 

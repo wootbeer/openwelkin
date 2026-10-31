@@ -632,6 +632,9 @@ class Bans:
 ACCOUNTS = Accounts()
 BANS = Bans()
 ONLINE = {}  # account -> its gate Session; one per account, a second login closes the first
+CHAT_MAX, CHAT_EVERY, CHAT_QUEUE = 200, 0.5, 100  # characters in a line, seconds between a player's lines, lines waiting
+GM_COMMANDS = {"who", "matches", "kick", "ban", "unban", "bans"}
+ROLE_COMMANDS = {"player": set(), "gm": GM_COMMANDS, "admin": GM_COMMANDS | {"ipban", "unipban", "role", "backup"}}
 ONLINE_LOCK = threading.Lock()
 LOGIN_FAILS = {}  # ip -> [failure times]
 LOGIN_FAILS_LOCK = threading.Lock()
@@ -750,6 +753,11 @@ class Session:
         self.key_index = 7  # server picks rand()%32+1; client only checks the range
         self.rbuf = b""
         self.account = None
+        self.character, self.next_chat = None, 0.0
+        self.send_lock = threading.Lock()
+        self.outbox = collections.deque(maxlen=CHAT_QUEUE)  # lines from other players' threads wait here
+        self.outbox_ready = threading.Event()
+        self.gone = False
 
     def close(self):
         """Drop the connection (kick): the session's own thread sees it close and cleans up."""
@@ -807,7 +815,8 @@ class Session:
             head = bytes([0x80 | flags]) + struct.pack("<H", n)
         else:
             head = bytes([0xC0 | flags]) + struct.pack("<I", n)
-        self.conn.sendall(head + body + bytes([self.checksum(head, body)]))
+        with self.send_lock:
+            self.conn.sendall(head + body + bytes([self.checksum(head, body)]))
 
     def send_message(self, msg):
         debug(f"{self.addr} -> {msg}")
@@ -883,6 +892,9 @@ class Session:
         if not c:
             self.reply(msg, result=13000)  # "This character does not exist"
             return
+        if not self.character:
+            threading.Thread(target=self.outbox_loop, daemon=True).start()
+        self.character = c
         body = (struct.pack("<IBIIB", c["id"], c["state"], 0, 0, 0) + wstr(c["name"]) + wstr("")
                 + struct.pack("<BBI", rank_for(STORE.stats(c["id"]).get("honor", 0)), c["gender"], c["model"])
                 + wstr("") + wstr("") + wstr("")
@@ -1192,6 +1204,90 @@ class Session:
         cid = struct.unpack_from("<I", msg.body)[0] if len(msg.body) >= 4 else 0
         self.reply(msg, struct.pack("<I", int(STORE.stats(cid)["points"])))
 
+    # Chat, from Game.dll ChatManager::SendMessage. Never tried with the client. Hall channels: Broadcast = (21,21513) str
+    # text, shown from (21,21514); private = (21,21032) str name | str text, shown from (21,21200). In battle: (21,21052)
+    # str text, shown from (21,21211). All shown lines are u32 character id | str name | str text. The client shows its
+    # own 21052 and private lines itself. A line starting with ! is a GM command: / is taken by the client's own commands.
+    def chat_text(self, msg, off=0):
+        """The cleaned line and the offset after it, or None when it can not be sent now."""
+        if msg.flags & MSG_REQUEST:
+            self.reply(msg, bytes(DEFAULT_REPLY_SIZE))
+        now = time.time()
+        if not self.character or now < self.next_chat:
+            return None
+        self.next_chat = now + CHAT_EVERY
+        try:
+            text, off = read_wstr(msg.body, off)
+        except ValueError:
+            return None
+        text = " ".join("".join(c for c in text if c.isprintable()).split())[:CHAT_MAX]
+        return (text, off) if text else None
+
+    def chat_line(self, type_, name, text, cid=0):
+        self.outbox.append(Message(21, type_, flags=MSG_MULTI1, multi=0,
+                                   body=struct.pack("<I", cid) + wstr(name) + wstr(text)))
+        self.outbox_ready.set()
+
+    def outbox_loop(self):
+        """A player who stops reading blocks only this thread, and loses old lines when the queue is full."""
+        while not self.gone:
+            self.outbox_ready.wait()
+            self.outbox_ready.clear()
+            try:
+                while self.outbox:
+                    self.send_message(self.outbox.popleft())
+            except OSError:
+                return
+
+    def chat_to_all(self, msg, type_, include_self):
+        line = self.chat_text(msg)
+        if not line:
+            return
+        if line[0].startswith("!"):
+            return self.gm_chat(line[0][1:])
+        name = self.character["name"]
+        log(f"[chat] {name}: {line[0]}")
+        with ONLINE_LOCK:
+            sessions = list(ONLINE.values())
+        for s in sessions:
+            if s.character and (include_self or s is not self):
+                s.chat_line(type_, name, line[0], self.character["id"])
+
+    def on_chat_broadcast(self, msg):
+        self.chat_to_all(msg, 21514, True)
+
+    def on_chat_battle(self, msg):
+        self.chat_to_all(msg, 21211, False)
+
+    def on_chat_private(self, msg):
+        try:
+            target = read_wstr(msg.body, 0)
+        except ValueError:
+            target = None
+        line = self.chat_text(msg, target[1]) if target else None
+        if not line:
+            return
+        if line[0].startswith("!"):
+            return self.gm_chat(line[0][1:])
+        with ONLINE_LOCK:
+            other = next((s for s in ONLINE.values() if s.character and s.character["name"].lower() == target[0].lower()), None)
+        if other:
+            other.chat_line(21200, self.character["name"], line[0], self.character["id"])
+        else:
+            self.chat_line(21200, "Server", f"{target[0][:32]} is not online")
+
+    def gm_chat(self, line):
+        if ROLE != "gate":
+            self.gm_reply(gm_command(self.account, line))
+        elif UPLINK:
+            UPLINK.send("gm", account=self.account, line=line)
+        else:
+            self.gm_reply("the login server does not answer")
+
+    def gm_reply(self, text):
+        for row in text.splitlines()[:10]:
+            self.chat_line(21200, "Server", row[:CHAT_MAX])
+
     def own_character(self, cid):
         """True when cid is one of this session's account characters (never trust ids from the client)."""
         return self.account is not None and STORE.find(self.account, cid) is not None
@@ -1393,6 +1489,8 @@ def go_online(session):
 
 def go_offline(session):
     """A connection closed. If it was its account's gate session the player quit: take them out of the game."""
+    session.gone = True
+    session.outbox_ready.set()
     with ONLINE_LOCK:
         gone = session.account is not None and ONLINE.get(session.account) is session
         if gone:
@@ -1443,6 +1541,9 @@ HANDLERS = {
     (18, 18021): Session.on_map_status,          # MapStatus
     (18, 18000): Session.on_apply_enter,         # QS_ApplyEnter (enter a battlefield / training ground)
     (21, 21047): Session.on_announcements,       # UpdateAllAnnouncement (hall scrolling bar)
+    (21, 21513): Session.on_chat_broadcast,      # Chat_BigBugleSendMessage (hall Broadcast channel)
+    (21, 21052): Session.on_chat_battle,         # chat in battle
+    (21, 21032): Session.on_chat_private,        # private message
     (14, 14057): Session.on_today_military,      # CGS_GetCharacterTodayMilitary (Battle Report panel)
     (14, 14010): Session.on_exploit,             # CG_Character_Get_Exploit (rank / experience)
     (14, 14040): Session.on_rank_table,          # CGS_GetAllMilitaryRank
@@ -1693,6 +1794,13 @@ def on_gate_message(link, msg):
     """login: messages from a gate."""
     if msg["t"] == "load":
         link.load = msg["players"]
+    elif msg["t"] == "gm":  # not on this thread: commands ask the gate things, and answers arrive on this thread
+        threading.Thread(target=gm_from_gate, args=(link, msg["account"], msg["line"]), daemon=True).start()
+    return None
+
+
+def gm_from_gate(link, account, line):
+    link.send("gm_reply", account=account, text=gm_command(account, line))
 
 
 def on_login_message(link, msg):
@@ -1714,6 +1822,11 @@ def on_login_message(link, msg):
         return match_rows()
     if kind == "backup":
         return backup_here()
+    if kind == "gm_reply":
+        with ONLINE_LOCK:
+            session = ONLINE.get(msg["account"])
+        if session:
+            session.gm_reply(msg["text"])
     return None
 
 
@@ -2671,6 +2784,14 @@ def cmd_role(args, actor):
 ADMIN_COMMANDS = {"who": cmd_who, "matches": cmd_matches, "kick": cmd_kick, "ban": cmd_ban, "unban": cmd_unban,
                   "ipban": cmd_ipban, "unipban": cmd_unipban, "bans": cmd_bans, "role": cmd_role, "backup": cmd_backup,
                   "help": lambda args, actor: ADMIN_HELP}
+
+
+def gm_command(account, line):
+    """A command typed in chat. Roles live with the accounts, so this always runs where they do."""
+    words = line.split()
+    if not words or words[0].lower() not in ROLE_COMMANDS[ACCOUNTS.role(account)]:
+        return "not allowed"
+    return admin_command(line, f"gm {account}")
 
 
 def admin_command(line, actor):
