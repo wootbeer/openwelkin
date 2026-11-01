@@ -1227,10 +1227,11 @@ class Session:
         cid = struct.unpack_from("<I", msg.body)[0] if len(msg.body) >= 4 else 0
         self.reply(msg, struct.pack("<I", int(STORE.stats(cid)["points"])))
 
-    # Chat, from Game.dll ChatManager::SendMessage. Never tried with the client. Hall channels: Broadcast = (21,21513) str
-    # text, shown from (21,21514); private = (21,21032) str name | str text, shown from (21,21200). In battle: (21,21052)
-    # str text, shown from (21,21211). All shown lines are u32 character id | str name | str text. The client shows its
-    # own 21052 and private lines itself. A line starting with ! is a GM command: / is taken by the client's own commands.
+    # Chat, tried with the real client. Hall: the Lobby tab sends (21,21513) str text, shown from (21,21514); whispers are
+    # (21,21051) str name | str text, shown from (21,21200), and the client also has (21,21032) with that layout. Battle: see
+    # on_chat_channel. (21,21052) str text, shown from (21,21211), is from Game.dll only. All shown lines are u32 character
+    # id | str name | str text. The client shows its own whispers. A line starting with ! is a GM command: / is taken by
+    # the client's own commands.
     def chat_text(self, msg, off=0):
         """The cleaned line and the offset after it, or None when it can not be sent now."""
         if msg.flags & MSG_REQUEST:
@@ -1262,8 +1263,8 @@ class Session:
             except OSError:
                 return
 
-    def chat_to_all(self, msg, type_, include_self, same_match=False):
-        line = self.chat_text(msg)
+    def chat_to_all(self, msg, type_, include_self, same_match=False, off=0):
+        line = self.chat_text(msg, off)
         if not line:
             return
         if line[0].startswith("!"):
@@ -1285,6 +1286,12 @@ class Session:
     def on_chat_battle(self, msg):
         self.chat_to_all(msg, 21211, False, same_match=True)
 
+    def on_chat_channel(self, msg):
+        """The battle chat box (21,21004): u16 channel | str text. Channel 5 is its Country tab, seen in game. The client
+        does not show its own line. Nations are not done, so Country reaches the player's match."""
+        if len(msg.body) >= 2 and struct.unpack_from("<H", msg.body)[0] == 5:
+            self.chat_to_all(msg, 21204, True, same_match=True, off=2)
+
     def on_chat_private(self, msg):
         try:
             target = read_wstr(msg.body, 0)
@@ -1305,10 +1312,10 @@ class Session:
     def blocks(self, other):
         return other.character["id"] in self.character.get("blocked", [])
 
-    # Friend and block lists, from Game.dll. Never tried with the client. Get (21,21522 / 21523): u32 character id ->
+    # Friend and block lists, tried with the real client. Get (21,21522 / 21523): u32 character id ->
     # u32 n | n x (u32 id | str name | u32 state), read by CHAT_GetFriendListFormDBObserver 0x1035edb0. Add (21,21524 /
     # 21526): u32 character id | str | str -> str name | u32 id. Remove (21,21525 / 21527): u32 character id | u32 id,
-    # empty reply. Which of the two add strings is the target is not known, so it is the one that is not our own name.
+    # empty reply. One add string is the target and the other is our own name.
     def contact_owner(self, msg):
         """The character id at the start of the request, if it is ours. Otherwise answers with an error."""
         cid = struct.unpack_from("<I", msg.body)[0] if len(msg.body) >= 4 else None
@@ -1642,6 +1649,8 @@ HANDLERS = {
     (21, 21047): Session.on_announcements,       # UpdateAllAnnouncement (hall scrolling bar)
     (21, 21513): Session.on_chat_broadcast,      # Chat_BigBugleSendMessage (hall Broadcast channel)
     (21, 21052): Session.on_chat_battle,         # chat in battle
+    (21, 21004): Session.on_chat_channel,        # battle chat box
+    (21, 21051): Session.on_chat_private,        # private message, as the hall sends it (seen in game)
     (21, 21032): Session.on_chat_private,        # private message
     (21, 21522): Session.on_friends,             # CHAT_GetFriendListFormDB
     (21, 21523): Session.on_blocked,             # CHAT_GetBlackListFormDB

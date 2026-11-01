@@ -4,7 +4,7 @@ MMOFPS server for Welkin4591 / Mars War: an open-source server emulator
 
 A fan-made server for the MarsWar client. The stock client is used as-is; only its config file
 points at this server. Work in progress: several players per battlefield (free for all), Training Ground and Northern Front, timed rounds, shop, warehouse,
-talents, medals, badges and the Info window work. Chat and rounds have so far been tested only with fake clients.
+talents, medals, badges, chat, friend and block lists and the Info window work.
 
 ## Run it
 
@@ -226,8 +226,9 @@ Target robots do not count. The player with the most kills gets a win, shown on 
 everyone tied. Everyone then sees the Record window for 20 seconds and goes back to the lobby. A player alone keeps
 playing, and Training Grounds have no rounds.
 
-Players can chat in the Broadcast channel, which reaches everyone online, in private, and in battle, which reaches only
-their own match. Team and division chat are not done yet. Lines are cut at 200 characters, one player can send
+Players can chat in the hall's Lobby Channel, which reaches everyone online, in whispers, and in the battle chat box's
+Country tab, which reaches only their own match. The client allows about one Lobby line or whisper a minute. Team and
+division chat are not done yet. Lines are cut at 200 characters, one player can send
 a line every half second, and control characters are removed. The sender's name always comes from the server.
 
 Each character has a friend list and a block list of up to 100 names, kept in `characters.db`. Lines from a blocked player

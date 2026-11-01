@@ -53,9 +53,8 @@ reply layout, and answer with real data.
 - [x] (21,21047) UpdateAllAnnouncement
 - [ ] (21,21048) CS_GetTaskServerAfficheList
 - [ ] (21,21069) CS_AckTradeRes
-- [ ] Friend and block lists (2026-10-31, read from Game.dll, tested only with fake clients; tools/test_chat.py): get, add
-      and remove (21,21522..21527), saved in characters.db. Blocked players are not heard. Try with the real client: which
-      add string is the target, and what the list's state value means (the server sends 1 for online)
+- [x] Friend and block lists, real client 2026-11-01: add, delete and block from the name menu (right click), lists come back
+      after a server restart, blocked lines stop. Not known: what the list's state value means (the server sends 1 for online)
 
 ## Shop / items / money
 - [x] (24,24006) GS_UpdateItemInUse
@@ -102,9 +101,10 @@ reply layout, and answer with real data.
 - [x] Players spawn 5 units apart (slot offset); MW_PASSIVE_DUMMIES=1 for PvP tests
 - [x] Walking: robots had speed 0 -- GS_Robot_Skill (19,50132) u32 robot | f32 speed | f32 up speed | vec3 velocity now sent on spawn/respawn
 - [x] Movement relay verified both ways with two clients (40100 steer flags + 40130 positions -> 50100)
-- [x] Rounds (2026-10-31, offline; tools/test_match.py): a Mars Front round ends after MW_ROUND_SECONDS or MW_ROUND_KILLS
-      player kills. Most player kills gets a win, and everyone gets the Record window (19,30150). Try in game: does the
-      message (19,30250, u32 0 | str) show, and can a client go straight into a new round?
+- [x] Rounds (tools/test_match.py): a Mars Front round ends after MW_ROUND_SECONDS or MW_ROUND_KILLS player kills. Most
+      player kills gets a win, and everyone gets the Record window (19,30150). Real client 2026-11-01: the timer ending, the
+      warning and end messages (19,30250, big red text), the Record window, and back to the lobby after 20 s. Not tried:
+      the kill limit, a real win, or Quick Enter straight into a new round
 - [ ] Teams (all players are on their own side now), respawn point choice. Needs a client session: without knowing what
       sets the nation, players could not tell the sides apart, so nothing is built yet. Client's Kill arena, read from Game.dll, not
       tried: arena logic 5 in (19,40050), then init data u8 nation | u8 nation | f32. (19,49000) f32 seconds | u8 | f32
@@ -128,11 +128,13 @@ reply layout, and answer with real data.
 - [x] A second login of the same account closes the first one
 - [x] GM commands in chat (2026-10-31, offline): a line starting with ! runs on the login server, where the roles are.
       GM: who, matches, kick, ban, unban, bans. Admin also: ipban, unipban, role, backup. Replies come as private lines
-- [ ] Chat (2026-10-31, read from Game.dll, tested only with fake clients; tools/test_chat.py): Broadcast, private and
-      battle lines. Try with the real client: does a line pushed by the gate show (flags 0x20, multi 0)? What does the
-      client want in reply to 21513, if it is a request? Which channel does the hall's Lobby tab send on? Division chat
-      (21,21004: u32 2/3/5 | str, shown from 21202/21203/21204) and team chat (21,21063) are not done. Battle chat reaches
-      only the player's match: game servers report joins and leaves to the gate, because shown lines go out on the gate
+- [x] Chat, real client 2026-11-01: gate pushes show. The hall's Lobby tab sends (21,21513) and shows as [Broadcast]. The
+      client allows one Lobby line or whisper about every 60 s, and shows no message when a line is held back. Hall whispers
+      are (21,21051), not 21032. The battle box's Country tab is (21,21004): u16 5 | str, shown from (21,21204), and the
+      client does not show its own line. Country reaches the player's match: game servers report joins and leaves to the
+      gate, because shown lines go out on the gate. (21,21211) did not show in the battle box
+- [ ] Team tab and hall Division Channel: team chat (21,21063) and other (21,21004) channels are not read in game. Whispers
+      from the battle box are not tried. Enter in battle needs DirectInput: tools/vinput.py enter:0.2 sends a line
 - [ ] The client has its own / GM commands when the character's GM byte is set: (13,13041) and others, not read yet
 - [x] Web admin page (tools/webadmin.py, 2026-10-30): one file, sends admin commands, local only; README explains
       the admin port so people can build their own. Login and an IP ban tried in a real browser
