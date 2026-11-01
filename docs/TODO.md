@@ -53,8 +53,9 @@ reply layout, and answer with real data.
 - [x] (21,21047) UpdateAllAnnouncement
 - [ ] (21,21048) CS_GetTaskServerAfficheList
 - [ ] (21,21069) CS_AckTradeRes
-- [ ] (21,21522) CHAT_GetFriendListFormDB
-- [ ] (21,21523) CHAT_GetBlackListFormDB
+- [ ] Friend and block lists (2026-10-31, read from Game.dll, tested only with fake clients; tools/test_chat.py): get, add
+      and remove (21,21522..21527), saved in characters.db. Blocked players are not heard. Try with the real client: which
+      add string is the target, and what the list's state value means (the server sends 1 for online)
 
 ## Shop / items / money
 - [x] (24,24006) GS_UpdateItemInUse
@@ -104,7 +105,8 @@ reply layout, and answer with real data.
 - [x] Rounds (2026-10-31, offline; tools/test_match.py): a Mars Front round ends after MW_ROUND_SECONDS or MW_ROUND_KILLS
       player kills. Most player kills gets a win, and everyone gets the Record window (19,30150). Try in game: does the
       message (19,30250, u32 0 | str) show, and can a client go straight into a new round?
-- [ ] Teams (all players are on their own side now), respawn point choice. Client's Kill arena, read from Game.dll, not
+- [ ] Teams (all players are on their own side now), respawn point choice. Needs a client session: without knowing what
+      sets the nation, players could not tell the sides apart, so nothing is built yet. Client's Kill arena, read from Game.dll, not
       tried: arena logic 5 in (19,40050), then init data u8 nation | u8 nation | f32. (19,49000) f32 seconds | u8 | f32
       = countdown, (19,52001) u8 nation | i32 = score of a side ("Our Force" / "Enemy Force"), (20,20130) u32 n |
       n x 6 str = score table. The local character's nation (+0x30) picks the sides; 0x10 is one of them. Not read yet:

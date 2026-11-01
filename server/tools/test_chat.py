@@ -92,6 +92,46 @@ async def scenario():
     check("a request gets its answer", await ts.answers(amy))
     await asyncio.sleep(ls.CHAT_EVERY)
 
+    # --- friend and block lists ---
+    async def ask(type_, body=b""):
+        return await asyncio.wait_for(amy.request(21, type_, struct.pack("<I", amy_id) + body), 5)
+
+    def names(m):
+        n, off, rows = struct.unpack_from("<I", m.body)[0], 4, []
+        for _ in range(n):
+            name, off = ls.read_wstr(m.body, off + 4)
+            rows.append(name)
+            off += 4
+        return rows
+
+    r = await ask(21524, ls.wstr("amy") + ls.wstr("BEN"))
+    check("a friend is added by name", r.result == 0 and ls.read_wstr(r.body, 0)[0] == "ben")
+    check("the list shows them", names(await ask(21522)) == ["ben"])
+    await asyncio.sleep(ls.CHAT_EVERY)
+    check("nobody by that name", (await ask(21524, ls.wstr("nobody") + ls.wstr("amy"))).result != 0)
+    check("not your own name", (await ask(21524, ls.wstr("amy") + ls.wstr("amy"))).result != 0)
+    check("too many changes wait", (await ask(21526, ls.wstr("ben") + ls.wstr("amy"))).result == 0
+          and (await ask(21527, struct.pack("<I", ben_id))).result != 0)
+    r = await asyncio.wait_for(ben.request(21, 21522, struct.pack("<I", amy_id)), 5)
+    check("nobody reads another character's list", r.result != 0)
+    check("the block list shows them", names(await ask(21523)) == ["ben"])
+    await asyncio.sleep(ls.CHAT_EVERY)
+    say(ben, "hello amy")
+    check("a blocked player is not heard", await heard(amy, 0.4) is None)
+    await heard(ben)
+    await asyncio.sleep(ls.CHAT_EVERY)
+    say(ben, "psst", 21032, ls.wstr("amy"))
+    check("a block looks like being offline", await heard(ben) == (21200, 0, "Server", "amy is not online"))
+    check("no private line either", await heard(amy, 0.3) is None)
+    await asyncio.sleep(ls.CHAT_EVERY)
+    check("a block can be removed", (await ask(21527, struct.pack("<I", ben_id))).result == 0)
+    check("the block list is empty", names(await ask(21523)) == [])
+    await asyncio.sleep(ls.CHAT_EVERY)
+    say(ben, "hello again")
+    check("heard again", (await heard(amy))[3] == "hello again")
+    await heard(ben)
+    await asyncio.sleep(ls.CHAT_EVERY)
+
     # --- commands ---
     say(amy, "!role amy admin")
     check("a player can not use commands", await heard(amy) == (21200, 0, "Server", "not allowed"))

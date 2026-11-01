@@ -35,6 +35,9 @@ CREATE TABLE IF NOT EXISTS items (
 CREATE TABLE IF NOT EXISTS talents (
     character_id INTEGER NOT NULL REFERENCES characters (id), talent TEXT NOT NULL, level INTEGER NOT NULL,
     PRIMARY KEY (character_id, talent));
+CREATE TABLE IF NOT EXISTS contacts (
+    character_id INTEGER NOT NULL REFERENCES characters (id), kind TEXT NOT NULL, other_id INTEGER NOT NULL,
+    PRIMARY KEY (character_id, kind, other_id));
 CREATE TABLE IF NOT EXISTS event_log (
     id INTEGER PRIMARY KEY, character_id INTEGER NOT NULL REFERENCES characters (id), at INTEGER NOT NULL,
     kind INTEGER NOT NULL, text TEXT NOT NULL);
@@ -116,6 +119,9 @@ def write_character(con, account, c):
                      for n, it in enumerate(c.get("items", []))])
     con.execute("DELETE FROM talents WHERE character_id = ?", (cid,))
     con.executemany("INSERT INTO talents VALUES (?, ?, ?)", [(cid, k, v) for k, v in c.get("talents", {}).items()])
+    con.execute("DELETE FROM contacts WHERE character_id = ?", (cid,))
+    con.executemany("INSERT INTO contacts VALUES (?, ?, ?)",
+                    [(cid, kind, other) for kind in ("friends", "blocked") for other in c.get(kind, [])])
 
 
 def add_log_lines(con, lines, keep):
@@ -149,6 +155,8 @@ def load_characters(con):
         ids[cid]["items"].append(it)
     for cid, talent, level in con.execute("SELECT * FROM talents"):
         ids[cid]["talents"][talent] = level
+    for cid, kind, other in con.execute("SELECT * FROM contacts"):
+        ids[cid].setdefault(kind, []).append(other)
     for cid, at, kind, text in con.execute("SELECT character_id, at, kind, text FROM event_log ORDER BY id"):
         ids[cid]["log"].append([at, kind, text])
     return data

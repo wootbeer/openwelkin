@@ -229,6 +229,9 @@ playing, and Training Grounds have no rounds.
 Players can chat in the Broadcast channel, in private and in battle. Lines are cut at 200 characters, one player can send
 a line every half second, and control characters are removed. The sender's name always comes from the server.
 
+Each character has a friend list and a block list of up to 100 names, kept in `characters.db`. Lines from a blocked player
+do not reach you, and to them you look offline in private messages.
+
 ## Load test
 
 `server/tools/loadtest.py` starts a private server (temporary folder, ports 6101-6110) and connects fake players

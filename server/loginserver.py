@@ -384,7 +384,7 @@ class Store:
         if ROLE in ("all", "gate"):
             self.con = db.open_characters(self.path)
             self.data = db.load_characters(self.con)
-        self.names = {c["name"].lower() for chars in self.data["accounts"].values() for c in chars}
+        self.names = {c["name"].lower(): c["id"] for chars in self.data["accounts"].values() for c in chars}
 
     dirty = False
     SAVE_INTERVAL = 5.0  # seconds; battle stats and log lines are written in batches
@@ -430,8 +430,8 @@ class Store:
         with self.lock:
             if name.lower() in self.names:
                 return None
-            self.names.add(name.lower())
             cid = self.data["next_id"]; self.data["next_id"] += 1
+            self.names[name.lower()] = cid
             self.data["accounts"].setdefault(account, []).append(dict(id=cid, name=name, **fields))
             self.indexed = None
             self.mark_dirty(cid)
@@ -536,6 +536,27 @@ class Store:
     def name_taken(self, name):
         return name.lower() in self.names
 
+    def id_of_name(self, name):
+        return self.names.get(name.lower())
+
+    def contacts(self, cid, kind):
+        """Character ids on a friend ("friends") or block ("blocked") list."""
+        return list((self.by_id(cid) or {}).get(kind, []))
+
+    def set_contact(self, cid, kind, other, on):
+        """Add or remove a list entry. False if the list is full."""
+        with self.lock:
+            ids = self.by_id(cid).setdefault(kind, [])
+            if on and other not in ids:
+                if len(ids) >= MAX_CONTACTS:
+                    return False
+                ids.append(other)
+            elif not on and other in ids:
+                ids.remove(other)
+            self.mark_dirty(cid)
+            self.save()
+            return True
+
     def find(self, account, cid):
         return next((c for c in self.characters(account) if c["id"] == cid), None)
 
@@ -632,6 +653,7 @@ class Bans:
 ACCOUNTS = Accounts()
 BANS = Bans()
 ONLINE = {}  # account -> its gate Session; one per account, a second login closes the first
+MAX_CONTACTS = 100  # entries on a friend or block list
 CHAT_MAX, CHAT_EVERY, CHAT_QUEUE = 200, 0.5, 100  # characters in a line, seconds between a player's lines, lines waiting
 GM_COMMANDS = {"who", "matches", "kick", "ban", "unban", "bans"}
 ROLE_COMMANDS = {"player": set(), "gm": GM_COMMANDS, "admin": GM_COMMANDS | {"ipban", "unipban", "role", "backup"}}
@@ -753,7 +775,7 @@ class Session:
         self.key_index = 7  # server picks rand()%32+1; client only checks the range
         self.rbuf = b""
         self.account = None
-        self.character, self.next_chat = None, 0.0
+        self.character, self.next_chat, self.next_contact = None, 0.0, 0.0
         self.send_lock = threading.Lock()
         self.outbox = collections.deque(maxlen=CHAT_QUEUE)  # lines from other players' threads wait here
         self.outbox_ready = threading.Event()
@@ -1250,7 +1272,7 @@ class Session:
         with ONLINE_LOCK:
             sessions = list(ONLINE.values())
         for s in sessions:
-            if s.character and (include_self or s is not self):
+            if s.character and (include_self or s is not self) and not s.blocks(self):
                 s.chat_line(type_, name, line[0], self.character["id"])
 
     def on_chat_broadcast(self, msg):
@@ -1271,10 +1293,83 @@ class Session:
             return self.gm_chat(line[0][1:])
         with ONLINE_LOCK:
             other = next((s for s in ONLINE.values() if s.character and s.character["name"].lower() == target[0].lower()), None)
-        if other:
+        if other and not other.blocks(self):  # someone who blocked you looks the same as someone offline
             other.chat_line(21200, self.character["name"], line[0], self.character["id"])
         else:
             self.chat_line(21200, "Server", f"{target[0][:32]} is not online")
+
+    def blocks(self, other):
+        return other.character["id"] in self.character.get("blocked", [])
+
+    # Friend and block lists, from Game.dll. Never tried with the client. Get (21,21522 / 21523): u32 character id ->
+    # u32 n | n x (u32 id | str name | u32 state), read by CHAT_GetFriendListFormDBObserver 0x1035edb0. Add (21,21524 /
+    # 21526): u32 character id | str | str -> str name | u32 id. Remove (21,21525 / 21527): u32 character id | u32 id,
+    # empty reply. Which of the two add strings is the target is not known, so it is the one that is not our own name.
+    def contact_owner(self, msg):
+        """The character id at the start of the request, if it is ours. Otherwise answers with an error."""
+        cid = struct.unpack_from("<I", msg.body)[0] if len(msg.body) >= 4 else None
+        if cid is None or not self.own_character(cid):
+            self.reply(msg, result=ERR_UNKNOWN)
+            return None
+        return cid
+
+    def contact_list(self, msg, kind):
+        cid = self.contact_owner(msg)
+        if cid is None:
+            return
+        with ONLINE_LOCK:
+            online = {s.character["id"] for s in ONLINE.values() if s.character}
+        rows = [(i, STORE.by_id(i)) for i in STORE.contacts(cid, kind)]
+        rows = [(i, c) for i, c in rows if c]
+        body = struct.pack("<I", len(rows))
+        for i, c in rows:
+            body += struct.pack("<I", i) + wstr(c["name"]) + struct.pack("<I", int(i in online))
+        self.reply(msg, body)
+
+    def contact_add(self, msg, kind):
+        cid = self.contact_owner(msg)
+        if cid is None:
+            return
+        now = time.time()
+        try:
+            first, off = read_wstr(msg.body, 4)
+            second = read_wstr(msg.body, off)[0]
+        except ValueError:
+            return self.reply(msg, result=ERR_UNKNOWN)
+        me = STORE.by_id(cid)["name"].lower()
+        other = STORE.id_of_name(second if first.lower() == me else first)
+        if now < self.next_contact or other is None or other == cid or not STORE.set_contact(cid, kind, other, True):
+            return self.reply(msg, result=ERR_UNKNOWN)
+        self.next_contact = now + CHAT_EVERY
+        self.reply(msg, wstr(STORE.by_id(other)["name"]) + struct.pack("<I", other))
+
+    def contact_remove(self, msg, kind):
+        cid = self.contact_owner(msg)
+        if cid is None:
+            return
+        if len(msg.body) < 8 or time.time() < self.next_contact:
+            return self.reply(msg, result=ERR_UNKNOWN)
+        self.next_contact = time.time() + CHAT_EVERY
+        STORE.set_contact(cid, kind, struct.unpack_from("<I", msg.body, 4)[0], False)
+        self.reply(msg, b"")
+
+    def on_friends(self, msg):
+        self.contact_list(msg, "friends")
+
+    def on_blocked(self, msg):
+        self.contact_list(msg, "blocked")
+
+    def on_add_friend(self, msg):
+        self.contact_add(msg, "friends")
+
+    def on_add_blocked(self, msg):
+        self.contact_add(msg, "blocked")
+
+    def on_remove_friend(self, msg):
+        self.contact_remove(msg, "friends")
+
+    def on_remove_blocked(self, msg):
+        self.contact_remove(msg, "blocked")
 
     def gm_chat(self, line):
         if ROLE != "gate":
@@ -1544,6 +1639,12 @@ HANDLERS = {
     (21, 21513): Session.on_chat_broadcast,      # Chat_BigBugleSendMessage (hall Broadcast channel)
     (21, 21052): Session.on_chat_battle,         # chat in battle
     (21, 21032): Session.on_chat_private,        # private message
+    (21, 21522): Session.on_friends,             # CHAT_GetFriendListFormDB
+    (21, 21523): Session.on_blocked,             # CHAT_GetBlackListFormDB
+    (21, 21524): Session.on_add_friend,          # CHAT_AddFriendListFormDB
+    (21, 21525): Session.on_remove_friend,       # CHAT_DelFriendListFormDB
+    (21, 21526): Session.on_add_blocked,         # CHAT_AddBlackListFormDB
+    (21, 21527): Session.on_remove_blocked,      # CHAT_DelBlackListFormDB
     (14, 14057): Session.on_today_military,      # CGS_GetCharacterTodayMilitary (Battle Report panel)
     (14, 14010): Session.on_exploit,             # CG_Character_Get_Exploit (rank / experience)
     (14, 14040): Session.on_rank_table,          # CGS_GetAllMilitaryRank

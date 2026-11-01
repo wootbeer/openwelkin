@@ -54,6 +54,19 @@ def characters():
     check("money stays a whole number", isinstance(ls.STORE.stats(cid)["money"], int))
     check("ids carry on after a restart", ls.STORE.create("bob", "Bravo", gender=0, model=0, state=1, raw="") == cid + 1)
     check("names are remembered after a restart", ls.STORE.name_taken("alpha"))
+    check("a name finds its character after a restart", ls.STORE.id_of_name("ALPHA") == cid)
+    ls.STORE.set_contact(cid, "friends", cid + 1, True)
+    ls.STORE.set_contact(cid, "blocked", cid + 1, True)
+    ls.STORE.set_contact(cid, "friends", cid + 1, True)
+    reopen()
+    check("friend and block lists survive a restart", ls.STORE.contacts(cid, "friends") == [cid + 1]
+          and ls.STORE.contacts(cid, "blocked") == [cid + 1])
+    ls.STORE.set_contact(cid, "friends", cid + 1, False)
+    reopen()
+    check("a removed friend stays removed", not ls.STORE.contacts(cid, "friends"))
+    for n in range(ls.MAX_CONTACTS):
+        ls.STORE.set_contact(cid, "blocked", 100000 + n, True)
+    check("the lists have a limit", len(ls.STORE.contacts(cid, "blocked")) == ls.MAX_CONTACTS)
     for n in range(ls.LOG_KEEP + 20):
         ls.STORE.add_log(cid, f"line {n}")
     reopen()
