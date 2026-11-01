@@ -3,8 +3,8 @@
 MMOFPS server for Welkin4591 / Mars War: an open-source server emulator
 
 A fan-made server for the MarsWar client. The stock client is used as-is; only its config file
-points at this server. Work in progress: several players per battlefield (free for all), Training Ground and Northern Front, shop, warehouse,
-talents, medals, badges and the Info window work.
+points at this server. Work in progress: several players per battlefield (free for all), Training Ground and Northern Front, timed rounds, shop, warehouse,
+talents, medals, badges and the Info window work. Chat and rounds have so far been tested only with fake clients.
 
 ## Run it
 
@@ -43,8 +43,10 @@ Use the server's address instead of 127.0.0.1 when it runs on another machine. S
 | 5876 | UDP | client NAT probe (only logged) |
 | 6010 | TCP | admin commands (`tools/admin.py`), 127.0.0.1 only |
 | 6013 | TCP | admin web page (`tools/webadmin.py`, optional), 127.0.0.1 only |
+| 6011, 6012 | TCP | private links between split servers (login, gate). Keep them off the internet |
+| 6021 and up | UDP | more game servers from `start_split.py` (the first stays on 6003) |
 
-`MW_PORT_OFFSET` adds to all of them, e.g. `100` gives 6101-6110 (to run a second server on one machine; the
+`MW_PORT_OFFSET` adds to all of them, e.g. `100` moves login to 6101 (to run a second server on one machine; the
 client then needs the moved login port).
 
 ## Settings (environment variables)
@@ -73,6 +75,10 @@ client then needs the moved login port).
 | `accounts.db` | SQLite: account names, salted scrypt password hashes (never passwords), and account and IP bans. |
 | `characters.db` | SQLite: characters, stats, items, talents, event log. Battle stats are saved every few seconds. |
 | `admin.key` | Secret for `tools/admin.py`, made on first start. Anyone who can read it can run admin commands. |
+| `internal.key` | Split servers only: shared secret for the private links. Every server needs the same file. |
+| `ticket.key` | Split servers only, on login: signs session keys. Never copy it. |
+| `ticket.pub` | Split servers only: lets a gate check session keys. Safe to copy to each gate. |
+| `backups/` | Copies made by the `backup` command. |
 | `admin.log` | Every admin command, who ran it and the result. |
 | `loginserver.log` | Server log. Contains no passwords or keys. With `MW_DEBUG=1` it grows fast. |
 | `data/flyweights/` | Item, weapon and robot data unpacked from your client by `setup_data.py`. |
@@ -155,7 +161,7 @@ python server/tools/admin.py who
 | `ipban <address or network> [time] [reason]` | e.g. `1.2.3.4` or `1.2.3.0/24`. Kicks everyone on it |
 | `unipban <address or network>` | |
 | `bans` | List bans |
-| `role <account> [player\|gm\|admin]` | Show or set an account's role (for GM commands later) |
+| `role <account> [player\|gm\|admin]` | Show or set an account's role |
 | `backup` | Copy the databases into `backups/` while the server runs |
 
 A player with the role `gm` or `admin` can also type commands in game chat, starting with `!`, like `!kick bob`. A `gm` can
@@ -204,9 +210,24 @@ start a new line. Show replies as plain text, because they contain names and rea
 ```
 python -I server/tools/fuzz_handlers.py 2
 python -I server/tools/fuzz_game.py
-python -I server/tools/test_login.py
-python -I server/tools/test_match.py
+python server/tools/test_login.py
+python server/tools/test_match.py
+python server/tools/test_chat.py
+python server/tools/test_db.py
+python server/tools/test_split.py
+python server/tools/test_failover.py
+python server/tools/test_webadmin.py
 ```
+
+## Rounds and chat
+
+A battlefield round ends after `MW_ROUND_SECONDS`, or when a player reaches `MW_ROUND_KILLS` kills on other players.
+Target robots do not count. The player with the most kills gets a win, shown on the Battle tab, and a tie gives a win to
+everyone tied. Everyone then sees the Record window for 20 seconds and goes back to the lobby. A player alone keeps
+playing, and Training Grounds have no rounds.
+
+Players can chat in the Broadcast channel, in private and in battle. Lines are cut at 200 characters, one player can send
+a line every half second, and control characters are removed. The sender's name always comes from the server.
 
 ## Load test
 

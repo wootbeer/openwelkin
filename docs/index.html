@@ -1,3 +1,4 @@
+<meta charset="utf-8">
 <title>MarsWar Protocol Docs</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
@@ -98,7 +99,7 @@ pre { background: var(--code-bg); padding: 10px 12px; border-radius: 4px; overfl
   <div class="legend">
     <span><span class="dir cs">C→S</span> sent by the client</span>
     <span><span class="dir sc">S→C</span> sent by the server</span>
-    <span>Status: <b>verified</b> = works in the emulator · <b>partial</b> = fields still unknown</span>
+    <span>Status: <b>verified</b> = works in the emulator · <b>partial</b> = fields still unknown · <b>read, not tried</b> = read from the client, not yet seen working in it</span>
   </div>
 </section>
 
@@ -124,6 +125,10 @@ sequenceDiagram
   B-->>C: spawn sequence (19,30001 ... 19,50109)
 </pre>
   <p>The login and gate servers share one transport (below). The game server uses a reliable-UDP layer called FDP. The client also probes an "ADServer" on UDP 5876 for NAT detection; it needs no answer.</p>
+  <p>One program can be all three servers, or they can run separately. The client can not tell. When they are separate,
+  login signs the session key with Ed25519 and a gate holds only the public key, so the key is about 170 characters. Each key
+  works once. The battle ticket is a u32 and can not be signed, so the gate tells the game server about it first. The
+  servers talk to each other on private links, which are not part of the game protocol.</p>
   <p>Server addresses come from <code>game_client_config.xml</code> (<code>LoginServer</code>, <code>ADServer</code>). <code>Loader.exe</code> is a dead auto-updater; start <code>System\MarsWar.exe</code> directly.</p>
 </section>
 
@@ -193,6 +198,7 @@ sequenceDiagram
     <tr><th>Packet</th><th>Flags</th><th>Fields</th></tr>
     <tr><td>SYN</td><td>0x07</td><td>split 2, session = client session id, payload <code>u32 n | n bytes</code> connect stream. Resent every 3 s.</td></tr>
     <tr><td>SYN-ACK</td><td>0x07</td><td>split 3, mtu length 12, ack id = server session id, order 1 (2 = no session, 3 = session mismatch). After this every packet carries the <em>receiver's</em> session id.</td></tr>
+    <tr><td>close</td><td>0x07</td><td>split 4. The client sends this when it leaves a battle.</td></tr>
     <tr><td>ack</td><td>0x05</td><td>split 1, number = sender's next reliable number, ack id = next number expected (cumulative), order 2.</td></tr>
     <tr><td>reliable data</td><td>0xe1</td><td>split 1. Order id must increase by one per packet; a repeated order id is silently dropped.</td></tr>
     <tr><td>unreliable data</td><td>0x01 / 0x21</td><td>own number counter, order 0</td></tr>
@@ -356,6 +362,9 @@ sequenceDiagram
 
 <section id="robot-msgs">
   <h2>Robots &amp; combat</h2>
+  <div class="msg" id="m-19-50002"><header><h3>GS_Object_Detach_Object</h3><span class="id">(19,50002)</span><span class="dir sc">S→C</span><span class="status">verified</span></header><div class="body"><pre class="fmt">u32 object id</pre><p>Drops a reference and deletes the object at zero. Used to remove a robot when its player leaves.</p></div></div>
+  <div class="msg" id="m-19-30002"><header><h3>GS_Character_Delete_Character</h3><span class="id">(19,30002)</span><span class="dir sc">S→C</span><span class="status">verified</span></header><div class="body"><pre class="fmt">u32 character id</pre><p>Removes the character, so it can join again later.</p></div></div>
+  <div class="msg" id="m-19-50132"><header><h3>GS_Robot_Skill</h3><span class="id">(19,50132)</span><span class="dir sc">S→C</span><span class="status">verified</span></header><div class="body"><pre class="fmt">u32 robot | f32 basic speed | f32 up speed | vec3 velocity</pre><p>Without it a robot's speed stays 0 and it can not walk. The Walker body uses 8 and 5.</p></div></div>
   <div class="msg" id="m-19-50100"><header><h3>GS_Robot_Action (move)</h3><span class="id">(19,50100)</span><span class="dir sc">S→C</span><span class="status">verified</span></header><div class="body"><pre class="fmt">u32 robot | u32 steer flags (1 = walking) | vec3 position | vec3 facing</pre><p>Remote robots only. Also 50101 (turn), 50102 (jump), 50103.</p></div></div>
   <div class="msg" id="m-19-50104"><header><h3>GS_Robot_SystemPart (rebuild)</h3><span class="id">(19,50104)</span><span class="dir sc">S→C</span><span class="status">verified</span></header><div class="body"><pre class="fmt">u32 robot | u8 full | u8 avatar | system part block</pre><p>Clears the robot and re-reads its parts. Needed after every relive, because Relive and Dead clear the equipment. Rebuilt parts need <b>new object ids</b>, or the weapon slot stays empty.</p></div></div>
   <div class="msg" id="m-19-50105"><header><h3>GS_Robot_SystemPart (switch weapon)</h3><span class="id">(19,50105)</span><span class="dir sc">S→C</span><span class="status">verified</span></header><div class="body"><pre class="fmt">u32 robot | i32 slot (1-based, 0 = put away) | i32 -1</pre><p>Answer to <a href="#m-9-40105">(9,40105)</a>. A robot has no current weapon, and cannot fire, until this arrives.</p></div></div>
@@ -381,6 +390,27 @@ sequenceDiagram
   <div class="msg" id="m-9-40101"><header><h3>robot action</h3><span class="id">(9,40101)</span><span class="dir cs">C→S</span><span class="status">partial</span></header><div class="body"><pre class="fmt">f32 | f32 | f32 | f32</pre><p>Sent about once a second.</p></div></div>
   <div class="msg" id="m-9-20001"><header><h3>clock</h3><span class="id">(9,20001)</span><span class="dir cs">C→S</span><span class="status">partial</span></header><div class="body"><pre class="fmt">u32 | f64 client absolute time</pre><p>Every 60 s. No reply needed.</p></div></div>
   <div class="msg" id="m-9-9001"><header><h3>ping</h3><span class="id">(9,9001)</span><span class="dir cs">C→S</span><span class="status">verified</span></header><div class="body"><p>Unreliable. Echo it back unchanged. Other periodic reports, (9,10108) and (9,40140) every 5 s and (9,40901), need no answer.</p></div></div>
+</section>
+
+<section id="rounds">
+  <h2>Rounds</h2>
+  <p>The emulator ends a battlefield round itself, on a timer or a kill limit. It then sends the message and the Record window below to every player in the match.</p>
+  <div class="msg" id="m-19-30150"><header><h3>DisconnectByServer</h3><span class="id">(19,30150)</span><span class="dir sc">S→C</span><span class="status">verified</span></header><div class="body"><pre class="fmt">f32 seconds</pre><p>Shows the Record window (dialog 0x68) with the player's own kills, deaths and honor and a countdown, then the client goes back to the lobby. The gate connection stays open. No reason text.</p></div></div>
+  <div class="msg" id="m-19-30250"><header><h3>GS_Character_Show_Message</h3><span class="id">(19,30250)</span><span class="dir sc">S→C</span><span class="status">read, not tried</span></header><div class="body"><pre class="fmt">u32 kind (0 or 1) | str text</pre><p>An on-screen message. The kinds differ in how they are drawn. The emulator sends kind 0.</p></div></div>
+  <h3>Kill arena</h3>
+  <p>The client has its own team mode: arena logic 5 in <a href="#m-19-40050">GS_Battle_Initialize</a>. The other ids are 1 Big, 2 GrabMoney, 3 OD and 4 EM. The emulator does not use these yet. Init data after the logic id: <code>u8 nation | u8 nation | f32</code>. The local character's nation (+0x30) picks which side is "Our Force".</p>
+  <div class="msg" id="m-19-49000"><header><h3>Arena_KILL_Waiting_Begin</h3><span class="id">(19,49000)</span><span class="dir sc">S→C</span><span class="status">read, not tried</span></header><div class="body"><pre class="fmt">f32 seconds | u8 | f32</pre><p>Starts the arena countdown (CArenaMessageUI::SetCountDown).</p></div></div>
+  <div class="msg" id="m-19-52001"><header><h3>Arena_KILL_SetScore</h3><span class="id">(19,52001)</span><span class="dir sc">S→C</span><span class="status">read, not tried</span></header><div class="body"><pre class="fmt">u8 nation | i32 score</pre><p>Sets one side's score.</p></div></div>
+  <div class="msg" id="m-20-20130"><header><h3>Arena_KILL_Score</h3><span class="id">(20,20130)</span><span class="dir sc">S→C</span><span class="status">read, not tried</span></header><div class="body"><pre class="fmt">u32 count | count x 6 x str</pre><p>The score table. The handler parses numbers out of some of the strings. Whether a catalog 20 message reaches the client on the game session is not known.</p></div></div>
+</section>
+
+<section id="chat">
+  <h2>Chat</h2>
+  <p>Read from <code>ChatManager::SendMessage</code>. Sent on the gate connection. Every shown line is <code>u32 character id | str name | str text</code>. The client shows its own private and battle lines itself. It has its own <code>/</code> GM commands, so the emulator's start with <code>!</code>.</p>
+  <div class="msg" id="m-21-21513"><header><h3>Chat_BigBugleSendMessage</h3><span class="id">(21,21513)</span><span class="dir cs">C→S</span><span class="status">read, not tried</span></header><div class="body"><pre class="fmt">str text</pre><p>Hall Broadcast channel. Shown from (21,21514).</p></div></div>
+  <div class="msg" id="m-21-21032"><header><h3>private message</h3><span class="id">(21,21032)</span><span class="dir cs">C→S</span><span class="status">read, not tried</span></header><div class="body"><pre class="fmt">str name | str text</pre><p>Shown from (21,21200).</p></div></div>
+  <div class="msg" id="m-21-21052"><header><h3>battle chat</h3><span class="id">(21,21052)</span><span class="dir cs">C→S</span><span class="status">read, not tried</span></header><div class="body"><pre class="fmt">str text</pre><p>Shown from (21,21211).</p></div></div>
+  <div class="msg" id="m-21-21004"><header><h3>division chat</h3><span class="id">(21,21004)</span><span class="dir cs">C→S</span><span class="status">read, not used</span></header><div class="body"><pre class="fmt">u32 channel (2, 3 or 5) | str text</pre><p>Shown from (21,21202), (21,21203) and (21,21204). Team chat is (21,21063), not read yet.</p></div></div>
 </section>
 
 <section id="snapshots">
@@ -416,7 +446,7 @@ u32 n | n x u32 | f32 | str | armor info</pre>
     <li>Game.dll exports about 7,500 real function names. Each message handler is a class whose vtable slot 2 is <code>OnBegin</code>.</li>
     <li>Live tracing: Frida 16.5.9 attached to <code>MarsWar.exe</code> (17.x crashes it).</li>
     <li>Item, robot and weapon data unpacks from <code>ENGFlyweights.opt</code> into XML.</li>
-    <li>Emulator: one Python script for login, gate and game server, plus <code>fdp.py</code> and <code>snapshots.py</code>.</li>
+    <li>Emulator: <code>loginserver.py</code> runs as login, gate, game server or all three, with <code>fdp.py</code>, <code>snapshots.py</code>, <code>db.py</code> (SQLite) and <code>cluster.py</code> (private links).</li>
   </ul>
 </section>
 </main>
