@@ -198,6 +198,29 @@ async def scenario():
     matches = await asyncio.to_thread(admin, "matches")
     check("matches lists both servers", matches.count("game port") == 2, matches)
 
+    # --- battle chat stays in the match, and match ids repeat from one game server to the next ---
+    async def chat(gate, seconds):
+        try:
+            while True:
+                m = await asyncio.wait_for(gate.recv(), seconds)
+                if m.type == 21211:
+                    return m
+        except asyncio.TimeoutError:
+            return None
+
+    await asyncio.sleep(2.5)
+    p3 = Player()
+    await p3.join("dave", res)
+    await asyncio.sleep(0.5)
+    for p in (p1, p2, p3):
+        await p.gate.request(13, 13004, struct.pack("<I", p.cid))
+    same, other = (p1, p2) if p3.port == p1.port else (p2, p1)
+    p3.gate.send(ls.Message(21, 21052, body=ls.wstr("hello match")))
+    check("battle chat reaches a player on the same game server", await chat(same.gate, 3) is not None)
+    check("but not the same match id on another game server", await chat(other.gate, 0.5) is None)
+    p3.leave()
+    await asyncio.sleep(0.5)
+
     # --- a stat reaches the gate ---
     p1.leave()
     p1left = await asyncio.to_thread(wait_for, lambda: seen("left") or seen("closed"), 3)

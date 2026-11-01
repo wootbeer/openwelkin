@@ -131,7 +131,8 @@ reply layout, and answer with real data.
 - [ ] Chat (2026-10-31, read from Game.dll, tested only with fake clients; tools/test_chat.py): Broadcast, private and
       battle lines. Try with the real client: does a line pushed by the gate show (flags 0x20, multi 0)? What does the
       client want in reply to 21513, if it is a request? Which channel does the hall's Lobby tab send on? Division chat
-      (21,21004: u32 2/3/5 | str, shown from 21202/21203/21204) and team chat (21,21063) are not done
+      (21,21004: u32 2/3/5 | str, shown from 21202/21203/21204) and team chat (21,21063) are not done. Battle chat reaches
+      only the player's match: game servers report joins and leaves to the gate, because shown lines go out on the gate
 - [ ] The client has its own / GM commands when the character's GM byte is set: (13,13041) and others, not read yet
 - [x] Web admin page (tools/webadmin.py, 2026-10-30): one file, sends admin commands, local only; README explains
       the admin port so people can build their own. Login and an IP ban tried in a real browser

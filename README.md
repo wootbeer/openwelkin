@@ -226,7 +226,8 @@ Target robots do not count. The player with the most kills gets a win, shown on 
 everyone tied. Everyone then sees the Record window for 20 seconds and goes back to the lobby. A player alone keeps
 playing, and Training Grounds have no rounds.
 
-Players can chat in the Broadcast channel, in private and in battle. Lines are cut at 200 characters, one player can send
+Players can chat in the Broadcast channel, which reaches everyone online, in private, and in battle, which reaches only
+their own match. Team and division chat are not done yet. Lines are cut at 200 characters, one player can send
 a line every half second, and control characters are removed. The sender's name always comes from the server.
 
 Each character has a friend list and a block list of up to 100 names, kept in `characters.db`. Lines from a blocked player

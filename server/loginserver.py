@@ -776,6 +776,7 @@ class Session:
         self.rbuf = b""
         self.account = None
         self.character, self.next_chat, self.next_contact = None, 0.0, 0.0
+        self.match = None  # (game server, match id) while in a battle: only the game server knows who shares a match
         self.send_lock = threading.Lock()
         self.outbox = collections.deque(maxlen=CHAT_QUEUE)  # lines from other players' threads wait here
         self.outbox_ready = threading.Event()
@@ -1261,25 +1262,28 @@ class Session:
             except OSError:
                 return
 
-    def chat_to_all(self, msg, type_, include_self):
+    def chat_to_all(self, msg, type_, include_self, same_match=False):
         line = self.chat_text(msg)
         if not line:
             return
         if line[0].startswith("!"):
             return self.gm_chat(line[0][1:])
+        if same_match and self.match is None:
+            return
         name = self.character["name"]
         log(f"[chat] {name}: {line[0]}")
         with ONLINE_LOCK:
             sessions = list(ONLINE.values())
         for s in sessions:
-            if s.character and (include_self or s is not self) and not s.blocks(self):
+            if (s.character and (include_self or s is not self) and not s.blocks(self)
+                    and (not same_match or s.match == self.match)):
                 s.chat_line(type_, name, line[0], self.character["id"])
 
     def on_chat_broadcast(self, msg):
         self.chat_to_all(msg, 21514, True)
 
     def on_chat_battle(self, msg):
-        self.chat_to_all(msg, 21211, False)
+        self.chat_to_all(msg, 21211, False, same_match=True)
 
     def on_chat_private(self, msg):
         try:
@@ -1940,6 +1944,8 @@ def on_game_server_message(link, msg):
         STORE.add_log(msg["cid"], msg["text"], msg["level"])
     elif kind == "load":
         link.load, link.accounts = len(msg["accounts"]), msg["accounts"]
+    elif kind == "match":
+        note_match(msg["account"], (id(link), msg["match"]) if msg["match"] else None)
 
 
 def on_gate_request(link, msg):
@@ -2219,6 +2225,22 @@ def close_round(m):
         m.server.close(p, "round over")
 
 
+def note_match(account, match):
+    """gate: which match a player's session is in, for battle chat. Called from the game loop in a one-program server,
+    so it takes no lock: reading ONLINE and setting one field are each a single step."""
+    session = ONLINE.get(account)
+    if session:
+        session.match = match
+
+
+def tell_gate_match(peer, match_id):
+    account = STORE.account_of(peer.cid)
+    if ROLE == "game":
+        STORE.report("match", account=account, match=match_id)
+    else:
+        note_match(account, ("here", match_id) if match_id else None)
+
+
 def is_player(cid):
     return STORE.by_id(cid) is not None
 
@@ -2315,6 +2337,7 @@ def join_match(server, peer):
         show_player(server, peer, other)
         show_player(server, other, peer)
     m.peers.append(peer)
+    tell_gate_match(peer, m.id)
     log(f"[game] {peer.name} (cid {peer.cid}) joined {m.bf['name']} (match {m.id}) as slot {slot}; "
         f"{len(m.peers)} player(s)")
 
@@ -2326,6 +2349,7 @@ def leave_match(peer):
         return
     m.peers.remove(peer)
     peer.match = None
+    tell_gate_match(peer, None)
     record_stats(peer)
     log(f"[game] {peer.name} left {m.bf['name']} (match {m.id}); {len(m.peers)} player(s)")
     rid = peer.player_rid
