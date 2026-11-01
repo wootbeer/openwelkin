@@ -56,6 +56,8 @@ client then needs the moved login port).
 | `MW_DEBUG` | `0` | `1` logs every packet with hex dumps (reverse-engineering only; large logs). |
 | `MW_BADGES` | `1` | `0` turns badges off. |
 | `MW_MATCH_PLAYERS` | `32` | Players per match. When a battlefield's match is full, the next player starts another one. |
+| `MW_ROUND_SECONDS` | `900` | Length of a battlefield round. `0` means rounds never run out of time. Training grounds have no rounds. |
+| `MW_ROUND_KILLS` | `25` | A round also ends when a player destroys this many players. `0` turns this off. |
 | `MW_STATE_DIR` | the `server` folder | Where accounts, characters, bans and logs are kept. |
 | `MW_PORT_OFFSET` | `0` | Added to every port (see Ports). |
 | `MW_STATS_EVERY` | `60` | Seconds between `[stats]` lines in the log (players, tick time, CPU, traffic). `0` = off. |

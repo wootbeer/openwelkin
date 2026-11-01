@@ -238,5 +238,63 @@ ok &= check("logout closes the game session", C not in server.peers and pc.match
 for addr in list(server.peers):
     server.close(server.peers[addr], "test over")
 ok &= check("empty matches closed", not ls.MATCHES)
+
+
+# --- rounds, on a battlefield that has them ---
+class FakeTime:
+    """Timers use time.time(): here they follow the fake clock, so a round can be timed exactly."""
+    def __getattr__(self, name):
+        return (lambda: clock[0]) if name == "time" else getattr(time, name)
+
+
+ls.time = FakeTime()
+
+def kill(by, victim):
+    victim.protected_until = 0.0
+    ls.hit_player(server, by.match, victim, ls.PLAYER_HP, by.name, by)
+
+
+def join_front(addr, cid):
+    return join(addr, cid, ticket=ls.issue_ticket(cid, 2))
+
+
+wins = ls.STORE.stats(a_cid).get("wins", 0)
+ls.ROUND_KILLS = 2
+pa, pb = join_front(A, a_cid), join_front(B, b_cid)
+m = pa.match
+kill(pa, pb)
+step(ls.RESPAWN_DELAY + 1)
+ok &= check("one kill does not end the round", not m.over and not got(A, 30150))
+pa.next_shot = 0.0
+for rid in list(m.targets):
+    ls.hit_dummy(server, m, pa, rid)
+ok &= check("target robots do not count", pa.player_kills == 1 and not m.over)
+kill(pa, pb)
+step()
+ok &= check("the kill limit ends the round", m.over and len(got(A, 30150)) == 1 and len(got(B, 30150)) == 1)
+ok &= check("the winner gets a win", ls.STORE.stats(a_cid).get("wins") == wins + 1
+            and not ls.STORE.stats(b_cid).get("wins"))
+ok &= check("everyone is told who won", any(b"Alpha" in x for x in got(B, 30250)))
+step(ls.RESPAWN_DELAY + 1)
+ok &= check("nobody respawns after the end", pb.player_dead)
+pc = join_front(C, c_cid)
+ok &= check("a new player gets a new round", pc.match is not m)
+step(ls.RECORD_SECONDS + ls.RECORD_GRACE + 1)
+ok &= check("players who stay are closed after the Record window", A not in server.peers and B not in server.peers)
+ok &= check("the ended match is gone", m.id not in ls.MATCHES)
+
+pa = join_front(A, a_cid)
+m2 = pa.match
+ok &= check("a player alone keeps playing", m2 is pc.match)
+server.close(server.peers[C], "test over")
+step(ls.ROUND_SECONDS + 1)
+ok &= check("the timer does not end a round for one player", not m2.over and A in server.peers)
+pb = join_front(B, b_cid)
+step(ls.ROUND_SECONDS - ls.ROUND_WARNING + 1)
+ok &= check("players are warned", any(b"one minute" in x for x in got(B, 30250)))
+step(ls.ROUND_WARNING)
+ok &= check("the timer ends the round", m2.over and len(got(B, 30150)) == 2)
+for addr in list(server.peers):
+    server.close(server.peers[addr], "test over")
 print("all ok" if ok else "FAILURES")
 sys.exit(0 if ok else 1)

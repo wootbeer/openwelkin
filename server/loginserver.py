@@ -85,7 +85,7 @@ BATTLEFIELDS = {
     # these are found by hand (a robot dropped from above falls to the ground; GetLocation shows the height).
     1: {"name": "Training Ground 1", "world": "Atrain01.reb",
         "spawn": (10.0, -69.0, -50.0), "dummies": [(24.3, -69.0, -54.6), (10.0, -69.0, -65.0)]},
-    2: {"name": "Mars Front", "world": "B01.reb",
+    2: {"name": "Mars Front", "world": "B01.reb", "rounds": True,
         "spawn": (30.0, 83.0, -60.0), "dummies": [(45.0, 81.0, -54.6), (40.0, 81.0, -65.0)]},
 }
 # Grand Battle Field list: (campaign id, campaign name, battlefront id, battlefront name, battlefield id)
@@ -1963,6 +1963,11 @@ MOVE_SPEED, JUMP_SPEED = 8.0, 5.0  # Walker body flyweight NormalSpeed / JumpSpe
 SPAWN_DROP = 3.0      # spawn this far above the battlefield's spawn height
 SLOT_OFFSET = 5.0     # players spawn this far apart along x (slot 1 on the battlefield's spawn point)
 MAX_MATCH_PLAYERS = int(os.environ.get("MW_MATCH_PLAYERS", "32") or 32)  # players per match; a full one opens another
+ROUND_SECONDS = int(os.environ.get("MW_ROUND_SECONDS", "900") or 0)  # a battlefield round ends after this long, 0 = never
+ROUND_KILLS = int(os.environ.get("MW_ROUND_KILLS", "25") or 0)       # or when a player destroys this many players, 0 = no limit
+ROUND_WARNING = 60    # seconds before the end of a round that players are told
+RECORD_SECONDS = 20.0 # the Record window's countdown; after it the client goes back to the lobby
+RECORD_GRACE = 10.0   # a client still here this long after that countdown is closed
 MAX_SLOTS = 4000      # joins per match before it takes nobody new (robot ids are slot * 1,000,000 + 1, a u32)
 TICK_HZ = 30          # game loop rate: timers, AI, and each player's queued events go out once per tick
 FAR_DISTANCE = 250.0  # robots farther than this from a viewer...
@@ -2007,12 +2012,15 @@ class Match:
         self.next_slot = 1
         self.timers = []  # heap of (time, sequence, function, args)
         self.tick_no, self.next_ai, self.now = 0, 0.0, 0.0
+        self.over = False  # the round ended: the Record window is showing
         self.targets = {}
         for i, dpos in enumerate(self.bf["dummies"]):
             self.targets[100_000 * (i + 1) + 1] = {
                 "home": dpos, "pos": dpos, "name": f"Target {i + 1}", "cid": DUMMY_CID_BASE + i + 1,
                 "detachment": 2 + i, "hp": float(DUMMY_HP), "dead": False, "phase": 0.0, "cooldown": AI_PAUSE,
                 "burst": 0}
+        if self.bf.get("rounds") and ROUND_SECONDS:
+            start_round(self)
 
     def broadcast(self, catalog, type_, body_for, reliable=True, skip=None):
         """Send an event to every player; body_for(viewer) builds the body (object ids can differ per viewer)."""
@@ -2033,7 +2041,8 @@ class Match:
                 p.moves[rid] = (body, pos)
 
     def is_open(self):
-        return self.peers is not None and len(self.peers) < MAX_MATCH_PLAYERS and self.next_slot <= MAX_SLOTS
+        return (self.peers is not None and not self.over and len(self.peers) < MAX_MATCH_PLAYERS
+                and self.next_slot <= MAX_SLOTS)
 
     def tick(self, now):
         """Due timers, players who stopped sending, the dummies' AI, then everyone's pending moves."""
@@ -2048,7 +2057,7 @@ class Match:
             self.server.close(p, "stopped sending")
         if self.peers is None:
             return
-        if now >= self.next_ai:
+        if now >= self.next_ai and not self.over:
             self.next_ai = now + AI_TICK
             ai_step(self, now)
         far2 = FAR_DISTANCE ** 2
@@ -2059,6 +2068,54 @@ class Match:
                     continue
                 del v.moves[rid]
                 send_game_event(self.server, v, 19, 50100, body, reliable=False)
+
+
+def show_message(m, text):
+    """GS_Character_Show_Message (19,30250): u32 kind (0 or 1) | str text (handler Game.dll 0x10357910). Not yet tried
+    in game."""
+    m.broadcast(19, 30250, struct.pack("<I", 0) + wstr(text))
+
+
+def start_round(m):
+    if ROUND_SECONDS > ROUND_WARNING:
+        m.later(ROUND_SECONDS - ROUND_WARNING, warn_round, m)
+    m.later(ROUND_SECONDS, round_timer, m)
+
+
+def warn_round(m):
+    if len(m.peers) > 1 and not m.over:
+        show_message(m, "The round ends in one minute")
+
+
+def round_timer(m):
+    """A player alone keeps playing: there is nobody to win against."""
+    if len(m.peers) > 1:
+        end_round(m)
+    else:
+        start_round(m)
+
+
+def end_round(m):
+    """Most player kills wins. DisconnectByServer (19,30150, f32 seconds): the Record window shows the player's kills,
+    deaths and honor with a countdown, then the client goes back to the lobby (seen in game 2026-10-30)."""
+    if m.over:
+        return
+    m.over = True
+    best = max(p.player_kills for p in m.peers)
+    winners = [p for p in m.peers if p.player_kills == best] if best else []
+    for p in winners:
+        record_stats(p, wins=1)
+        STORE.add_log(p.cid, f"Won a round of {m.bf['name']}")
+    names = ", ".join(p.name for p in winners)
+    log(f"[game] round over in {m.bf['name']} (match {m.id}): {names or 'nobody'} won with {best} kills")
+    show_message(m, f"{names} won the round" if winners else "The round is over")
+    m.broadcast(19, 30150, struct.pack("<f", RECORD_SECONDS))
+    m.later(RECORD_SECONDS + RECORD_GRACE, close_round, m)
+
+
+def close_round(m):
+    for p in list(m.peers):
+        m.server.close(p, "round over")
 
 
 def is_player(cid):
@@ -2135,6 +2192,7 @@ def join_match(server, peer):
     peer.pos, peer.facing = spawn_point(m, slot), SPAWN_FACING
     peer.player_hp, peer.player_dead = float(PLAYER_HP), False
     peer.trigger, peer.kills, peer.deaths, peer.fire, peer.steer = 0, 0, 0, None, 0
+    peer.player_kills = 0  # target robots do not count towards a round
     peer.stats_clock = time.time()
     peer.moves = {}  # robot id -> newest move not yet sent to this player
     peer.protected_until = time.time() + SPAWN_PROTECTION
@@ -2239,7 +2297,11 @@ def hit_player(server, m, victim, damage, killer_name, killer=None):
     kill_report(m, victim.name, killer_name, loadout_weapon(killer.cid) if killer else DEFAULT_WEAPON)
     if killer:
         credit_kill(server, killer, victim.name)
-    m.later(RESPAWN_DELAY, relive_player, server, victim)
+        killer.player_kills += 1
+        if m.bf.get("rounds") and ROUND_KILLS and killer.player_kills >= ROUND_KILLS:
+            end_round(m)
+    if not m.over:
+        m.later(RESPAWN_DELAY, relive_player, server, victim)
     return True
 
 
@@ -2250,7 +2312,8 @@ def fire_tick(server, peer, trig, n):
     Repeats every fire interval until the trigger is released (9,40125)."""
     with GAME_LOCK:
         m = getattr(peer, "match", None)
-        if not m or m.peers is None or peer not in m.peers or peer.trigger != trig or peer.player_dead or n > 600:
+        if (not m or m.peers is None or m.over or peer not in m.peers or peer.trigger != trig or peer.player_dead
+                or n > 600):
             return
         if m.now < peer.next_shot:  # pulling the trigger again must not beat the weapon's fire rate
             return m.later(peer.next_shot - m.now, fire_tick, server, peer, trig, n)
@@ -2351,7 +2414,7 @@ def award_kill(server, peer, victim_text="a target robot"):
 def relive_player(server, peer):
     with GAME_LOCK:
         m = getattr(peer, "match", None)
-        if not m or peer not in m.peers:
+        if not m or peer not in m.peers or m.over:
             return
         peer.player_hp, peer.player_dead = float(PLAYER_HP), False
         peer.protected_until = time.time() + SPAWN_PROTECTION
