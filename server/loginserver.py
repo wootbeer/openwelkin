@@ -1131,32 +1131,35 @@ class Session:
         # CGS_UpdateCharacterRemainTalentPoint (14,14043), request: u32 character id. Reply read by
         # CGS_UpdateCharacterRemainTalentPointObserver (0x10358fe0):
         #   u32 total (char +0x180) | u32 remaining (+0x17c; 0 disables upgrades) | str last reset "Y-M-D h:m:s" |
-        #   u32 forget price in crystal | u32 seconds before forgetting again (CTalentConfigUI::RequestClearTalent)
+        #   u32 minutes before forgetting again | u32 forget price in crystal (CTalentConfigUI::RequestClearTalent; both
+        #   seen in game: the price in the confirm box, the wait counted from the date in "you need to wait")
         cid = struct.unpack_from("<I", msg.body)[0] if len(msg.body) >= 4 else 0
         total, remaining = self.talent_points(cid) if self.own_character(cid) else (0, 0)
         last = STORE.stats(cid).get("talent_reset", 0) if self.own_character(cid) else 0
         # a date is needed even if it never happened: the client reads it with swscanf and adds the wait
         last = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(last)) if last else "2000-01-01 00:00:00"
         self.reply(msg, struct.pack("<II", total, remaining) + wstr(last)
-                   + struct.pack("<II", TALENT_RESET_CRYSTAL, TALENT_RESET_WAIT))
+                   + struct.pack("<II", TALENT_RESET_WAIT // 60, TALENT_RESET_CRYSTAL))
 
-    # The Ranking window, from Game.dll, never tried with the client. Lists (15,15098 Honor / 15100 Shooting / 15106 Crystal),
-    # read by CS_CharacterExpRank_Observer 0x1035cf50: u32 total | u32 n | n x (u32 | str name | u8 | u32 | str | u8 | u32).
-    # Which u32 is the score is not known, so both are. My place (15,15099 / 15101 / 15107): u32 place | u32 score, request
-    # u32 character id | u8. Requests also carry a page, which is not read: the top rows are all there is.
+    # The Ranking window (seen in game). Lists (15,15098 Honor / 15100 Shooting / 15106 Crystal), read by
+    # CS_CharacterExpRank_Observer 0x1035cf50: u32 total | u32 n | n x (u32 character id (your own row is highlighted) |
+    # str name | u8 camp (0x10 green, 0x20 red, else the name is drawn almost black) | u32 | str (not read) | u8 rank level |
+    # u32 score). The client numbers the rows itself. My place (15,15099 / 15101 / 15107), request u32 character id | u8:
+    # reply u32 place counted from 0 | u32 score; the client shows it under the list only past place 18.
+    # Requests also carry a page, which is not read: the top rows are all there is.
     def on_rank_list(self, msg):
         rows = STORE.top(RANK_TABS[msg.type])
         body = struct.pack("<II", len(rows), min(len(rows), TOP_ROWS))
-        for place, (_, name, honor, value) in enumerate(rows[:TOP_ROWS], 1):
-            body += (struct.pack("<I", place) + wstr(name) + struct.pack("<BI", rank_for(honor), value) + wstr("")
-                     + struct.pack("<BI", 0, value))
+        for cid, name, honor, value in rows[:TOP_ROWS]:
+            body += (struct.pack("<I", cid) + wstr(name) + struct.pack("<BI", RANK_CAMP, value) + wstr("")
+                     + struct.pack("<BI", rank_for(honor), value))
         self.reply(msg, body)
 
     def on_my_rank(self, msg):
         cid = struct.unpack_from("<I", msg.body)[0] if len(msg.body) >= 4 else 0
         rows = STORE.top(RANK_TABS[msg.type - 1])
-        place, value = next(((n, r[3]) for n, r in enumerate(rows, 1) if r[0] == cid), (0, 0))
-        self.reply(msg, struct.pack("<II", place, value) if self.own_character(cid) else struct.pack("<II", 0, 0))
+        place, value = next(((n, r[3]) for n, r in enumerate(rows) if r[0] == cid), (len(rows), 0))
+        self.reply(msg, struct.pack("<II", place, value) if self.own_character(cid) else struct.pack("<II", len(rows), 0))
 
     # Contribution on a battlefront: the honor earned there. One front (14,14051): request u32 character id | u32 front,
     # reply u32, polled while the hall is open (Grand Battle Field list, Total Contribution). All fronts (14,14050):
@@ -1740,6 +1743,7 @@ def kick(account, reason, notice=""):
 
 
 RANK_TABS = {15098: "honor", 15100: "kills", 15106: "money"}
+RANK_CAMP = 0x10  # camps are not kept yet, so every name on the Ranking window is green
 
 # (event catalog, event type) -> handler. Names come from the client's observer class names (RTTI).
 HANDLERS = {

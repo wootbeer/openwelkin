@@ -13,8 +13,8 @@ reply layout, and answer with real data.
 - [x] (14,14010) CG_Character_Get_Exploit
 - [ ] (14,14034) UpdateRankUpgrade
 - [x] (14,14040) CGS_GetAllMilitaryRank
-- [ ] (14,14050) CGS_GetCharacterAllBattleFrontContribution and (14,14051): contribution = honor from kills on that
-      front (2026-11-02, read from Game.dll, not tried in game; the Grand Battle Field list shows it)
+- [x] (14,14050) CGS_GetCharacterAllBattleFrontContribution and (14,14051): contribution = honor from kills on that
+      front. Real client 2026-11-02: the Total Contribution column and Battle Joined show it (0 so far; a kill was not tried)
 - [ ] (14,14054) CGS_CGSManager_CommandGradeTable
 - [x] (14,14057) CGS_GetCharacterTodayMilitary
 - [ ] (14,14059) GetCharacterHelpLog
@@ -33,8 +33,9 @@ reply layout, and answer with real data.
 - [x] (14,14044) CGS_UpdateCharacterTalentPoint
 - [x] (14,14058) CGS_CharacterLearnTalentCost
 - [x] (14,14047) CGS_CharacterLearnTalent
-- [ ] Forget Talent (2026-11-02, read from Game.dll, tested only with fake clients): (14,14045) u32 character id, empty
-      reply. 14043 now sends the price (1000 crystal) and the wait (1 day). Try the button in game
+- [x] Forget Talent, real client 2026-11-02: (14,14045) u32 character id, empty reply; points come back and the robots
+      can be learned again. 14043 ends with u32 wait in MINUTES | u32 price (the confirm box shows the price, a second try
+      shows "Last forget talent time is ..., you need to wait 23Hour58Mins")
 - [x] Spawn as the last robot talent learned (parts from data/flyweights/Robot; verified Scout 1313 in game; MW_ROBOT=<fw> forces one)
 - [ ] Heavy robots (1301 ArmorRobot, 0 equipment slots) crash the client -- weapons are armor parts; falls back to 1311 for now
 
@@ -73,9 +74,11 @@ reply layout, and answer with real data.
 - [ ] Equipping bought items (24006 in-use list, loadout)
 
 ## Ranking
-- [ ] Ranking window (2026-11-02, read from Game.dll, tested only with fake clients): Honor, Shooting and Crystal tabs and
-      my place (15,15098..15107), top 20, lists kept 60 s. Try in game: which row field is the score (both are sent), and
-      paging. Weapon tabs (15102, 15103, 15108) are not done
+- [x] Ranking window, real client 2026-11-02: Honor and Crystal tabs show names, rank and score; your own row is
+      highlighted. Row = u32 character id | str name | u8 camp (0x10 green, 0x20 red, anything else nearly black) | u32 |
+      str (not read) | u8 rank level | u32 score. The client numbers rows itself. My place is counted from 0 and only
+      shows under the list past place 18 (not seen yet: needs more than 18 characters)
+- [ ] Camps are not kept, so every name is green. Paging not tried. Weapon tabs (15102, 15103, 15108) are not done
 
 ## Other open items
 - [x] Anti-addiction banner in the hall
@@ -142,16 +145,16 @@ reply layout, and answer with real data.
 - [ ] Team tab and hall Division Channel: team chat (21,21063) and other (21,21004) channels are not read in game. Whispers
       from the battle box are not tried. Enter in battle needs DirectInput: tools/vinput.py enter:0.2 sends a line
 - [ ] The client has its own / GM commands when the character's GM byte is set: (13,13041) and others, not read yet
-- [x] notice <text> (2026-11-02): Broadcast line from Server in the hall, big red text in battles. announcements.txt holds
-      the hall scrolling bar. Both use messages seen in game, but the notice itself is tried only with fake clients
+- [x] notice <text>, real client 2026-11-02: "[Broadcast] Server: ..." in the hall chat; in battle the same line plus big
+      red text in the middle for a few seconds. announcements.txt holds the hall scrolling bar
 - [ ] (21,21048) task server notice list: u32 n | n x (str | u32), shown in dialog 0x71 (not known which)
 - [x] Web admin page (tools/webadmin.py, 2026-10-30): one file, sends admin commands, local only; README explains
       the admin port so people can build their own. Login and an IP ban tried in a real browser
 - [x] Checked in game 2026-10-30: kick drops the client to the login screen with no message; timed ban, permanent
       ban and IP ban each show their text at login; login works again after unban
-- [ ] Tell a kicked player why (2026-11-02, fake clients only; tools/test_chat.py): kick and ban send a whisper from Server,
-      then close after 1.5 s. Try in game, also from a battle, where the whisper tab has not been seen working.
-      GMKickRes (13,13041) is only the reply to a GM ("Kick %s Success!")
+- [x] Tell a kicked player why: kick and ban send a whisper from Server, then close after 1.5 s. Real client 2026-11-02,
+      kicked in a battle: "[Whisper] Server: You were kicked: <reason>" shows, then the login screen. Ban and IP ban use
+      the same path but were not tried in game. GMKickRes (13,13041) is only the reply to a GM ("Kick %s Success!")
 - [x] A kick now closes the socket as well: on Windows shutdown does not wake a blocked recv, so a client that ignored it
       stayed on the gate. A kicked player can still act for the 1.5 s of the notice, but can not chat
 - [ ] DisconnectByServer (19,30150, f32 seconds) ends the battle for that player: Record window with a countdown,
