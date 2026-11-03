@@ -402,14 +402,20 @@ class Store:
         self.data = {"next_id": 1000, "accounts": {}}
         self.con = None
         self.changed, self.lines = set(), []  # character ids and event log lines not saved yet
+        self.done = {}  # gate: game server run -> its last report applied here (saved with the next batch)
+        self.saved = {}  # the same, as far as characters.db has it
         if ROLE in ("all", "gate"):
             self.con = db.open_characters(self.path)
             self.data = db.load_characters(self.con)
+            self.saved = db.load_reports(self.con)
+            self.done = dict(self.saved)
         self.names = {c["name"].lower(): c["id"] for chars in self.data["accounts"].values() for c in chars}
         self.tops = {}  # (stat, period) -> (time made, sorted rows)
 
     dirty = False
     SAVE_INTERVAL = 5.0  # seconds; battle stats and log lines are written in batches
+    REPORTS_KEEP = 30 * 86400  # seconds a game server run's last report number is remembered
+    report_lock = threading.Lock()  # gate: a report and its number are applied together, and saved together
 
     def save(self):
         """Write what changed now (call with the lock held), all or nothing."""
@@ -419,6 +425,9 @@ class Store:
                 if c:
                     db.write_character(self.con, account, c)
             db.add_log_lines(self.con, self.lines, LOG_KEEP)
+            db.write_reports(self.con, {b: n for b, n in self.done.items() if self.saved.get(b) != n}, int(time.time()),
+                             self.REPORTS_KEEP)
+        self.saved = dict(self.done)
         self.changed.clear()
         self.lines.clear()
         self.dirty = False
@@ -432,7 +441,7 @@ class Store:
         self.dirty = True
 
     def flush(self):
-        with self.lock:
+        with self.report_lock, self.lock:
             if self.dirty:
                 self.save()
 
@@ -443,6 +452,19 @@ class Store:
                 self.flush()
             except (OSError, db.Error) as e:
                 log(f"store: save failed: {e!r}")
+            for g in list(LINKS) if ROLE == "gate" else ():
+                if getattr(g, "boot", None) in self.saved:  # the game server can forget what is on disk
+                    g.send("saved", seq=self.saved[g.boot])
+
+    def new_report(self, boot, seq):
+        """gate: True the first time a game server's report arrives (call with report_lock held). A game server
+        sends its reports again after a lost link, until it hears they are saved."""
+        if seq <= self.done.get(boot, 0):
+            return False
+        self.done[boot] = seq
+        with self.lock:
+            self.dirty = True
+        return True
 
     def characters(self, account):
         return self.data["accounts"].get(account, [])
@@ -1989,12 +2011,15 @@ def place_in_game(account, cid, bfid):
 
 class RemoteStore(Store):
     """game: the characters of players the gate announced. Changes are made here and reported to the gate, which
-    owns characters.db."""
-    pending = collections.deque(maxlen=10000)  # kept while the gate is away
+    owns characters.db. Each report is kept until the gate says it is on disk, and sent again after a lost link."""
+    KEEP = 50000  # reports kept while the gate is away; past that the oldest go
     lost = 0
 
     def __init__(self):
         self.data = {"next_id": 0, "accounts": {}}
+        self.seq = 0
+        self.unsent, self.unsaved = collections.deque(), collections.deque()  # (seq, kind, fields)
+        self.report_lock = threading.Lock()
 
     def mark_dirty(self, cid, line=None):
         pass
@@ -2018,10 +2043,35 @@ class RemoteStore(Store):
 
     def report(self, what, **fields):
         """Never sends from here: the game loop calls this and must not wait for the gate."""
-        if len(self.pending) == self.pending.maxlen:
-            self.lost += 1
-        self.pending.append((what, fields))
+        with self.report_lock:
+            if len(self.unsent) + len(self.unsaved) >= self.KEEP:
+                (self.unsaved or self.unsent).popleft()
+                self.lost += 1
+            self.seq += 1
+            self.unsent.append((self.seq, what, fields))
         REPORTS.set()
+
+    def next_report(self):
+        with self.report_lock:
+            return self.unsent.popleft() if self.unsent else None
+
+    def sent(self, report, ok):
+        with self.report_lock:
+            if ok:
+                self.unsaved.append(report)
+            else:
+                self.unsent.appendleft(report)
+
+    def resend(self):
+        """A new link: the gate may not have what went over the old one."""
+        with self.report_lock:
+            self.unsent.extendleft(reversed(self.unsaved))
+            self.unsaved.clear()
+
+    def saved(self, seq):
+        with self.report_lock:
+            while self.unsaved and self.unsaved[0][0] <= seq:
+                self.unsaved.popleft()
 
 
 def report_loop():
@@ -2037,11 +2087,15 @@ def drain_reports():
         if UPLINK and STORE.lost:
             log(f"[link] the gate was away too long: {STORE.lost} reports were lost")
             STORE.lost = 0
-        while UPLINK and STORE.pending:
-            what, fields = STORE.pending[0]
-            if not UPLINK.send(what, **fields):
+        while UPLINK:
+            report = STORE.next_report()
+            if not report:
                 return
-            STORE.pending.popleft()
+            seq, what, fields = report
+            ok = UPLINK.send(what, boot=BOOT, seq=seq, **fields)
+            STORE.sent(report, ok)
+            if not ok:
+                return
 
 
 def players_here():
@@ -2149,14 +2203,18 @@ def on_login_message(link, msg):
 def on_game_server_message(link, msg):
     """gate: messages from a game server."""
     kind = msg["t"]
-    if kind == "stats":
-        STORE.add_stats(msg["cid"], **msg["deltas"])
-    elif kind == "log":
-        STORE.add_log(msg["cid"], msg["text"], msg["level"])
-    elif kind == "load":
+    if kind == "load":
         link.load, link.accounts = len(msg["accounts"]), msg["accounts"]
-    elif kind == "match":
-        note_match(msg["account"], (id(link), msg["match"]) if msg["match"] else None)
+        return
+    with STORE.report_lock:
+        if not STORE.new_report(str(msg["boot"]), int(msg["seq"])):
+            return
+        if kind == "stats":
+            STORE.add_stats(msg["cid"], **msg["deltas"])
+        elif kind == "log":
+            STORE.add_log(msg["cid"], msg["text"], msg["level"])
+        elif kind == "match":
+            note_match(msg["account"], (id(link), msg["match"]) if msg["match"] else None)
 
 
 def on_gate_request(link, msg):
@@ -2176,6 +2234,8 @@ def on_gate_request(link, msg):
         ip_kick_game(msg["net"])
     elif kind == "bans":
         IP_BANS = msg["nets"]
+    elif kind == "saved":
+        STORE.saved(msg["seq"])
     elif kind == "where":
         return local_where()
     elif kind == "matches":
@@ -2185,10 +2245,13 @@ def on_gate_request(link, msg):
 
 def uplink_opened(link):
     global UPLINK
-    UPLINK = link
     if ROLE == "gate":
+        UPLINK = link
         report_load()
     else:
+        with LINK_LOCK:  # the gate skips numbers it has seen, so what it may not have goes first, in order
+            STORE.resend()
+            UPLINK = link
         REPORTS.set()
 
 

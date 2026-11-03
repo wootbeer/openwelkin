@@ -211,7 +211,9 @@ reply layout, and answer with real data.
 - [x] A hung server loses its link after 10 s; game servers send reports from their own thread, so the game loop never waits
 - [x] A gate restart forgot used session keys: the gate now refuses keys issued before it started. A player logging
       in during the restart has to log in again
-- [ ] A gate crash loses up to 5 s of stats from its memory, and reports still on the way
+- [x] A gate crash lost up to 5 s of stats. Game servers now number their reports and keep them until the gate says
+      they are on disk (every 5 s), and send them again on a new link. characters.db keeps the last number of each
+      game server run, so the gate skips any it already has. Tested by killing the gate before its save
 - [ ] Web site
 - [ ] MariaDB for a server too big for SQLite on one disk (db.py is the only file that would change much)
 

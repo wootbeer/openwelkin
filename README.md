@@ -121,10 +121,11 @@ Any server can stop and start while the others run:
 
 - Login down: nobody can log in. Players already on stay on.
 - Gate down: players in the hall drop. Battles carry on, and their stats reach the gate when it is back. A game server
-  holds up to 10000 reports while it waits, and the log says if any were lost.
+  keeps each report until the gate has saved it, so a gate crash loses nothing. It holds up to 50000 while it waits,
+  and the log says if any were lost.
 - Game server down: after about 6 seconds its players go back to the login screen. New battles use the other game servers.
 
-`start_split.py` does not restart a server that dies. If a gate crashes, the last few seconds of stats can be lost.
+`start_split.py` does not restart a server that dies.
 
 ### On several machines
 

@@ -1,7 +1,7 @@
 # MarsWar server emulator. Copyright (C) 2026 the MarsWar emulator contributors.
 # Licensed under the GNU Affero General Public License v3 or later; see LICENSE.
 """test_failover.py -- split servers killed and restarted while the others run. Checks: stats made while the gate is
-away arrive after it restarts, logins work again after a gate or login restart, bans survive and reach a restarted
+away, or not yet saved when it crashed, arrive after it restarts, logins work again after a gate or login restart, bans survive and reach a restarted
 gate, players on a dead game server are sent out, a restarted game server rejoins, a second gate is refused, and a
 hung server can block neither a link nor the game loop."""
 import asyncio
@@ -14,6 +14,7 @@ import subprocess
 import sys
 import threading
 import time
+import types
 
 import test_split as ts
 
@@ -90,6 +91,22 @@ async def scenario():
         c.get("stats", {}).get("battle_time", 0) > 0 for c in ts.stored().get("bob", [])), 12)
     check("stats made while the gate was away arrive", ok, str(ts.stored().get("bob")))
     check("the character survived the crash", len(ts.stored().get("bob", [])) == 1)
+
+    # --- the gate dies before it saves what a game server sent ---
+    dan = ts.Player()
+    await dan.join("dan", res)
+    await asyncio.sleep(1)
+    dan.leave()
+    await asyncio.sleep(0.5)  # the report is at the gate, the next save is up to 5 s away
+    n = links()
+    stop("gate")
+    check("the gate had not saved it yet", not any(
+        c.get("stats", {}).get("battle_time", 0) for c in ts.stored().get("dan", [])), str(ts.stored().get("dan")))
+    start("gate")
+    await asyncio.to_thread(linked, n + 3)
+    ok = await asyncio.to_thread(wait_for, lambda: any(
+        c.get("stats", {}).get("battle_time", 0) > 0 for c in ts.stored().get("dan", [])), 12)
+    check("stats the gate had not saved are sent again", ok, str(ts.stored().get("dan")))
 
     # --- login dies: bans are kept, and the gate gets them again ---
     await ts.login("frank")
@@ -198,11 +215,38 @@ def units():
     ls.UPLINK = None
 
     # a full report queue is counted
-    game.pending.clear()
-    game.pending.extend([("log", {})] * game.pending.maxlen)
+    game = ls.RemoteStore()
+    game.KEEP = 3
+    for _ in range(4):
+        game.report("log")
+    check("reports lost to a full queue are counted", game.lost == 1 and [r[0] for r in game.unsent] == [2, 3, 4])
+
+    # reports are kept until the gate has saved them, and sent again in order on a new link
+    class Up:
+        def __init__(self):
+            self.seqs = []
+
+        def send(self, kind, **fields):
+            self.seqs.append(fields["seq"])
+            return True
+
+    game = ls.RemoteStore()
+    ls.STORE, ls.UPLINK = game, Up()
+    for _ in range(3):
+        game.report("log")
+    ls.drain_reports()
+    game.saved(2)
+    up = Up()
+    ls.uplink_opened(up)
     game.report("log")
-    check("reports lost to a full queue are counted", game.lost == 1)
-    game.pending.clear()
+    ls.drain_reports()
+    check("unsaved reports go again, first", up.seqs == [3, 4], str(up.seqs))
+    ls.UPLINK = None
+
+    # the gate applies each report once
+    gate = types.SimpleNamespace(done={"old": 7}, lock=threading.Lock(), dirty=False)
+    fresh = [ls.Store.new_report(gate, "run", n) for n in (1, 2, 2, 3, 1)] + [ls.Store.new_report(gate, "old", 7)]
+    check("a report seen before is skipped", fresh == [True, True, False, True, False, False], str(fresh))
 
     # a server that stops reading loses its link
     cluster.SEND_TIMEOUT = 1.0

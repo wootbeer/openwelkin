@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS event_log (
     id INTEGER PRIMARY KEY, character_id INTEGER NOT NULL REFERENCES characters (id), at INTEGER NOT NULL,
     kind INTEGER NOT NULL, text TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS event_log_character ON event_log (character_id, id);
+CREATE TABLE IF NOT EXISTS reports (boot TEXT PRIMARY KEY, seq INTEGER NOT NULL, at INTEGER NOT NULL);
 """
 
 
@@ -130,6 +131,20 @@ def add_log_lines(con, lines, keep):
     con.executemany("DELETE FROM event_log WHERE character_id = ? AND id NOT IN "
                     "(SELECT id FROM event_log WHERE character_id = ? ORDER BY id DESC LIMIT ?)",
                     [(cid, cid, keep) for cid in {line[0] for line in lines}])
+
+
+def load_reports(con):
+    """{game server run: the last of its reports in this database}"""
+    return dict(con.execute("SELECT boot, seq FROM reports"))
+
+
+def write_reports(con, done, now, keep):
+    """Remember which game server reports are saved, so a resent one is not counted twice (call inside a
+    transaction). Runs older than `keep` seconds are forgotten."""
+    con.executemany("INSERT INTO reports VALUES (?, ?, ?) ON CONFLICT DO UPDATE SET "
+                    "seq = excluded.seq, at = excluded.at",
+                    [(boot, seq, now) for boot, seq in done.items()])
+    con.execute("DELETE FROM reports WHERE at < ?", (now - keep,))
 
 
 def load_characters(con):
