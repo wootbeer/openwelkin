@@ -142,6 +142,9 @@ reply layout, and answer with real data.
 - [ ] Team tab and hall Division Channel: team chat (21,21063) and other (21,21004) channels are not read in game. Whispers
       from the battle box are not tried. Enter in battle needs DirectInput: tools/vinput.py enter:0.2 sends a line
 - [ ] The client has its own / GM commands when the character's GM byte is set: (13,13041) and others, not read yet
+- [x] notice <text> (2026-11-02): Broadcast line from Server in the hall, big red text in battles. announcements.txt holds
+      the hall scrolling bar. Both use messages seen in game, but the notice itself is tried only with fake clients
+- [ ] (21,21048) task server notice list: u32 n | n x (str | u32), shown in dialog 0x71 (not known which)
 - [x] Web admin page (tools/webadmin.py, 2026-10-30): one file, sends admin commands, local only; README explains
       the admin port so people can build their own. Login and an IP ban tried in a real browser
 - [x] Checked in game 2026-10-30: kick drops the client to the login screen with no message; timed ban, permanent

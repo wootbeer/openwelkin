@@ -277,6 +277,9 @@ ok &= check("kills on a battlefront count as contribution",
             ls.STORE.stats(a_cid).get("front1", 0) == 2 * ls.KILL_HONOR + front1)
 ok &= check("the winner gets a win", ls.STORE.stats(a_cid).get("wins") == wins + 1
             and not ls.STORE.stats(b_cid).get("wins"))
+ls.notice_game("maintenance")
+step()
+ok &= check("a notice shows in battle", any(b"maintenance" in x for x in got(A, 30250)))
 ok &= check("everyone is told who won", any(b"Alpha" in x for x in got(B, 30250)))
 step(ls.RESPAWN_DELAY + 1)
 ok &= check("nobody respawns after the end", pb.player_dead)

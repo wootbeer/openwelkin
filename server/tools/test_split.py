@@ -251,6 +251,8 @@ async def scenario():
     check("kick reaches the game server", ok)
     ok = await asyncio.to_thread(wait_for, lambda: "carol" not in admin("who"), 1)
     check("a client that ignores the kick is dropped anyway", ok)
+    reply = await asyncio.to_thread(admin, "notice hello everyone")
+    check("a notice goes through the gate", reply.strip().startswith("notice sent to"), reply)
 
     # --- bans ---
     await asyncio.to_thread(admin, "ban bob 1h test")

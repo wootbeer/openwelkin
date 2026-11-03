@@ -117,7 +117,8 @@ MAX_STR = 1024          # one string field
 # Character names: 2-16 letters (any script, so Chinese names work), digits or underscore
 MAX_CHARACTERS = 4  # per account
 NAME_RE = re.compile(r"^[^\W]{2,16}$")
-# Hall content (later: from the database / web admin)
+# The hall's scrolling bar: announcements.txt next to the databases, one line each. Made with these on first start;
+# edit it while the server runs.
 ANNOUNCEMENTS = [
     "Welcome to the MarsWar revival server!",
     "Training Ground is open: Quick Enter to fight the target robots.",
@@ -700,7 +701,7 @@ MAX_CONTACTS = 100  # entries on a friend or block list
 KICK_NOTICE = 1.5  # seconds a kicked player has to see why, before the connection closes
 CHAT_MAX, CHAT_EVERY, CHAT_QUEUE = 200, 0.5, 100  # characters in a line, seconds between a player's lines, lines waiting
 GM_COMMANDS = {"who", "matches", "kick", "ban", "unban", "bans"}
-ROLE_COMMANDS = {"player": set(), "gm": GM_COMMANDS, "admin": GM_COMMANDS | {"ipban", "unipban", "role", "backup"}}
+ROLE_COMMANDS = {"player": set(), "gm": GM_COMMANDS, "admin": GM_COMMANDS | {"ipban", "unipban", "role", "backup", "notice"}}
 ONLINE_LOCK = threading.Lock()
 LOGIN_FAILS = {}  # ip -> [failure times]
 LOGIN_FAILS_LOCK = threading.Lock()
@@ -1037,8 +1038,9 @@ class Session:
     def on_announcements(self, msg):
         # UpdateAllAnnouncement (21,21047). Reply read by UpdateAllAnnouncementObserver (Game.dll 0x1051e040):
         #   u32 count | count x (u32 id | str text | u32) -> CHallMapUI::AddAnnouncement (the hall's scrolling bar)
-        body = struct.pack("<I", len(ANNOUNCEMENTS))
-        for i, text in enumerate(ANNOUNCEMENTS, 1):
+        lines = announcements()
+        body = struct.pack("<I", len(lines))
+        for i, text in enumerate(lines, 1):
             body += struct.pack("<I", i) + wstr(text) + struct.pack("<I", 0)
         self.reply(msg, body)
 
@@ -2048,6 +2050,8 @@ def on_login_message(link, msg):
         return match_rows()
     if kind == "backup":
         return backup_here()
+    if kind == "notice":
+        return notice_here(msg["text"])
     if kind == "gm_reply":
         with ONLINE_LOCK:
             session = ONLINE.get(msg["account"])
@@ -2299,8 +2303,8 @@ class Match:
 
 
 def show_message(m, text):
-    """GS_Character_Show_Message (19,30250): u32 kind (0 or 1) | str text (handler Game.dll 0x10357910). Not yet tried
-    in game."""
+    """GS_Character_Show_Message (19,30250): u32 kind (0 or 1) | str text (handler Game.dll 0x10357910). Kind 0 is big
+    red text in the middle of the screen (seen in game)."""
     m.broadcast(19, 30250, struct.pack("<I", 0) + wstr(text))
 
 
@@ -2958,6 +2962,58 @@ def match_rows():
     return local_match_rows()
 
 
+ANNOUNCE_MAX = 20     # lines read from announcements.txt
+_announce = (None, ANNOUNCEMENTS)  # (file time, lines)
+
+
+def announcements():
+    """The lines in announcements.txt, read again only when the file changes."""
+    global _announce
+    path = os.path.join(STATE_DIR, "announcements.txt")
+    try:
+        if not os.path.exists(path):
+            with open(path, "w", encoding="utf8") as f:
+                f.write("\n".join(ANNOUNCEMENTS) + "\n")
+        stamp = os.path.getmtime(path)
+        if stamp != _announce[0]:
+            with open(path, encoding="utf8", errors="replace") as f:
+                lines = [clean_line(line) for line in f.read(64 * 1024).splitlines()]
+            _announce = (stamp, [line for line in lines if line][:ANNOUNCE_MAX])
+    except OSError as e:
+        log(f"announcements.txt: {e}")
+    return _announce[1]
+
+
+def notice_here(text):
+    """A notice to everyone on this server: a Broadcast line from Server in the hall, big red text in battles."""
+    with ONLINE_LOCK:
+        sessions = [s for s in ONLINE.values() if s.character]
+    for s in sessions:
+        s.chat_line(21514, "Server", text)
+    if ROLE == "gate":
+        for g in list(LINKS):
+            g.send("notice", text=text)
+    else:
+        notice_game(text)
+    return len(sessions)
+
+
+def notice_game(text):
+    if GAME_SERVER:
+        with GAME_LOCK:
+            for m in list(MATCHES.values()):
+                if m.peers:
+                    show_message(m, text)
+
+
+def cmd_notice(args, actor):
+    text = clean_line(" ".join(args))
+    if not text:
+        return "usage: notice <text>"
+    sent = sum(ask(g, "notice", 0, text=text) for g in list(LINKS)) if ROLE == "login" else notice_here(text)
+    return f"notice sent to {sent} player(s)"
+
+
 def gather(kind, local):
     """Rows from every gate when this is the login server, else from this process."""
     if ROLE == "login":
@@ -3096,7 +3152,7 @@ def cmd_role(args, actor):
 
 
 ADMIN_COMMANDS = {"who": cmd_who, "matches": cmd_matches, "kick": cmd_kick, "ban": cmd_ban, "unban": cmd_unban,
-                  "ipban": cmd_ipban, "unipban": cmd_unipban, "bans": cmd_bans, "role": cmd_role, "backup": cmd_backup,
+                  "ipban": cmd_ipban, "unipban": cmd_unipban, "bans": cmd_bans, "role": cmd_role, "backup": cmd_backup, "notice": cmd_notice,
                   "help": lambda args, actor: ADMIN_HELP}
 
 

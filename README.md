@@ -164,9 +164,13 @@ python server/tools/admin.py who
 | `bans` | List bans |
 | `role <account> [player\|gm\|admin]` | Show or set an account's role |
 | `backup` | Copy the databases into `backups/` while the server runs |
+| `notice <text>` | Tell everyone online: a Broadcast line from Server in the hall, big red text in battles |
+
+The hall's scrolling announcements are in `announcements.txt` next to the databases, one per line (up to 20). It is
+made on first start, and changes show the next time a player opens the hall.
 
 A player with the role `gm` or `admin` can also type commands in game chat, starting with `!`, like `!kick bob`. A `gm` can
-use `who`, `matches`, `kick`, `ban`, `unban` and `bans`. An `admin` can also use `ipban`, `unipban`, `role` and `backup`.
+use `who`, `matches`, `kick`, `ban`, `unban` and `bans`. An `admin` can also use `ipban`, `unipban`, `role`, `backup` and `notice`.
 The reply comes as a private message from Server, and the command goes in `admin.log`.
 
 Banned players see the client's own message: "Account has been locked" (permanent), "Account being punished"

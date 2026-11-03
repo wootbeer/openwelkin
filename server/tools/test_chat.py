@@ -231,6 +231,25 @@ async def scenario():
     check("an admin can back up", "accounts.db ->" in (await heard(amy, 6))[3])
     check("commands are in the admin log", wait_for(lambda: ts.seen("gm amy: backup"), 3))
 
+    # --- notices and announcements ---
+    reply = ts.admin("notice Restart in 5 minutes\r\nkick amy")
+    line = await heard(cara)
+    while line and line[2] != "Server":
+        line = await heard(cara)
+    check("a notice reaches the hall", line == (21514, 0, "Server", "Restart in 5 minutes"), str(line))
+    check("and does not run as a command", "notice sent to" in reply and "amy" in ts.admin("who"))
+    check("an empty notice is refused", "usage" in ts.admin("notice "))
+    path = os.path.join(ts.root, "login", "announcements.txt")
+    await amy.request(21, 21047)
+    check("announcements.txt is made", wait_for(lambda: os.path.exists(path), 3))
+    with open(path, "w", encoding="utf8") as f:
+        f.write("first line\n\n" + "x" * 900 + "\n")
+    r = await amy.request(21, 21047)
+    n = struct.unpack_from("<I", r.body)[0]
+    first, off = ls.read_wstr(r.body, 8)
+    second = ls.read_wstr(r.body, off + 8)[0]
+    check("announcements come from the file", n == 2 and first == "first line" and len(second) == ls.CHAT_MAX)
+
     # --- kicked players are told why ---
     async def from_server(gate):
         while True:

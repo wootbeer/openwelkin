@@ -66,6 +66,8 @@ PAGE = string.Template(STYLE + """<title>MarsWar admin</title>
 <input name=reason placeholder=reason><input type=submit value="IP ban"></form>
 <form method=post action=/do><input type=hidden name=csrf value="$csrf"><input type=hidden name=action value=unipban>
 <input name=net placeholder="1.2.3.4 or 1.2.3.0/24" required><input type=submit value="Remove IP ban"></form>
+<form method=post action=/do><input type=hidden name=csrf value="$csrf"><input type=hidden name=action value=notice>
+<input name=reason placeholder="notice to everyone online" required><input type=submit value="Send notice"></form>
 <form method=post action=/do><input type=hidden name=csrf value="$csrf"><input type=hidden name=action value=backup>
 <input type=submit value="Back up databases"></form>
 <form method=post action=/logout><input type=hidden name=csrf value="$csrf"><input type=submit value="Log out"></form>""")
@@ -101,6 +103,7 @@ ACTIONS = {  # action name in the form -> the admin command it sends
     "ipban": lambda f: f"ipban {network(f)} {duration(f)} {reason(f)}",
     "unipban": lambda f: f"unipban {network(f)}",
     "backup": lambda f: "backup",
+    "notice": lambda f: f"notice {reason(f)}",
 }
 
 SESSIONS = {}  # cookie -> {"until": time, "csrf": token, "note": text to show once}
