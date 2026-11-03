@@ -117,8 +117,10 @@ reply layout, and answer with real data.
 - [x] Movement relay verified both ways with two clients (40100 steer flags + 40130 positions -> 50100)
 - [x] Rounds (tools/test_match.py): a Mars Front round ends after MW_ROUND_SECONDS or MW_ROUND_KILLS player kills. Most
       player kills gets a win, and everyone gets the Record window (19,30150). Real client 2026-11-01: the timer ending, the
-      warning and end messages (19,30250, big red text), the Record window, and back to the lobby after 20 s. Not tried:
-      the kill limit (only kills on players count, so it needs two clients), a real win, or Quick Enter straight into a new round
+      warning and end messages (19,30250, big red text), the Record window, and back to the lobby after 20 s. Real client
+      2026-11-03, two clients, MW_ROUND_KILLS=1: tester killing Bravo ended the round at once, both saw "tester won the
+      round" and their own Record window, both went back to the hall, tester's win was saved, and Quick Enter then
+      started a new match. Only kills on players count; target robot kills do not
 - [ ] Teams (all players are on their own side now), respawn point choice. Needs a client session: without knowing what
       sets the nation, players could not tell the sides apart, so nothing is built yet. Client's Kill arena, read from Game.dll, not
       tried: arena logic 5 in (19,40050), then init data u8 nation | u8 nation | f32. (19,49000) f32 seconds | u8 | f32
