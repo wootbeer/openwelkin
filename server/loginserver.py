@@ -257,6 +257,7 @@ RANK_THRESHOLDS = [int(50 * n ** 1.8) for n in range(71)]
 TALENTS = {1: (1311, 0, 0, 0, 3), 2: (1314, 0, 1, 5, 3), 3: (1301, 0, 2, 10, 3), 4: (1312, 1, 0, 0, 3),
            5: (1313, 2, 0, 0, 3), 6: (1315, 2, 1, 5, 3)}
 TALENT_COST = 1  # talent points per level
+TALENT_RESET_CRYSTAL, TALENT_RESET_WAIT = 1000, 86400  # price of forgetting talents, seconds before doing it again
 LOG_KEEP = 100   # event log lines kept per character
 
 # Medals: the client ships icons icon_medal_<id>.dds for ids 101xx..105xx (5 kinds x 3 grades); names and rules are
@@ -505,6 +506,26 @@ class Store:
             self.mark_dirty(cid)
             self.save()
             return True
+
+    def reset_talents(self, cid):
+        """Forget all talents for crystal. 0, or the client's error code. The client checks the price and the wait too,
+        but it must not be trusted."""
+        with self.lock:
+            c = self.by_id(cid)
+            st = c.setdefault("stats", {})
+            if not c.get("talents"):
+                return 14005  # "Do not have enough talent points."
+            if time.time() < st.get("talent_reset", 0) + TALENT_RESET_WAIT:
+                return 14003  # "Time interval too short to clear the talent points."
+            if st.get("money", START_MONEY) < TALENT_RESET_CRYSTAL:
+                return 24010  # "Crystal of your balance is insufficient to buy."
+            st["money"] = st.get("money", START_MONEY) - TALENT_RESET_CRYSTAL
+            st["talent_reset"] = int(time.time())
+            c["talents"] = {}
+            c.pop("robot", None)
+            self.mark_dirty(cid)
+            self.save()
+            return 0
 
     def add_log(self, cid, text, kind=0):
         """Append a line to the character's event log (Info window, Event Log tab); keeps the newest LOG_KEEP."""
@@ -1090,10 +1111,25 @@ class Session:
     def on_talent_remain(self, msg):
         # CGS_UpdateCharacterRemainTalentPoint (14,14043), request: u32 character id. Reply read by
         # CGS_UpdateCharacterRemainTalentPointObserver (0x10358fe0):
-        #   u32 total (char +0x180) | u32 remaining (+0x17c; 0 disables upgrades) | str last reset time | u32 | u32
+        #   u32 total (char +0x180) | u32 remaining (+0x17c; 0 disables upgrades) | str last reset "Y-M-D h:m:s" |
+        #   u32 forget price in crystal | u32 seconds before forgetting again (CTalentConfigUI::RequestClearTalent)
         cid = struct.unpack_from("<I", msg.body)[0] if len(msg.body) >= 4 else 0
         total, remaining = self.talent_points(cid) if self.own_character(cid) else (0, 0)
-        self.reply(msg, struct.pack("<II", total, remaining) + wstr("") + struct.pack("<II", 0, 0))
+        last = STORE.stats(cid).get("talent_reset", 0) if self.own_character(cid) else 0
+        # a date is needed even if it never happened: the client reads it with swscanf and adds the wait
+        last = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(last)) if last else "2000-01-01 00:00:00"
+        self.reply(msg, struct.pack("<II", total, remaining) + wstr(last)
+                   + struct.pack("<II", TALENT_RESET_CRYSTAL, TALENT_RESET_WAIT))
+
+    def on_reset_talents(self, msg):
+        # CGS_ResetCharacterTalent (14,14045), request: u32 character id. Empty reply; the observer (0x10355680) then
+        # clears the talents on the client. Any other result shows that error text.
+        cid = struct.unpack_from("<I", msg.body)[0] if len(msg.body) >= 4 else 0
+        result = STORE.reset_talents(cid) if self.own_character(cid) else ERR_UNKNOWN
+        log(f"{self.addr} forget talents cid={cid} -> {result}")
+        if not result:
+            STORE.add_log(cid, "Forgot all talents")
+        self.reply(msg, b"", result=result)
 
     def on_all_medals(self, msg):
         # CGS_UpdateAllMedalInfo (14,14019). Reply read by CGS_UpdateAllMedalInfoObserver (0x1035e740):
@@ -1687,6 +1723,7 @@ HANDLERS = {
     (14, 14028): Session.on_badge_progress,      # CGS_UpdateMyBadge (Info window reads it with CGS_GetCharacterAllBadge)
     (14, 14003): Session.on_event_log,           # CGS_GetCharacterLog (Info window, Event Log tab)
     (14, 14056): Session.on_military,            # CGS_GetCharacterMilitarySuccesses (Info window, Battle tab)
+    (14, 14045): Session.on_reset_talents,       # CGS_ResetCharacterTalent
     (14, 14047): Session.on_learn_talent,        # CGS_CharacterLearnTalent
     (24, 24009): Session.on_goods_flyweight,     # GS_RequestGoodsFlyweight
     (24, 24002): Session.on_item_flyweight,      # GS_UpdateItemFlyweight
@@ -1943,7 +1980,7 @@ def on_login_message(link, msg):
     if kind == "kick":
         return kick(msg["account"], msg["reason"], msg["notice"])
     if kind == "ipkick":
-        return ip_kick(msg["net"])
+        return ip_kick(msg["net"], msg["notice"])
     if kind == "who":
         return who_rows()
     if kind == "matches":
@@ -2911,21 +2948,22 @@ def cmd_ipban(args, actor):
         return "usage: ipban <address or network> [time] [reason]"
     until, reason = ban_args(args[1:])
     BANS.add("ips", str(net), until, reason, actor)
+    notice = f"Your address was banned {fmt_until(until)}" + (f": {reason}" if reason else "")
     if ROLE == "login":
         push_bans()
-        hit = sum(ask(g, "ipkick", 0, net=str(net)) for g in list(LINKS))
+        hit = sum(ask(g, "ipkick", 0, net=str(net), notice=notice) for g in list(LINKS))
     else:
-        hit = ip_kick(str(net))
+        hit = ip_kick(str(net), notice)
     return f"banned {net} {fmt_until(until)}" + (f": {reason}" if reason else "") + f"; kicked {hit}"
 
 
-def ip_kick(net):
+def ip_kick(net, notice=""):
     """Disconnect everyone on a network from this process, and a gate's game servers. Returns how many accounts."""
     network = ipaddress.ip_network(net)
     with ONLINE_LOCK:
         hit = [a for a, s in ONLINE.items() if ipaddress.ip_address(s.addr[0]) in network]
     for a in hit:
-        kick(a, "IP banned")
+        kick(a, "IP banned", notice)
     if ROLE == "gate":
         for g in list(LINKS):
             g.send("ipkick", net=net)

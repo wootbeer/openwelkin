@@ -175,6 +175,14 @@ async def scenario():
     await heard(ben)
     await asyncio.sleep(ls.CHAT_EVERY + 0.1)
 
+    # --- talents ---
+    r = await amy.request(14, 14043, struct.pack("<I", amy_id))
+    last, off = ls.read_wstr(r.body, 8)
+    check("the client gets a date, a price and a wait", len(last) == 19
+          and struct.unpack_from("<II", r.body, off) == (ls.TALENT_RESET_CRYSTAL, ls.TALENT_RESET_WAIT))
+    check("nothing to forget", (await amy.request(14, 14045, struct.pack("<I", amy_id))).result == 14005)
+    check("not another character's", (await ben.request(14, 14045, struct.pack("<I", amy_id))).result != 0)
+
     # --- commands ---
     say(amy, "!role amy admin")
     check("a player can not use commands", await heard(amy) == (21200, 0, "Server", "not allowed"))
@@ -196,7 +204,7 @@ async def scenario():
     ts.admin("role amy admin")
     await asyncio.sleep(ls.CHAT_EVERY + 0.1)
     say(amy, "!backup")
-    check("an admin can back up", "accounts.db ->" in (await heard(amy))[3])
+    check("an admin can back up", "accounts.db ->" in (await heard(amy, 6))[3])
     check("commands are in the admin log", wait_for(lambda: ts.seen("gm amy: backup"), 3))
 
     # --- kicked players are told why ---
@@ -215,6 +223,11 @@ async def scenario():
     check("a banned player sees why", line and line[3].startswith("You were banned until ") and line[3].endswith(": spam"), str(line))
     await asyncio.sleep(ls.KICK_NOTICE + 0.5)
     check("and leaves too", not await ts.answers(dan))
+    await from_server(amy)  # the rest of the backup reply
+    ts.admin("ipban 127.0.0.1 1h bots")
+    line = await from_server(amy)
+    check("an IP ban says why", line and line[3].startswith("Your address was banned until ") and line[3].endswith(": bots"),
+          str(line))
 
 
 def main():

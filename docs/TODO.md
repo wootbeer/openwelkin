@@ -33,7 +33,8 @@ reply layout, and answer with real data.
 - [x] (14,14044) CGS_UpdateCharacterTalentPoint
 - [x] (14,14058) CGS_CharacterLearnTalentCost
 - [x] (14,14047) CGS_CharacterLearnTalent
-- [ ] Forget Talent (reset) request
+- [ ] Forget Talent (2026-11-02, read from Game.dll, tested only with fake clients): (14,14045) u32 character id, empty
+      reply. 14043 now sends the price (1000 crystal) and the wait (1 day). Try the button in game
 - [x] Spawn as the last robot talent learned (parts from data/flyweights/Robot; verified Scout 1313 in game; MW_ROBOT=<fw> forces one)
 - [ ] Heavy robots (1301 ArmorRobot, 0 equipment slots) crash the client -- weapons are armor parts; falls back to 1311 for now
 
