@@ -257,8 +257,9 @@ reply layout, and answer with real data.
       One Python process should hold about 600 players before ticks run late. Past that: run matches in more
       processes (the split-server plan), or move the game server to a faster language.
 - [x] Real client on the batched server (2026-10-30): login, join, walk, fire, die, respawn all fine, one resend seen
-- [x] Bandwidth (2026-11-03, tested offline only): a viewer gets every move of robots within 100 units, 5 a second
-      up to 250, 2 a second beyond, and a robot that has not changed only once a second (moves are unreliable, so
-      it is still sent now and then). Load test, 64 players, 32 per match, spread 300: 15.9 -> 10.8 KB/s per player,
-      same move delay. Packed together (spread 60) it stays about 22 KB/s: everyone is near and moving
+- [x] Bandwidth (2026-11-03, tested offline only): a viewer gets every move of a robot within 100 units or within
+      its own or the robot's weapon range (fire_range, so 1250 for a ThunderStrike sniper); 5 a second for 150
+      past that, 2 a second beyond. A robot that has not changed is sent once a second (moves are unreliable, so it
+      is still sent now and then). Load test, 64 players, 32 per match, spread 300, Viper (range 250): 15.9 -> 14.1
+      KB/s per player, same move delay. Packed together it stays about 22 KB/s: everyone is near and moving
 - [ ] Watch mid and far robots in the real client: do they still move smoothly at 5 and 2 updates a second?

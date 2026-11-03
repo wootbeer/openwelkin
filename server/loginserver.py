@@ -2405,10 +2405,11 @@ RECORD_SECONDS = 20.0 # the Record window's countdown; after it the client goes 
 RECORD_GRACE = 10.0   # a client still here this long after that countdown is closed
 MAX_SLOTS = 4000      # joins per match before it takes nobody new (robot ids are slot * 1,000,000 + 1, a u32)
 TICK_HZ = 30          # game loop rate: timers, AI, and each player's queued events go out once per tick
-NEAR_DISTANCE = 100.0  # a viewer gets every move of robots this close,
-MID_EVERY = 6          # one every MID_EVERY ticks (5 a second) of robots up to FAR_DISTANCE away,
-FAR_DISTANCE = 250.0
-FAR_EVERY = 15         # and one every FAR_EVERY ticks (2 a second) of robots farther away
+NEAR_DISTANCE = 100.0  # a viewer gets every move of robots this close, or within its own or the robot's weapon
+                       # range (fire_range: up to 1250 for a ThunderStrike), so nobody aims at a jerky robot;
+MID_EVERY = 6          # one every MID_EVERY ticks (5 a second) up to MID_BAND past that,
+MID_BAND = 150.0
+FAR_EVERY = 15         # and one every FAR_EVERY ticks (2 a second) farther away
 STILL_EVERY = 30       # a robot that has not changed is sent again only after this many ticks (moves can be lost)
 REMOVE_LEFT_PLAYERS = True  # delete a leaving player's robot and character on the other clients (not yet tried in
                             # game: if a client crashes when someone leaves, set False to only show the robot destroyed)
@@ -2471,12 +2472,12 @@ class Match:
         """Run fn(*args) on the game loop after delay seconds (respawns, automatic fire)."""
         heapq.heappush(self.timers, (time.time() + delay, next(TIMER_IDS), fn, args))
 
-    def move(self, rid, body, pos, skip=None):
-        """A robot moved (GS_Robot_Action 19,50100 body). Each viewer keeps only the newest move per robot until
-        the next tick sends it."""
+    def move(self, rid, body, pos, reach, skip=None):
+        """A robot moved (GS_Robot_Action 19,50100 body); reach is its weapon range. Each viewer keeps only the
+        newest move per robot until the next tick sends it."""
         for p in self.peers:
             if p is not skip:
-                p.moves[rid] = (body, pos)
+                p.moves[rid] = (body, pos, reach)
 
     def is_open(self):
         return (self.peers is not None and not self.over and len(self.peers) < MAX_MATCH_PLAYERS
@@ -2498,16 +2499,16 @@ class Match:
         if now >= self.next_ai and not self.over:
             self.next_ai = now + AI_TICK
             ai_step(self, now)
-        near2, far2 = NEAR_DISTANCE ** 2, FAR_DISTANCE ** 2
         for v in self.peers:
-            for rid, (body, pos) in list(v.moves.items()):
+            for rid, (body, pos, reach) in list(v.moves.items()):
                 last = v.sent.get(rid)  # (body, tick) this viewer last got for the robot
                 if last:
                     if last[0] == body:
                         every = STILL_EVERY
                     else:
-                        d2 = (pos[0] - v.pos[0]) ** 2 + (pos[2] - v.pos[2]) ** 2
-                        every = 1 if d2 <= near2 else MID_EVERY if d2 <= far2 else FAR_EVERY
+                        d2 = (pos[0] - v.pos[0]) ** 2 + (pos[1] - v.pos[1]) ** 2 + (pos[2] - v.pos[2]) ** 2
+                        near = max(NEAR_DISTANCE, v.fire_range, reach)
+                        every = 1 if d2 <= near ** 2 else MID_EVERY if d2 <= (near + MID_BAND) ** 2 else FAR_EVERY
                     if self.tick_no - last[1] < every:
                         if every == STILL_EVERY:
                             del v.moves[rid]
@@ -2915,7 +2916,7 @@ def ai_step(m, now):
             t["phase"] += AI_TICK * AI_SPEED / AI_PATROL
             t["pos"] = (hx + AI_PATROL * math.sin(t["phase"]), hy, hz)
             face, flags = (1.0 if math.cos(t["phase"]) >= 0 else -1.0, 0.0, 0.0), 1
-        m.move(rid, struct.pack("<II3f3f", rid, flags, *t["pos"], *face), t["pos"])
+        m.move(rid, struct.pack("<II3f3f", rid, flags, *t["pos"], *face), t["pos"], fire_range(DEFAULT_WEAPON))
         if not best or PASSIVE_DUMMIES:
             continue
         t["cooldown"] -= AI_TICK
@@ -3030,7 +3031,7 @@ def on_game_message(server, peer, raw):
         if all(math.isfinite(v) for v in pos):
             peer.pos = pos
             m.move(peer.player_rid, struct.pack("<II3f3f", peer.player_rid, peer.steer, *pos, *peer.facing), pos,
-                   skip=peer)
+                   peer.fire_range, skip=peer)
     elif key == (9, 40100) and len(body) >= 32:
         # GC_Robot_Action, sent by Robot::Move when the steer flags change: f32 | u32 steer flags (ROBOT_STEER_FLAG,
         # 0 = standing) | vec3 pos | vec3 facing -- the same layout as GS_Robot_Action (19,50100), relayed as is.
@@ -3041,7 +3042,7 @@ def on_game_message(server, peer, raw):
             if any(abs(v) > 1e-3 for v in facing):
                 peer.facing = facing
             m.move(peer.player_rid, struct.pack("<II3f3f", peer.player_rid, steer, *pos, *peer.facing), pos,
-                   skip=peer)
+                   peer.fire_range, skip=peer)
     elif key == (9, 40105) and len(body) >= 8:
         # Weapon switch request (hotkey 1-9 / 0 / Q in Robot::UpdateInput): i32 | i32 equipment slot (1-based,
         # 0 = take off). The robot only gets a current equip (and Weapon::UpdateInput, i.e. firing) once the server

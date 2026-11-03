@@ -133,12 +133,21 @@ def moves_of_a(n, x=None):
     return [x for x in got(B, 50100)[before:] if struct.unpack_from("<I", x)[0] == a_rid]
 
 
-for where, every in (((1000.0, 0.0, 1000.0), ls.FAR_EVERY), ((150.0, 0.0, 0.0), ls.MID_EVERY)):
-    pb.pos = where
+near = max(ls.NEAR_DISTANCE, pa.fire_range, pb.fire_range)
+for away, every in ((near + ls.MID_BAND + 100, ls.FAR_EVERY), (near + ls.MID_BAND / 2, ls.MID_EVERY)):
+    pb.pos = (10.0 + away, 2.0, 3.0)
     thinned = moves_of_a(every * 3)  # 3 at most; 2 when the window starts just after a send
-    ok &= check(f"robot {where[0]:.0f} away: {len(thinned)} of {every * 3} moves sent", len(thinned) in (2, 3))
+    ok &= check(f"robot {away:.0f} away: {len(thinned)} of {every * 3} moves sent", len(thinned) in (2, 3))
+pb.pos = (10.0 + near - 1, 2.0, 3.0)
+ok &= check(f"a robot in weapon range ({near:.0f}): every move", len(moves_of_a(10)) == 10)
+range_b, pb.fire_range = pb.fire_range, ls.fire_range(3105)
+pb.pos = (1010.0, 2.0, 3.0)
+ok &= check("a ThunderStrike 1000 away: every move", pb.fire_range >= 1000 and len(moves_of_a(10)) == 10)
+pb.fire_range, pa.fire_range = range_b, ls.fire_range(3105)
+seen = moves_of_a(10)
+ok &= check(f"seen by someone 1000 away from a ThunderStrike: {len(seen)} of 10", len(seen) == 10)
+pa.fire_range = range_b
 pb.pos = (10.0, 0.0, 0.0)
-ok &= check("a near robot: every move", len(moves_of_a(10)) == 10)
 moves_of_a(1, x=50.0)
 still = moves_of_a(ls.STILL_EVERY * 2, x=50.0)
 ok &= check(f"a robot standing still: {len(still)} of {ls.STILL_EVERY * 2} moves sent", len(still) == 2)
