@@ -175,6 +175,23 @@ async def scenario():
     await heard(ben)
     await asyncio.sleep(ls.CHAT_EVERY + 0.1)
 
+    # --- ranking ---
+    r = await amy.request(15, 15106, bytes(14))
+    total, count = struct.unpack_from("<II", r.body)
+    off, rows = 8, []
+    for _ in range(count):
+        place = struct.unpack_from("<I", r.body, off)[0]
+        name, off = ls.read_wstr(r.body, off + 4)
+        score = struct.unpack_from("<I", r.body, off + 1)[0]
+        off = ls.read_wstr(r.body, off + 5)[1] + 5
+        rows.append((place, name, score))
+    check("the Crystal tab lists every character", total == count >= 4 and rows[0][:2] == (1, "amy")
+          and off == len(r.body), str(rows))
+    r = await amy.request(15, 15107, struct.pack("<IB", amy_id, 1))
+    check("my place", struct.unpack("<II", r.body) == (1, ls.START_MONEY))
+    r = await ben.request(15, 15107, struct.pack("<IB", amy_id, 1))
+    check("not someone else's", struct.unpack("<II", r.body) == (0, 0))
+
     # --- talents ---
     r = await amy.request(14, 14043, struct.pack("<I", amy_id))
     last, off = ls.read_wstr(r.body, 8)

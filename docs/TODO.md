@@ -72,6 +72,11 @@ reply layout, and answer with real data.
 - [ ] (24,24028) GS_RequestSuiteInSelling (Package tab)
 - [ ] Equipping bought items (24006 in-use list, loadout)
 
+## Ranking
+- [ ] Ranking window (2026-11-02, read from Game.dll, tested only with fake clients): Honor, Shooting and Crystal tabs and
+      my place (15,15098..15107), top 20, lists kept 60 s. Try in game: which row field is the score (both are sent), and
+      paging. Weapon tabs (15102, 15103, 15108) are not done
+
 ## Other open items
 - [x] Anti-addiction banner in the hall
 - [x] "Waiting to enter arena." popup = GAMEENGINE_DATAUNNORMAL (bad reply data); gone once shop replies were real

@@ -256,6 +256,7 @@ RANK_THRESHOLDS = [int(50 * n ** 1.8) for n in range(71)]
 # Robot tab talents: id -> (robot flyweight, column 0 Battle / 1 Engineer / 2 Scout, row, rank needed, max level)
 TALENTS = {1: (1311, 0, 0, 0, 3), 2: (1314, 0, 1, 5, 3), 3: (1301, 0, 2, 10, 3), 4: (1312, 1, 0, 0, 3),
            5: (1313, 2, 0, 0, 3), 6: (1315, 2, 1, 5, 3)}
+TOP_ROWS, TOP_EVERY = 20, 60.0  # rows on a Ranking tab, seconds a sorted list is kept: every character is read to make one
 TALENT_COST = 1  # talent points per level
 TALENT_RESET_CRYSTAL, TALENT_RESET_WAIT = 1000, 86400  # price of forgetting talents, seconds before doing it again
 LOG_KEEP = 100   # event log lines kept per character
@@ -386,6 +387,7 @@ class Store:
             self.con = db.open_characters(self.path)
             self.data = db.load_characters(self.con)
         self.names = {c["name"].lower(): c["id"] for chars in self.data["accounts"].values() for c in chars}
+        self.tops = {}  # stat -> (time made, sorted rows)
 
     dirty = False
     SAVE_INTERVAL = 5.0  # seconds; battle stats and log lines are written in batches
@@ -506,6 +508,20 @@ class Store:
             self.mark_dirty(cid)
             self.save()
             return True
+
+    def top(self, stat):
+        """[(character id, name, honor, value)], best first. Sorting reads every character, so a list is kept a while."""
+        now = time.time()
+        made, rows = self.tops.get(stat, (0.0, []))
+        if now - made < TOP_EVERY:
+            return rows
+        default = START_MONEY if stat == "money" else 0
+        with self.lock:
+            chars = [c for chars in self.data["accounts"].values() for c in chars]
+            rows = sorted(((c["id"], c["name"], c.get("stats", {}).get("honor", 0),
+                            int(c.get("stats", {}).get(stat, default))) for c in chars), key=lambda r: (-r[3], r[0]))
+        self.tops[stat] = (now, rows)
+        return rows
 
     def reset_talents(self, cid):
         """Forget all talents for crystal. 0, or the client's error code. The client checks the price and the wait too,
@@ -1121,6 +1137,24 @@ class Session:
         self.reply(msg, struct.pack("<II", total, remaining) + wstr(last)
                    + struct.pack("<II", TALENT_RESET_CRYSTAL, TALENT_RESET_WAIT))
 
+    # The Ranking window, from Game.dll, never tried with the client. Lists (15,15098 Honor / 15100 Shooting / 15106 Crystal),
+    # read by CS_CharacterExpRank_Observer 0x1035cf50: u32 total | u32 n | n x (u32 | str name | u8 | u32 | str | u8 | u32).
+    # Which u32 is the score is not known, so both are. My place (15,15099 / 15101 / 15107): u32 place | u32 score, request
+    # u32 character id | u8. Requests also carry a page, which is not read: the top rows are all there is.
+    def on_rank_list(self, msg):
+        rows = STORE.top(RANK_TABS[msg.type])
+        body = struct.pack("<II", len(rows), min(len(rows), TOP_ROWS))
+        for place, (_, name, honor, value) in enumerate(rows[:TOP_ROWS], 1):
+            body += (struct.pack("<I", place) + wstr(name) + struct.pack("<BI", rank_for(honor), value) + wstr("")
+                     + struct.pack("<BI", 0, value))
+        self.reply(msg, body)
+
+    def on_my_rank(self, msg):
+        cid = struct.unpack_from("<I", msg.body)[0] if len(msg.body) >= 4 else 0
+        rows = STORE.top(RANK_TABS[msg.type - 1])
+        place, value = next(((n, r[3]) for n, r in enumerate(rows, 1) if r[0] == cid), (0, 0))
+        self.reply(msg, struct.pack("<II", place, value) if self.own_character(cid) else struct.pack("<II", 0, 0))
+
     def on_reset_talents(self, msg):
         # CGS_ResetCharacterTalent (14,14045), request: u32 character id. Empty reply; the observer (0x10355680) then
         # clears the talents on the client. Any other result shows that error text.
@@ -1686,6 +1720,8 @@ def kick(account, reason, notice=""):
     return session is not None
 
 
+RANK_TABS = {15098: "honor", 15100: "kills", 15106: "money"}
+
 # (event catalog, event type) -> handler. Names come from the client's observer class names (RTTI).
 HANDLERS = {
     (10, 10000): Session.on_login,               # LS_ValidatePassword
@@ -1724,6 +1760,12 @@ HANDLERS = {
     (14, 14003): Session.on_event_log,           # CGS_GetCharacterLog (Info window, Event Log tab)
     (14, 14056): Session.on_military,            # CGS_GetCharacterMilitarySuccesses (Info window, Battle tab)
     (14, 14045): Session.on_reset_talents,       # CGS_ResetCharacterTalent
+    (15, 15098): Session.on_rank_list,           # CS_CharacterExpRank (Ranking, Honor tab)
+    (15, 15099): Session.on_my_rank,             # CS_OneCharacterExpRank
+    (15, 15100): Session.on_rank_list,           # CS_CharacterKillRank (Shooting tab)
+    (15, 15101): Session.on_my_rank,             # CS_OneCharacterKillRank
+    (15, 15106): Session.on_rank_list,           # CS_CharacterMoneyRank (Crystal tab)
+    (15, 15107): Session.on_my_rank,             # CS_OneCharacterMoneyRank
     (14, 14047): Session.on_learn_talent,        # CGS_CharacterLearnTalent
     (24, 24009): Session.on_goods_flyweight,     # GS_RequestGoodsFlyweight
     (24, 24002): Session.on_item_flyweight,      # GS_UpdateItemFlyweight

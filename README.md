@@ -4,7 +4,8 @@ MMOFPS server for Welkin4591 / Mars War: an open-source server emulator
 
 A fan-made server for the MarsWar client. The stock client is used as-is; only its config file
 points at this server. Work in progress: several players per battlefield (free for all), Training Ground and Northern Front, timed rounds, shop, warehouse,
-talents, medals, badges, chat, friend and block lists and the Info window work.
+talents, medals, badges, chat, friend and block lists and the Info window work. The Ranking window is answered but not yet
+tried in game.
 
 ## Run it
 

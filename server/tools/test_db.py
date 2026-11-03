@@ -68,6 +68,14 @@ def characters():
     ls.STORE.add_stats(cid, money=-ls.STORE.stats(cid)["money"])
     check("forgetting needs the crystal", ls.STORE.reset_talents(cid) == 24010 and ls.STORE.talents(cid))
     check("a name finds its character after a restart", ls.STORE.id_of_name("ALPHA") == cid)
+    ls.TOP_EVERY = 0
+    ls.STORE.add_stats(cid + 1, kills=5)
+    top = ls.STORE.top("kills")
+    check("rankings sort best first", [r[0] for r in top[:2]] == [cid + 1, cid] and top[0][3] == 5, str(top))
+    ls.TOP_EVERY = 60
+    ls.STORE.add_stats(cid, kills=50)
+    ls.STORE.top("kills")
+    check("and are kept for a while", ls.STORE.top("kills")[0][0] == cid + 1)
     ls.STORE.set_contact(cid, "friends", cid + 1, True)
     ls.STORE.set_contact(cid, "blocked", cid + 1, True)
     ls.STORE.set_contact(cid, "friends", cid + 1, True)
