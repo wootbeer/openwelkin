@@ -80,8 +80,10 @@ reply layout, and answer with real data.
       shows under the list past place 18 (2026-11-03, 28 characters: "My Ranking 26 tester 310" under the 20 rows).
       There is no paging: the window shows 20 rows and scrolling sends nothing
 - [ ] Camps are not kept, so every name is green. Weapon tabs (15102, 15103, 15108) are not done
-- [ ] Daily / Weekly / Monthly / Total resend the request with a different 9-byte body; the emulator ignores it and
-      always sends all-time numbers. Which byte is the period is not read yet
+- [x] Request read in game 2026-11-03: u8 period (1 Total, 2 Monthly, 3 Weekly, 4 Daily) | u32 first row | u32 rows
+      (20); Shooting (15100) has one more u8 in front. My place: u32 character id | u8 period. The u32 after the camp
+      byte is a team id: anything but 0 makes the client ask UpdateTeamInfo (15,15023) once per row, so 0 is sent
+- [ ] Periods: only totals are kept, so Daily, Weekly and Monthly show the totals too
 
 ## Other open items
 - [x] Anti-addiction banner in the hall
@@ -116,7 +118,7 @@ reply layout, and answer with real data.
 - [x] Rounds (tools/test_match.py): a Mars Front round ends after MW_ROUND_SECONDS or MW_ROUND_KILLS player kills. Most
       player kills gets a win, and everyone gets the Record window (19,30150). Real client 2026-11-01: the timer ending, the
       warning and end messages (19,30250, big red text), the Record window, and back to the lobby after 20 s. Not tried:
-      the kill limit, a real win, or Quick Enter straight into a new round
+      the kill limit (only kills on players count, so it needs two clients), a real win, or Quick Enter straight into a new round
 - [ ] Teams (all players are on their own side now), respawn point choice. Needs a client session: without knowing what
       sets the nation, players could not tell the sides apart, so nothing is built yet. Client's Kill arena, read from Game.dll, not
       tried: arena logic 5 in (19,40050), then init data u8 nation | u8 nation | f32. (19,49000) f32 seconds | u8 | f32
@@ -145,8 +147,9 @@ reply layout, and answer with real data.
       are (21,21051), not 21032. The battle box's Country tab is (21,21004): u16 5 | str, shown from (21,21204), and the
       client does not show its own line. Country reaches the player's match: game servers report joins and leaves to the
       gate, because shown lines go out on the gate. (21,21211) did not show in the battle box
-- [ ] Team tab and hall Division Channel: team chat (21,21063) and other (21,21004) channels are not read in game. Whispers
-      from the battle box are not tried. Enter in battle needs DirectInput: tools/vinput.py enter:0.2 sends a line
+- [ ] Team and Division chat. Real client 2026-11-03: the hall's Division Channel sends (21,21004) u16 2 | str (dropped:
+      there are no divisions yet). In battle the Team and Division tabs are greyed and do not open without a team or
+      division, so their channel numbers wait for teams. Whispers from the battle box are not tried. Enter in battle needs DirectInput: tools/vinput.py enter:0.2 sends a line
 - [ ] The client has its own / GM commands when the character's GM byte is set: (13,13041) and others, not read yet
 - [x] notice <text>, real client 2026-11-02: "[Broadcast] Server: ..." in the hall chat; in battle the same line plus big
       red text in the middle for a few seconds. announcements.txt holds the hall scrolling bar

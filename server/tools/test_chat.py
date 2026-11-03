@@ -183,12 +183,15 @@ async def scenario():
     check("contribution on every front", n == 1 and struct.unpack_from("<I", r.body, 4)[0] == 1)
 
     # --- ranking ---
-    r = await amy.request(15, 15106, bytes(14))
+    r = await amy.request(15, 15106, struct.pack("<BII", 1, 1, 20))  # Total, from the second row
+    check("a list can start further down", struct.unpack_from("<II", r.body)[1] == struct.unpack_from("<I", r.body)[0] - 1)
+    r = await amy.request(15, 15106, struct.pack("<BII", 1, 0, 1000))
     total, count = struct.unpack_from("<II", r.body)
     off, rows = 8, []
     for _ in range(count):
         cid = struct.unpack_from("<I", r.body, off)[0]
         name, off = ls.read_wstr(r.body, off + 4)
+        check(f"no team for {name}", struct.unpack_from("<I", r.body, off + 1)[0] == 0)
         off = ls.read_wstr(r.body, off + 5)[1] + 1
         score = struct.unpack_from("<I", r.body, off)[0]
         rows.append((cid, name, score))

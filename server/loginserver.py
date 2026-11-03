@@ -1143,15 +1143,18 @@ class Session:
 
     # The Ranking window (seen in game). Lists (15,15098 Honor / 15100 Shooting / 15106 Crystal), read by
     # CS_CharacterExpRank_Observer 0x1035cf50: u32 total | u32 n | n x (u32 character id (your own row is highlighted) |
-    # str name | u8 camp (0x10 green, 0x20 red, else the name is drawn almost black) | u32 | str (not read) | u8 rank level |
-    # u32 score). The client numbers the rows itself. My place (15,15099 / 15101 / 15107), request u32 character id | u8:
-    # reply u32 place counted from 0 | u32 score; the client shows it under the list only past place 18.
-    # Requests also carry a page, which is not read: the top rows are all there is.
+    # str name | u8 camp (0x10 green, 0x20 red, else the name is drawn almost black) | u32 team (not 0: the client asks
+    # UpdateTeamInfo (15,15023) for it) | str (not read) | u8 rank level | u32 score). The client numbers the rows itself.
+    # Request: [u8 for Shooting] u8 period (1 Total, 2 Monthly, 3 Weekly, 4 Daily) | u32 first row | u32 rows (20); the
+    # window has no paging. Only totals are kept, so every period gets them. My place (15,15099 / 15101 / 15107), request
+    # u32 character id | u8 period: reply u32 place counted from 0 | u32 score; shown under the list only past place 18.
     def on_rank_list(self, msg):
+        first, count = struct.unpack_from("<II", msg.body, len(msg.body) - 8) if len(msg.body) >= 8 else (0, TOP_ROWS)
         rows = STORE.top(RANK_TABS[msg.type])
-        body = struct.pack("<II", len(rows), min(len(rows), TOP_ROWS))
-        for cid, name, honor, value in rows[:TOP_ROWS]:
-            body += (struct.pack("<I", cid) + wstr(name) + struct.pack("<BI", RANK_CAMP, value) + wstr("")
+        page = rows[first:first + min(count, TOP_ROWS)]
+        body = struct.pack("<II", len(rows), len(page))
+        for cid, name, honor, value in page:
+            body += (struct.pack("<I", cid) + wstr(name) + struct.pack("<BI", RANK_CAMP, RANK_NO_TEAM) + wstr("")
                      + struct.pack("<BI", rank_for(honor), value))
         self.reply(msg, body)
 
@@ -1745,6 +1748,7 @@ def kick(account, reason, notice=""):
 
 RANK_TABS = {15098: "honor", 15100: "kills", 15106: "money"}
 RANK_CAMP = 0x10  # camps are not kept yet, so every name on the Ranking window is green
+RANK_NO_TEAM = 0  # teams are not kept yet either
 
 # (event catalog, event type) -> handler. Names come from the client's observer class names (RTTI).
 HANDLERS = {
