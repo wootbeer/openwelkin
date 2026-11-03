@@ -90,6 +90,7 @@ BATTLEFIELDS = {
 }
 # Grand Battle Field list: (campaign id, campaign name, battlefront id, battlefront name, battlefield id)
 CAMPAIGNS = [(1, "Mars Campaign", 1, "Northern Front", 2)]
+FRONT_OF = {bfid: fid for _, _, fid, _, bfid in CAMPAIGNS}  # battlefield -> its battlefront, for contribution
 
 # Login hands the client a random session key; the gate handshake echoes it back and we look the account up here.
 # Keys are single-use and expire, so nobody can reach the gate as another account by guessing or forging one.
@@ -1155,6 +1156,22 @@ class Session:
         place, value = next(((n, r[3]) for n, r in enumerate(rows, 1) if r[0] == cid), (0, 0))
         self.reply(msg, struct.pack("<II", place, value) if self.own_character(cid) else struct.pack("<II", 0, 0))
 
+    # Contribution on a battlefront: the honor earned there. One front (14,14051): request u32 character id | u32 front,
+    # reply u32, polled while the hall is open (Grand Battle Field list, Total Contribution). All fronts (14,14050):
+    # u32 n | n x (u32 front | u32 contribution). From Game.dll 0x10356410 / 0x1035c190, not yet tried in game.
+    def contribution(self, cid, front):
+        return int(STORE.stats(cid).get(f"front{front}", 0)) if self.own_character(cid) else 0
+
+    def on_front_contribution(self, msg):
+        cid, front = struct.unpack_from("<II", msg.body) if len(msg.body) >= 8 else (0, 0)
+        self.reply(msg, struct.pack("<I", self.contribution(cid, front)))
+
+    def on_all_contribution(self, msg):
+        cid = struct.unpack_from("<I", msg.body)[0] if len(msg.body) >= 4 else 0
+        fronts = sorted(set(FRONT_OF.values()))
+        self.reply(msg, struct.pack("<I", len(fronts))
+                   + b"".join(struct.pack("<II", f, self.contribution(cid, f)) for f in fronts))
+
     def on_reset_talents(self, msg):
         # CGS_ResetCharacterTalent (14,14045), request: u32 character id. Empty reply; the observer (0x10355680) then
         # clears the talents on the client. Any other result shows that error text.
@@ -1760,6 +1777,8 @@ HANDLERS = {
     (14, 14003): Session.on_event_log,           # CGS_GetCharacterLog (Info window, Event Log tab)
     (14, 14056): Session.on_military,            # CGS_GetCharacterMilitarySuccesses (Info window, Battle tab)
     (14, 14045): Session.on_reset_talents,       # CGS_ResetCharacterTalent
+    (14, 14050): Session.on_all_contribution,    # CGS_GetCharacterAllBattleFrontContribution
+    (14, 14051): Session.on_front_contribution,  # CGS_GetCharacterbattleFrontContributionByID
     (15, 15098): Session.on_rank_list,           # CS_CharacterExpRank (Ranking, Honor tab)
     (15, 15099): Session.on_my_rank,             # CS_OneCharacterExpRank
     (15, 15100): Session.on_rank_list,           # CS_CharacterKillRank (Shooting tab)
@@ -2634,7 +2653,9 @@ def award_kill(server, peer, victim_text="a target robot"):
     | u32 reason (message text, 0 = none)."""
     send_game_event(server, peer, 19, 50130, struct.pack("<IIII", KILL_HONOR, 0, 0, 0))
     send_game_event(server, peer, 19, 30201, struct.pack("<III", peer.cid, KILL_PAY, 0))
-    record_stats(peer, kills=1, honor=KILL_HONOR, crystal=KILL_PAY, money=KILL_PAY)
+    front = FRONT_OF.get(getattr(peer, "bfid", None))
+    extra = {f"front{front}": KILL_HONOR} if front else {}  # contribution: honor earned on that battlefront
+    record_stats(peer, kills=1, honor=KILL_HONOR, crystal=KILL_PAY, money=KILL_PAY, **extra)
     STORE.add_log(peer.cid, f"Destroyed {victim_text} (+{KILL_HONOR} honor, +{KILL_PAY} crystal)")
 
 

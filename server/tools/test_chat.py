@@ -175,6 +175,13 @@ async def scenario():
     await heard(ben)
     await asyncio.sleep(ls.CHAT_EVERY + 0.1)
 
+    # --- battlefront contribution ---
+    r = await amy.request(14, 14051, struct.pack("<II", amy_id, 1))
+    check("contribution on a front", r.result == 0 and len(r.body) >= 4)
+    r = await amy.request(14, 14050, struct.pack("<I", amy_id))
+    n = struct.unpack_from("<I", r.body)[0]
+    check("contribution on every front", n == 1 and struct.unpack_from("<I", r.body, 4)[0] == 1)
+
     # --- ranking ---
     r = await amy.request(15, 15106, bytes(14))
     total, count = struct.unpack_from("<II", r.body)

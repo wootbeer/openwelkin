@@ -259,6 +259,7 @@ def join_front(addr, cid):
 
 
 wins = ls.STORE.stats(a_cid).get("wins", 0)
+front1 = ls.STORE.stats(a_cid).get("front1", 0)
 ls.ROUND_KILLS = 2
 pa, pb = join_front(A, a_cid), join_front(B, b_cid)
 m = pa.match
@@ -272,6 +273,8 @@ ok &= check("target robots do not count", pa.player_kills == 1 and not m.over)
 kill(pa, pb)
 step()
 ok &= check("the kill limit ends the round", m.over and len(got(A, 30150)) == 1 and len(got(B, 30150)) == 1)
+ok &= check("kills on a battlefront count as contribution",
+            ls.STORE.stats(a_cid).get("front1", 0) == 2 * ls.KILL_HONOR + front1)
 ok &= check("the winner gets a win", ls.STORE.stats(a_cid).get("wins") == wins + 1
             and not ls.STORE.stats(b_cid).get("wins"))
 ok &= check("everyone is told who won", any(b"Alpha" in x for x in got(B, 30250)))

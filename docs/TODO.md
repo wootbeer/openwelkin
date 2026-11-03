@@ -13,11 +13,11 @@ reply layout, and answer with real data.
 - [x] (14,14010) CG_Character_Get_Exploit
 - [ ] (14,14034) UpdateRankUpgrade
 - [x] (14,14040) CGS_GetAllMilitaryRank
-- [ ] (14,14050) CGS_GetCharacterAllBattleFrontContribution
+- [ ] (14,14050) CGS_GetCharacterAllBattleFrontContribution and (14,14051): contribution = honor from kills on that
+      front (2026-11-02, read from Game.dll, not tried in game; the Grand Battle Field list shows it)
 - [ ] (14,14054) CGS_CGSManager_CommandGradeTable
 - [x] (14,14057) CGS_GetCharacterTodayMilitary
 - [ ] (14,14059) GetCharacterHelpLog
-- [ ] (14,14051) CGS_GetCharacterbattleFrontContributionByID
 
 ## Medals / badges
 - [x] (14,14007) CGS_UpdateMyMedal
