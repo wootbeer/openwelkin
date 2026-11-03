@@ -149,6 +149,8 @@ feed = [x for x in got(B, 50151)]
 ok &= check("kill feed reached B", any(b"Alpha" in x and b"Bravo" in x for x in feed))
 ok &= check("shots shown to B, not A", len(got(B, 50122)) > 0 and not any(struct.unpack_from("<I", x)[0] == a_rid for x in got(A, 50122)))
 ok &= check("stats saved per character", ls.STORE.stats(a_cid).get("kills") == 1 and ls.STORE.stats(b_cid).get("deaths") == 1)
+ok &= check("and kills per weapon, today too", ls.STORE.stats(a_cid).get(f"weapon{ls.DEFAULT_WEAPON}") == 1
+            and ls.STORE.stats(a_cid).get(f"weapon{ls.DEFAULT_WEAPON}_day") == 1)
 
 # cheating shots
 def pull(origin=(0.0, 2.5, 0.0), aim=(10.0, 2.5, 0.0)):

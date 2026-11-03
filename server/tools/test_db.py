@@ -92,6 +92,13 @@ def characters():
     check("a new day starts again", st["kills_day"] == 1 and st["kills_week"] == 53 and st["at_day"] == ls.period_now("day"),
           str(st))
     check("and a new period is saved as such", ls.STORE.top("kills", "day")[0][:4:3] == (cid, 1))
+    ls.STORE.add_stats(cid, weapon3101=2)
+    check("kills with a weapon list only who made them", [r[:4:3] for r in ls.STORE.top("weapon3101")] == [(cid, 2)]
+          and [r[:4:3] for r in ls.STORE.top("weapon3101", "week")] == [(cid, 2)])
+    ls.STORE.by_id(cid)["stats"]["at_week"] -= 1
+    ls.STORE.add_stats(cid, honor=1)
+    check("a new week starts weapon kills again too", ls.STORE.stats(cid)["weapon3101_week"] == 0
+          and ls.STORE.top("weapon3101", "week") == [] and ls.STORE.stats(cid)["weapon3101"] == 2)
     ls.TOP_EVERY = 60
     ls.STORE.set_contact(cid, "friends", cid + 1, True)
     ls.STORE.set_contact(cid, "blocked", cid + 1, True)

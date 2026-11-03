@@ -252,6 +252,7 @@ SHOP = [
     (3213, 900, 90, 7), (3215, 600, 60, 7), (3217, 500, 50, 7),
     (3301, -1, 500, 0), (3302, -1, 500, 0),
 ]
+RANKED_WEAPONS = [pid for pid, *_ in SHOP if pid in WEAPONS and PRODUCTS.get(pid, {}).get("type") == 8]  # Ranking, Weapon
 RANK_THRESHOLDS = [int(50 * n ** 1.8) for n in range(71)]
 
 
@@ -263,6 +264,11 @@ TOP_ROWS, TOP_EVERY = 20, 60.0  # rows on a Ranking tab, seconds a sorted list i
 # counted per period in stats "<stat>_<period>", next to "at_<period>", the period it counts (server local time).
 PERIOD_STATS = ("honor", "kills", "crystal")
 PERIODS = {2: "month", 3: "week", 4: "day"}
+
+
+def by_period(stat):
+    """True for a stat that is also counted per period: PERIOD_STATS and kills with one weapon, "weapon<id>"."""
+    return stat in PERIOD_STATS or stat.startswith("weapon")
 
 
 def period_now(name, now=None):
@@ -476,14 +482,15 @@ class Store:
             st = c.setdefault("stats", {})
             for k, v in deltas.items():
                 st[k] = st.get(k, START_MONEY if k == "money" else START_POINTS if k == "points" else 0) + v
-            counted = [k for k in PERIOD_STATS if deltas.get(k)]
+            counted = [k for k, v in deltas.items() if v and by_period(k)]
             for p in PERIODS.values() if counted else ():
                 now = period_now(p)
                 if st.get(f"at_{p}") != now:  # a new day, week or month: start again
                     st[f"at_{p}"] = now
-                    for k in PERIOD_STATS:  # zeroed, not removed: saving only writes the stats that are there
-                        if f"{k}_{p}" in st:
-                            st[f"{k}_{p}"] = 0
+                    for k in list(st):  # zeroed, not removed: saving only writes the stats that are there
+                        base, _, end = k.rpartition("_")
+                        if end == p and by_period(base):
+                            st[k] = 0
                 for k in counted:
                     st[f"{k}_{p}"] = st.get(f"{k}_{p}", 0) + deltas[k]
             self.mark_dirty(cid)
@@ -535,22 +542,25 @@ class Store:
     def top(self, stat, period=None):
         """[(character id, name, honor, value)], best first. Sorting reads every character, so a list is kept a while.
         With a period ("day", "week", "month") only what was earned in the current one counts, and a character with
-        nothing then is left out."""
+        nothing then is left out; so is one with no kills with a weapon ("weapon<id>")."""
         now = time.time()
         made, rows = self.tops.get((stat, period), (0.0, []))
         if now - made < TOP_EVERY:
             return rows
         default = START_MONEY if stat == "money" else 0
         current = period and period_now(period)
+        everyone = not period and not stat.startswith("weapon")
         with self.lock:
             rows = []
             for chars in self.data["accounts"].values():
                 for c in chars:
                     st = c.get("stats", {})
-                    if not period:
-                        rows.append((c["id"], c["name"], st.get("honor", 0), int(st.get(stat, default))))
-                    elif st.get(f"at_{period}") == current and st.get(f"{stat}_{period}", 0) > 0:
-                        rows.append((c["id"], c["name"], st.get("honor", 0), int(st[f"{stat}_{period}"])))
+                    if period:
+                        value = st.get(f"{stat}_{period}", 0) if st.get(f"at_{period}") == current else 0
+                    else:
+                        value = int(st.get(stat, default))
+                    if everyone or value > 0:
+                        rows.append((c["id"], c["name"], st.get("honor", 0), int(value)))
         rows.sort(key=lambda r: (-r[3], r[0]))
         self.tops[(stat, period)] = (now, rows)
         return rows
@@ -1188,7 +1198,30 @@ class Session:
     def on_rank_list(self, msg):
         first, count = struct.unpack_from("<II", msg.body, len(msg.body) - 8) if len(msg.body) >= 9 else (0, TOP_ROWS)
         period = msg.body[-9] if len(msg.body) >= 9 else 1
-        rows = STORE.top(*self.rank_source(msg.type, period))
+        self.send_rank_rows(msg, STORE.top(*self.rank_source(msg.type, period)), first, count)
+
+    # Weapon tab (read from Game.dll, not tried in game). Its buttons come from CS_RankedWeaponFlyweight (15,15108),
+    # observer 0x1035e0e0: u32 n | n x (u32 kind (1 Weapon tab, else Vehicle tab) | u32 weapon id | str name). A list
+    # (15,15102), observer 0x1035d810, has the Honor layout; the client reads its request back as u8 period | u32 |
+    # u32 | u32, taken here as the weapon then first row and rows. My place (15,15103): u32 character id | u8 period
+    # | u32 weapon | u32, reply u32 place | u32 score. The score is kills made with that weapon.
+    def on_ranked_weapons(self, msg):
+        body = struct.pack("<I", len(RANKED_WEAPONS))
+        for wid in RANKED_WEAPONS:
+            body += struct.pack("<II", 1, wid) + wstr(PRODUCTS[wid]["name"])
+        self.reply(msg, body)
+
+    def on_weapon_rank_list(self, msg):
+        period, wid, first, count = struct.unpack_from("<BIII", msg.body) if len(msg.body) >= 13 else (1, 0, 0, 0)
+        rows = STORE.top(f"weapon{wid}", PERIODS.get(period)) if wid in RANKED_WEAPONS else []
+        self.send_rank_rows(msg, rows, first, count)
+
+    def on_my_weapon_rank(self, msg):
+        cid, period, wid = struct.unpack_from("<IBI", msg.body) if len(msg.body) >= 9 else (0, 1, 0)
+        rows = STORE.top(f"weapon{wid}", PERIODS.get(period)) if wid in RANKED_WEAPONS else []
+        self.send_my_rank(msg, cid, rows)
+
+    def send_rank_rows(self, msg, rows, first, count):
         page = rows[first:first + min(count, TOP_ROWS)]
         body = struct.pack("<II", len(rows), len(page))
         for cid, name, honor, value in page:
@@ -1196,11 +1229,13 @@ class Session:
                      + struct.pack("<BI", rank_for(honor), value))
         self.reply(msg, body)
 
-    def on_my_rank(self, msg):
-        cid = struct.unpack_from("<I", msg.body)[0] if len(msg.body) >= 4 else 0
-        rows = STORE.top(*self.rank_source(msg.type - 1, msg.body[-1] if len(msg.body) >= 5 else 1))
+    def send_my_rank(self, msg, cid, rows):
         place, value = next(((n, r[3]) for n, r in enumerate(rows) if r[0] == cid), (len(rows), 0))
         self.reply(msg, struct.pack("<II", place, value) if self.own_character(cid) else struct.pack("<II", len(rows), 0))
+
+    def on_my_rank(self, msg):
+        cid = struct.unpack_from("<I", msg.body)[0] if len(msg.body) >= 4 else 0
+        self.send_my_rank(msg, cid, STORE.top(*self.rank_source(msg.type - 1, msg.body[-1] if len(msg.body) >= 5 else 1)))
 
     # Contribution on a battlefront: the honor earned there. One front (14,14051): request u32 character id | u32 front,
     # reply u32, polled while the hall is open (Grand Battle Field list, Total Contribution). All fronts (14,14050):
@@ -1835,6 +1870,9 @@ HANDLERS = {
     (15, 15101): Session.on_my_rank,             # CS_OneCharacterKillRank
     (15, 15106): Session.on_rank_list,           # CS_CharacterMoneyRank (Crystal tab)
     (15, 15107): Session.on_my_rank,             # CS_OneCharacterMoneyRank
+    (15, 15108): Session.on_ranked_weapons,      # CS_RankedWeaponFlyweight (Weapon tab buttons)
+    (15, 15102): Session.on_weapon_rank_list,    # CS_CharacterWeaponRank
+    (15, 15103): Session.on_my_weapon_rank,      # CS_OneCharacterWeaponRank
     (14, 14047): Session.on_learn_talent,        # CGS_CharacterLearnTalent
     (24, 24009): Session.on_goods_flyweight,     # GS_RequestGoodsFlyweight
     (24, 24002): Session.on_item_flyweight,      # GS_UpdateItemFlyweight
@@ -2707,6 +2745,7 @@ def award_kill(server, peer, victim_text="a target robot"):
     send_game_event(server, peer, 19, 30201, struct.pack("<III", peer.cid, KILL_PAY, 0))
     front = FRONT_OF.get(getattr(peer, "bfid", None))
     extra = {f"front{front}": KILL_HONOR} if front else {}  # contribution: honor earned on that battlefront
+    extra[f"weapon{loadout_weapon(peer.cid)}"] = 1  # the Ranking window's Weapon tab
     record_stats(peer, kills=1, honor=KILL_HONOR, crystal=KILL_PAY, money=KILL_PAY, **extra)
     STORE.add_log(peer.cid, f"Destroyed {victim_text} (+{KILL_HONOR} honor, +{KILL_PAY} crystal)")
 

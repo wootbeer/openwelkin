@@ -79,7 +79,12 @@ reply layout, and answer with real data.
       str (not read) | u8 rank level | u32 score. The client numbers rows itself. My place is counted from 0 and only
       shows under the list past place 18 (2026-11-03, 28 characters: "My Ranking 26 tester 310" under the 20 rows).
       There is no paging: the window shows 20 rows and scrolling sends nothing
-- [ ] Camps are not kept, so every name is green. Weapon tabs (15102, 15103, 15108) are not done
+- [ ] Camps are not kept, so every name is green
+- [ ] Weapon tab (2026-11-03, read from Game.dll, tested offline only): (15,15108) gives the buttons, u32 n | n x (u32
+      kind 1 Weapon / else Vehicle | u32 weapon id | str name); the emulator lists the shop's weapons. (15,15102) list
+      has the Honor layout, request read back as u8 period | u32 | u32 | u32 (taken as weapon, first row, rows);
+      (15,15103) my place, u32 character id | u8 period | u32 weapon | u32. Kills are counted per weapon
+      ("weapon<id>", with periods). Try in game: that the request's first u32 is the weapon. No vehicles yet
 - [x] Request read in game 2026-11-03: u8 period (1 Total, 2 Monthly, 3 Weekly, 4 Daily) | u32 first row | u32 rows
       (20); Shooting (15100) has one more u8 in front. My place: u32 character id | u8 period. The u32 after the camp
       byte is a team id: anything but 0 makes the client ask UpdateTeamInfo (15,15023) once per row, so 0 is sent

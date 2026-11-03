@@ -208,6 +208,17 @@ async def scenario():
     check("and my place today has no score", struct.unpack("<II", r.body) == (0, 0))
     r = await amy.request(15, 15100, struct.pack("<BBII", 1, 3, 0, 20))  # Shooting, Weekly
     check("nobody has kills this week", struct.unpack("<II", r.body) == (0, 0))
+    r = await amy.request(15, 15108, bytes(4))
+    n, = struct.unpack_from("<I", r.body)
+    kind, wid = struct.unpack_from("<II", r.body, 4)
+    check("the Weapon tab gets the shop's weapons", n == len(ls.RANKED_WEAPONS) >= 1 and (kind, wid) == (1, 3101)
+          and ls.read_wstr(r.body, 12)[0] == "Viper")
+    r = await amy.request(15, 15102, struct.pack("<BIII", 1, 3101, 0, 20))
+    check("nobody has Viper kills yet", struct.unpack("<II", r.body) == (0, 0))
+    r = await amy.request(15, 15102, struct.pack("<BIII", 1, 7, 0, 20))
+    check("an unknown weapon has no list", struct.unpack("<II", r.body) == (0, 0))
+    r = await amy.request(15, 15103, struct.pack("<IBII", amy_id, 4, 3101, 0))
+    check("nor a place", struct.unpack("<II", r.body) == (0, 0))
 
     # --- talents ---
     r = await amy.request(14, 14043, struct.pack("<I", amy_id))
