@@ -14,7 +14,7 @@ reply layout, and answer with real data.
 - [ ] (14,14034) UpdateRankUpgrade
 - [x] (14,14040) CGS_GetAllMilitaryRank
 - [x] (14,14050) CGS_GetCharacterAllBattleFrontContribution and (14,14051): contribution = honor from kills on that
-      front. Real client 2026-11-02: the Total Contribution column and Battle Joined show it (0 so far; a kill was not tried)
+      front. Real client 2026-11-02: the Total Contribution column and Battle Joined show it; after one kill on Northern Front both show 10
 - [ ] (14,14054) CGS_CGSManager_CommandGradeTable
 - [x] (14,14057) CGS_GetCharacterTodayMilitary
 - [ ] (14,14059) GetCharacterHelpLog
@@ -77,8 +77,11 @@ reply layout, and answer with real data.
 - [x] Ranking window, real client 2026-11-02: Honor and Crystal tabs show names, rank and score; your own row is
       highlighted. Row = u32 character id | str name | u8 camp (0x10 green, 0x20 red, anything else nearly black) | u32 |
       str (not read) | u8 rank level | u32 score. The client numbers rows itself. My place is counted from 0 and only
-      shows under the list past place 18 (not seen yet: needs more than 18 characters)
-- [ ] Camps are not kept, so every name is green. Paging not tried. Weapon tabs (15102, 15103, 15108) are not done
+      shows under the list past place 18 (2026-11-03, 28 characters: "My Ranking 26 tester 310" under the 20 rows).
+      There is no paging: the window shows 20 rows and scrolling sends nothing
+- [ ] Camps are not kept, so every name is green. Weapon tabs (15102, 15103, 15108) are not done
+- [ ] Daily / Weekly / Monthly / Total resend the request with a different 9-byte body; the emulator ignores it and
+      always sends all-time numbers. Which byte is the period is not read yet
 
 ## Other open items
 - [x] Anti-addiction banner in the hall
@@ -152,9 +155,10 @@ reply layout, and answer with real data.
       the admin port so people can build their own. Login and an IP ban tried in a real browser
 - [x] Checked in game 2026-10-30: kick drops the client to the login screen with no message; timed ban, permanent
       ban and IP ban each show their text at login; login works again after unban
-- [x] Tell a kicked player why: kick and ban send a whisper from Server, then close after 1.5 s. Real client 2026-11-02,
-      kicked in a battle: "[Whisper] Server: You were kicked: <reason>" shows, then the login screen. Ban and IP ban use
-      the same path but were not tried in game. GMKickRes (13,13041) is only the reply to a GM ("Kick %s Success!")
+- [x] Tell a kicked player why: kick, ban and IP ban send a Broadcast line (21,21514) from Server, then close after 1.5 s.
+      A whisper showed in battle but not in the hall, which holds whispers back for a minute. Real client 2026-11-03:
+      ban in the hall and IP ban in a battle both show "[Broadcast] Server: You were banned until ...: <reason>", then
+      the login screen. GMKickRes (13,13041) is only the reply to a GM ("Kick %s Success!")
 - [x] A kick now closes the socket as well: on Windows shutdown does not wake a blocked recv, so a client that ignored it
       stayed on the gate. A kicked player can still act for the 1.5 s of the notice, but can not chat
 - [ ] DisconnectByServer (19,30150, f32 seconds) ends the battle for that player: Record window with a countdown,

@@ -156,7 +156,7 @@ python server/tools/admin.py who
 |---------|------|
 | `who` | Who is online, and in which battle |
 | `matches` | Running matches and their players |
-| `kick <account> [reason]` | Disconnect an account (hall and battle). They see a whisper with the reason first |
+| `kick <account> [reason]` | Disconnect an account (hall and battle). They see the reason in chat first |
 | `ban <account> [time] [reason]` | Ban and kick. Time like `30m`, `12h`, `7d`, `2w`; without it the ban is permanent |
 | `unban <account>` | |
 | `ipban <address or network> [time] [reason]` | e.g. `1.2.3.4` or `1.2.3.0/24`. Kicks everyone on it |

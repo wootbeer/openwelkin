@@ -255,11 +255,11 @@ async def scenario():
     async def from_server(gate):
         while True:
             line = await heard(gate)
-            if line is None or line[0] == 21200:
+            if line is None or line[0] == 21514 and line[2] == "Server" and line[3].startswith("You"):
                 return line
 
     ts.admin("kick cara rude\x1b talk")
-    check("a kicked player sees why", await from_server(cara) == (21200, 0, "Server", "You were kicked: rude talk"))
+    check("a kicked player sees why", await from_server(cara) == (21514, 0, "Server", "You were kicked: rude talk"))
     await asyncio.sleep(ls.KICK_NOTICE + 0.5)
     check("then the connection closes", not await ts.answers(cara))
     ts.admin("ban dan 1h spam")

@@ -1726,14 +1726,15 @@ def leave_game(account, reason):
 
 def kick(account, reason, notice=""):
     """Disconnect an account from the hall and any battle. True if it was online. notice is shown to the player first,
-    as a whisper from Server; closing the session then takes them out of the battle too."""
+    as a Broadcast line from Server (the hall holds whispers back for a minute, so one would never show); closing the
+    session then takes them out of the battle too."""
     if ROLE == "login":
         return any([ask(g, "kick", False, account=account, reason=reason, notice=notice) for g in list(LINKS)])
     with ONLINE_LOCK:
         session = ONLINE.get(account)
     if session and notice and session.character:
         session.next_chat = float("inf")
-        session.chat_line(21200, "Server", clean_line(notice))
+        session.chat_line(21514, "Server", clean_line(notice))
         threading.Timer(KICK_NOTICE, session.close).start()
         return True
     if session:
