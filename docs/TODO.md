@@ -140,8 +140,11 @@ reply layout, and answer with real data.
       the admin port so people can build their own. Login and an IP ban tried in a real browser
 - [x] Checked in game 2026-10-30: kick drops the client to the login screen with no message; timed ban, permanent
       ban and IP ban each show their text at login; login works again after unban
-- [ ] Tell a kicked player why: nothing found yet. GMKickRes (13,13041) is only the reply to a GM ("Kick %s
-      Success!"). Idea: send a [Notice] line, wait a second, then close
+- [ ] Tell a kicked player why (2026-11-02, fake clients only; tools/test_chat.py): kick and ban send a whisper from Server,
+      then close after 1.5 s. Try in game, also from a battle, where the whisper tab has not been seen working.
+      GMKickRes (13,13041) is only the reply to a GM ("Kick %s Success!")
+- [x] A kick now closes the socket as well: on Windows shutdown does not wake a blocked recv, so a client that ignored it
+      stayed on the gate. A kicked player can still act for the 1.5 s of the notice, but can not chat
 - [ ] DisconnectByServer (19,30150, f32 seconds) ends the battle for that player: Record window with a countdown,
       then back to the lobby, no crash (in game 2026-10-30). No reason text. Use it for match end, or to remove a
       player from a battle but keep them in the hall

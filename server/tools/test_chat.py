@@ -199,6 +199,23 @@ async def scenario():
     check("an admin can back up", "accounts.db ->" in (await heard(amy))[3])
     check("commands are in the admin log", wait_for(lambda: ts.seen("gm amy: backup"), 3))
 
+    # --- kicked players are told why ---
+    async def from_server(gate):
+        while True:
+            line = await heard(gate)
+            if line is None or line[0] == 21200:
+                return line
+
+    ts.admin("kick cara rude\x1b talk")
+    check("a kicked player sees why", await from_server(cara) == (21200, 0, "Server", "You were kicked: rude talk"))
+    await asyncio.sleep(ls.KICK_NOTICE + 0.5)
+    check("then the connection closes", not await ts.answers(cara))
+    ts.admin("ban dan 1h spam")
+    line = await from_server(dan)
+    check("a banned player sees why", line and line[3].startswith("You were banned until ") and line[3].endswith(": spam"), str(line))
+    await asyncio.sleep(ls.KICK_NOTICE + 0.5)
+    check("and leaves too", not await ts.answers(dan))
+
 
 def main():
     env = dict(os.environ, MW_STATE_DIR=os.path.join(ts.root, "login"), MW_MATCH_PLAYERS="2")

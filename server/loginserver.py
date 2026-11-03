@@ -566,6 +566,11 @@ import atexit  # noqa: E402
 atexit.register(STORE.flush)
 
 
+def clean_line(text):
+    """Text that is safe to show or log on one line: no control characters, not too long."""
+    return " ".join("".join(c for c in text if c.isprintable()).split())[:CHAT_MAX]
+
+
 class Accounts:
     """Account names and salted password hashes, kept apart from game data (accounts.db, login server only)."""
     path = os.path.join(STATE_DIR, "accounts.db")
@@ -654,6 +659,7 @@ ACCOUNTS = Accounts()
 BANS = Bans()
 ONLINE = {}  # account -> its gate Session; one per account, a second login closes the first
 MAX_CONTACTS = 100  # entries on a friend or block list
+KICK_NOTICE = 1.5  # seconds a kicked player has to see why, before the connection closes
 CHAT_MAX, CHAT_EVERY, CHAT_QUEUE = 200, 0.5, 100  # characters in a line, seconds between a player's lines, lines waiting
 GM_COMMANDS = {"who", "matches", "kick", "ban", "unban", "bans"}
 ROLE_COMMANDS = {"player": set(), "gm": GM_COMMANDS, "admin": GM_COMMANDS | {"ipban", "unipban", "role", "backup"}}
@@ -783,11 +789,13 @@ class Session:
         self.gone = False
 
     def close(self):
-        """Drop the connection (kick): the session's own thread sees it close and cleans up."""
+        """Drop the connection (kick): the session's own thread sees it close and cleans up. A client that ignores the
+        shutdown must not stay on: on Windows only closing the socket wakes a thread blocked in recv."""
         try:
             self.conn.shutdown(socket.SHUT_RDWR)
         except OSError:
             pass
+        self.conn.close()
 
     # --- transport ---------------------------------------------------------------------------
     def aes(self, decrypt, data):
@@ -1244,7 +1252,7 @@ class Session:
             text, off = read_wstr(msg.body, off)
         except ValueError:
             return None
-        text = " ".join("".join(c for c in text if c.isprintable()).split())[:CHAT_MAX]
+        text = clean_line(text)
         return (text, off) if text else None
 
     def chat_line(self, type_, name, text, cid=0):
@@ -1624,12 +1632,18 @@ def leave_game(account, reason):
     leave_game_local(account, reason)
 
 
-def kick(account, reason):
-    """Disconnect an account from the hall and any battle. True if it was online."""
+def kick(account, reason, notice=""):
+    """Disconnect an account from the hall and any battle. True if it was online. notice is shown to the player first,
+    as a whisper from Server; closing the session then takes them out of the battle too."""
     if ROLE == "login":
-        return any([ask(g, "kick", False, account=account, reason=reason) for g in list(LINKS)])
+        return any([ask(g, "kick", False, account=account, reason=reason, notice=notice) for g in list(LINKS)])
     with ONLINE_LOCK:
         session = ONLINE.get(account)
+    if session and notice and session.character:
+        session.next_chat = float("inf")
+        session.chat_line(21200, "Server", clean_line(notice))
+        threading.Timer(KICK_NOTICE, session.close).start()
+        return True
     if session:
         session.close()
     leave_game(account, reason)
@@ -1927,7 +1941,7 @@ def on_login_message(link, msg):
         IP_BANS = msg["nets"]
         return push_bans()
     if kind == "kick":
-        return kick(msg["account"], msg["reason"])
+        return kick(msg["account"], msg["reason"], msg["notice"])
     if kind == "ipkick":
         return ip_kick(msg["net"])
     if kind == "who":
@@ -2860,9 +2874,11 @@ def cmd_matches(args, actor):
 
 
 def cmd_kick(args, actor):
-    if len(args) != 1:
-        return "usage: kick <account>"
-    return f"kicked {args[0]}" if kick(args[0], f"kicked by {actor}") else f"{args[0]} is not online"
+    if not args:
+        return "usage: kick <account> [reason]"
+    reason = " ".join(args[1:])
+    notice = "You were kicked" + (f": {reason}" if reason else "")
+    return f"kicked {args[0]}" if kick(args[0], f"kicked by {actor}", notice) else f"{args[0]} is not online"
 
 
 def cmd_ban(args, actor):
@@ -2872,7 +2888,7 @@ def cmd_ban(args, actor):
         return f"no account {args[0]!r}"
     until, reason = ban_args(args[1:])
     BANS.add("accounts", args[0], until, reason, actor)
-    kick(args[0], "banned")
+    kick(args[0], "banned", f"You were banned {fmt_until(until)}" + (f": {reason}" if reason else ""))
     return f"banned {args[0]} {fmt_until(until)}" + (f": {reason}" if reason else "")
 
 
