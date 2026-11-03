@@ -2405,8 +2405,11 @@ RECORD_SECONDS = 20.0 # the Record window's countdown; after it the client goes 
 RECORD_GRACE = 10.0   # a client still here this long after that countdown is closed
 MAX_SLOTS = 4000      # joins per match before it takes nobody new (robot ids are slot * 1,000,000 + 1, a u32)
 TICK_HZ = 30          # game loop rate: timers, AI, and each player's queued events go out once per tick
-FAR_DISTANCE = 250.0  # robots farther than this from a viewer...
-FAR_EVERY = 5         # ...have their moves sent to it only every FAR_EVERY ticks
+NEAR_DISTANCE = 100.0  # a viewer gets every move of robots this close,
+MID_EVERY = 6          # one every MID_EVERY ticks (5 a second) of robots up to FAR_DISTANCE away,
+FAR_DISTANCE = 250.0
+FAR_EVERY = 15         # and one every FAR_EVERY ticks (2 a second) of robots farther away
+STILL_EVERY = 30       # a robot that has not changed is sent again only after this many ticks (moves can be lost)
 REMOVE_LEFT_PLAYERS = True  # delete a leaving player's robot and character on the other clients (not yet tried in
                             # game: if a client crashes when someone leaves, set False to only show the robot destroyed)
 STATS_EVERY = float(os.environ.get("MW_STATS_EVERY", "60") or 0)  # seconds between [stats] log lines, 0 = off
@@ -2495,13 +2498,22 @@ class Match:
         if now >= self.next_ai and not self.over:
             self.next_ai = now + AI_TICK
             ai_step(self, now)
-        far2 = FAR_DISTANCE ** 2
+        near2, far2 = NEAR_DISTANCE ** 2, FAR_DISTANCE ** 2
         for v in self.peers:
             for rid, (body, pos) in list(v.moves.items()):
-                # far robots: only every FAR_EVERY ticks (spread over the viewers by slot)
-                if (self.tick_no + v.slot) % FAR_EVERY and (pos[0] - v.pos[0]) ** 2 + (pos[2] - v.pos[2]) ** 2 > far2:
-                    continue
+                last = v.sent.get(rid)  # (body, tick) this viewer last got for the robot
+                if last:
+                    if last[0] == body:
+                        every = STILL_EVERY
+                    else:
+                        d2 = (pos[0] - v.pos[0]) ** 2 + (pos[2] - v.pos[2]) ** 2
+                        every = 1 if d2 <= near2 else MID_EVERY if d2 <= far2 else FAR_EVERY
+                    if self.tick_no - last[1] < every:
+                        if every == STILL_EVERY:
+                            del v.moves[rid]
+                        continue
                 del v.moves[rid]
+                v.sent[rid] = (body, self.tick_no)
                 send_game_event(self.server, v, 19, 50100, body, reliable=False)
 
 
@@ -2646,6 +2658,7 @@ def join_match(server, peer):
     peer.player_kills = 0  # target robots do not count towards a round
     peer.stats_clock = time.time()
     peer.moves = {}  # robot id -> newest move not yet sent to this player
+    peer.sent = {}   # robot id -> the last move sent to this player, and its tick
     peer.protected_until = time.time() + SPAWN_PROTECTION
     weapon = loadout_weapon(peer.cid)
     peer.fire_interval = weapon_stats(weapon)[1][0]
@@ -2683,6 +2696,7 @@ def leave_match(peer):
     rid = peer.player_rid
     for p in m.peers:
         p.moves.pop(rid, None)
+        p.sent.pop(rid, None)
     # show the robot destroyed; then GS_Object_Detach_Object (19,50002): u32 object id -> drops a reference and
     # deletes the object at zero (observer Game.dll 0x1022ce40), and GS_Character_Delete_Character (19,30002):
     # u32 char id -> CharacterManager removes it (0x10353850), so the character can join again later

@@ -241,7 +241,7 @@ reply layout, and answer with real data.
 - [x] One game loop thread for all matches at 30 ticks/s instead of a thread per match and a timer thread per shot
 - [x] Events queued per player and sent once per tick, several to a packet (join: 43 messages in 16 packets)
 - [x] Moves merged: each player gets only the newest position of each robot per tick
-- [x] Robots more than 250 units away get position updates every 5th tick
+- [x] Robots more than 250 units away get position updates every 5th tick (since 2026-11-03: see Bandwidth below)
 - [x] Lost reliable packets are resent (the client repeats its ack 3 times, or 4 s pass; it acks slowly)
 - [x] Full matches: a battlefield opens another match after MW_MATCH_PLAYERS (32) players
 - [x] Packet hex dumps were built for every packet even with MW_DEBUG off: now skipped (about a third of tick time)
@@ -257,5 +257,8 @@ reply layout, and answer with real data.
       One Python process should hold about 600 players before ticks run late. Past that: run matches in more
       processes (the split-server plan), or move the game server to a faster language.
 - [x] Real client on the batched server (2026-10-30): login, join, walk, fire, die, respawn all fine, one resend seen
-- [ ] Bandwidth per player is about 22 KB/s at 32 per match; most of it is moves. Send fewer for robots behind or
-      far away, or pack moves smaller, if hosting costs matter
+- [x] Bandwidth (2026-11-03, tested offline only): a viewer gets every move of robots within 100 units, 5 a second
+      up to 250, 2 a second beyond, and a robot that has not changed only once a second (moves are unreliable, so
+      it is still sent now and then). Load test, 64 players, 32 per match, spread 300: 15.9 -> 10.8 KB/s per player,
+      same move delay. Packed together (spread 60) it stays about 22 KB/s: everyone is near and moving
+- [ ] Watch mid and far robots in the real client: do they still move smoothly at 5 and 2 updates a second?

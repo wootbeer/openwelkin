@@ -122,14 +122,26 @@ for x in (4.0, 5.0, 6.0):
 step()
 moves = [x for x in got(B, 50100)[before:] if struct.unpack_from("<I", x)[0] == a_rid]
 ok &= check("three moves in one tick: B gets only the newest", [struct.unpack_from("<f", x, 8)[0] for x in moves] == [6.0])
-# far robots get fewer updates
-pb.pos = (1000.0, 0.0, 1000.0)
-before = len(got(B, 50100))
-for i in range(ls.FAR_EVERY):
-    msg(A, 40130, struct.pack("<I3f", 0, 10.0 + i, 2.0, 3.0))
-far = [x for x in got(B, 50100)[before:] if struct.unpack_from("<I", x)[0] == a_rid]
-ok &= check(f"far robot: {len(far)} of {ls.FAR_EVERY} moves sent", len(far) == 1)
+# robots farther away get fewer updates, and ones standing still almost none
+
+
+def moves_of_a(n, x=None):
+    """A reports n positions, one per tick (moving unless x is given); A's moves B got meanwhile."""
+    before = len(got(B, 50100))
+    for i in range(n):
+        msg(A, 40130, struct.pack("<I3f", 0, 10.0 + i if x is None else x, 2.0, 3.0))
+    return [x for x in got(B, 50100)[before:] if struct.unpack_from("<I", x)[0] == a_rid]
+
+
+for where, every in (((1000.0, 0.0, 1000.0), ls.FAR_EVERY), ((150.0, 0.0, 0.0), ls.MID_EVERY)):
+    pb.pos = where
+    thinned = moves_of_a(every * 3)  # 3 at most; 2 when the window starts just after a send
+    ok &= check(f"robot {where[0]:.0f} away: {len(thinned)} of {every * 3} moves sent", len(thinned) in (2, 3))
 pb.pos = (10.0, 0.0, 0.0)
+ok &= check("a near robot: every move", len(moves_of_a(10)) == 10)
+moves_of_a(1, x=50.0)
+still = moves_of_a(ls.STILL_EVERY * 2, x=50.0)
+ok &= check(f"a robot standing still: {len(still)} of {ls.STILL_EVERY * 2} moves sent", len(still) == 2)
 
 # PvP: A shoots straight at B until B dies
 pb.protected_until = pa.protected_until = 0
