@@ -30,7 +30,7 @@ First packet seen (SYN, resent every 3s, released after 3 tries):
 Server side builder to copy: Dgram_Accept_Bluider_Process::make_respond_packet (IONetwork.dll 0x100407c0).
 SAP NAT detection (ADServer, UDP 5876) sends: fb 00 00 dc ff 12 00 00 00 00 00 00 83 04 "1000".
 """
-import collections, hashlib, heapq, hmac, ipaddress, itertools, math, os, random, re, secrets, socket, struct, sys
+import collections, datetime, hashlib, heapq, hmac, ipaddress, itertools, math, os, random, re, secrets, socket, struct, sys
 import threading, time, traceback
 
 import cluster
@@ -259,6 +259,17 @@ RANK_THRESHOLDS = [int(50 * n ** 1.8) for n in range(71)]
 TALENTS = {1: (1311, 0, 0, 0, 3), 2: (1314, 0, 1, 5, 3), 3: (1301, 0, 2, 10, 3), 4: (1312, 1, 0, 0, 3),
            5: (1313, 2, 0, 0, 3), 6: (1315, 2, 1, 5, 3)}
 TOP_ROWS, TOP_EVERY = 20, 60.0  # rows on a Ranking tab, seconds a sorted list is kept: every character is read to make one
+# Ranking periods, as the client numbers them: 1 Total, 2 Monthly, 3 Weekly, 4 Daily. Each of PERIOD_STATS is also
+# counted per period in stats "<stat>_<period>", next to "at_<period>", the period it counts (server local time).
+PERIOD_STATS = ("honor", "kills", "crystal")
+PERIODS = {2: "month", 3: "week", 4: "day"}
+
+
+def period_now(name, now=None):
+    """The current month, week (from Monday) or day as one number."""
+    t = time.localtime(now)
+    day = datetime.date(t.tm_year, t.tm_mon, t.tm_mday).toordinal()  # day 1, 0001-01-01, was a Monday
+    return {"day": day, "week": (day - 1) // 7, "month": t.tm_year * 12 + t.tm_mon - 1}[name]
 TALENT_COST = 1  # talent points per level
 TALENT_RESET_CRYSTAL, TALENT_RESET_WAIT = 1000, 86400  # price of forgetting talents, seconds before doing it again
 LOG_KEEP = 100   # event log lines kept per character
@@ -389,7 +400,7 @@ class Store:
             self.con = db.open_characters(self.path)
             self.data = db.load_characters(self.con)
         self.names = {c["name"].lower(): c["id"] for chars in self.data["accounts"].values() for c in chars}
-        self.tops = {}  # stat -> (time made, sorted rows)
+        self.tops = {}  # (stat, period) -> (time made, sorted rows)
 
     dirty = False
     SAVE_INTERVAL = 5.0  # seconds; battle stats and log lines are written in batches
@@ -465,6 +476,16 @@ class Store:
             st = c.setdefault("stats", {})
             for k, v in deltas.items():
                 st[k] = st.get(k, START_MONEY if k == "money" else START_POINTS if k == "points" else 0) + v
+            counted = [k for k in PERIOD_STATS if deltas.get(k)]
+            for p in PERIODS.values() if counted else ():
+                now = period_now(p)
+                if st.get(f"at_{p}") != now:  # a new day, week or month: start again
+                    st[f"at_{p}"] = now
+                    for k in PERIOD_STATS:  # zeroed, not removed: saving only writes the stats that are there
+                        if f"{k}_{p}" in st:
+                            st[f"{k}_{p}"] = 0
+                for k in counted:
+                    st[f"{k}_{p}"] = st.get(f"{k}_{p}", 0) + deltas[k]
             self.mark_dirty(cid)
 
     def buy(self, cid, item, field, price):
@@ -511,18 +532,27 @@ class Store:
             self.save()
             return True
 
-    def top(self, stat):
-        """[(character id, name, honor, value)], best first. Sorting reads every character, so a list is kept a while."""
+    def top(self, stat, period=None):
+        """[(character id, name, honor, value)], best first. Sorting reads every character, so a list is kept a while.
+        With a period ("day", "week", "month") only what was earned in the current one counts, and a character with
+        nothing then is left out."""
         now = time.time()
-        made, rows = self.tops.get(stat, (0.0, []))
+        made, rows = self.tops.get((stat, period), (0.0, []))
         if now - made < TOP_EVERY:
             return rows
         default = START_MONEY if stat == "money" else 0
+        current = period and period_now(period)
         with self.lock:
-            chars = [c for chars in self.data["accounts"].values() for c in chars]
-            rows = sorted(((c["id"], c["name"], c.get("stats", {}).get("honor", 0),
-                            int(c.get("stats", {}).get(stat, default))) for c in chars), key=lambda r: (-r[3], r[0]))
-        self.tops[stat] = (now, rows)
+            rows = []
+            for chars in self.data["accounts"].values():
+                for c in chars:
+                    st = c.get("stats", {})
+                    if not period:
+                        rows.append((c["id"], c["name"], st.get("honor", 0), int(st.get(stat, default))))
+                    elif st.get(f"at_{period}") == current and st.get(f"{stat}_{period}", 0) > 0:
+                        rows.append((c["id"], c["name"], st.get("honor", 0), int(st[f"{stat}_{period}"])))
+        rows.sort(key=lambda r: (-r[3], r[0]))
+        self.tops[(stat, period)] = (now, rows)
         return rows
 
     def reset_talents(self, cid):
@@ -1146,11 +1176,19 @@ class Session:
     # str name | u8 camp (0x10 green, 0x20 red, else the name is drawn almost black) | u32 team (not 0: the client asks
     # UpdateTeamInfo (15,15023) for it) | str (not read) | u8 rank level | u32 score). The client numbers the rows itself.
     # Request: [u8 for Shooting] u8 period (1 Total, 2 Monthly, 3 Weekly, 4 Daily) | u32 first row | u32 rows (20); the
-    # window has no paging. Only totals are kept, so every period gets them. My place (15,15099 / 15101 / 15107), request
-    # u32 character id | u8 period: reply u32 place counted from 0 | u32 score; shown under the list only past place 18.
+    # window has no paging. My place (15,15099 / 15101 / 15107), request u32 character id | [u8 for Shooting] u8 period:
+    # reply u32 place counted from 0 | u32 score; shown under the list only past place 18. Shooting sends 1 in its extra
+    # byte; that the period is the later byte is a guess (in game only Total was tried there).
+    @staticmethod
+    def rank_source(type_, period):
+        """(stat, period name) for a Ranking tab: totals for Total, else what was earned in that period."""
+        total, earned = RANK_TABS[type_]
+        return (earned, PERIODS[period]) if period in PERIODS else (total, None)
+
     def on_rank_list(self, msg):
-        first, count = struct.unpack_from("<II", msg.body, len(msg.body) - 8) if len(msg.body) >= 8 else (0, TOP_ROWS)
-        rows = STORE.top(RANK_TABS[msg.type])
+        first, count = struct.unpack_from("<II", msg.body, len(msg.body) - 8) if len(msg.body) >= 9 else (0, TOP_ROWS)
+        period = msg.body[-9] if len(msg.body) >= 9 else 1
+        rows = STORE.top(*self.rank_source(msg.type, period))
         page = rows[first:first + min(count, TOP_ROWS)]
         body = struct.pack("<II", len(rows), len(page))
         for cid, name, honor, value in page:
@@ -1160,7 +1198,7 @@ class Session:
 
     def on_my_rank(self, msg):
         cid = struct.unpack_from("<I", msg.body)[0] if len(msg.body) >= 4 else 0
-        rows = STORE.top(RANK_TABS[msg.type - 1])
+        rows = STORE.top(*self.rank_source(msg.type - 1, msg.body[-1] if len(msg.body) >= 5 else 1))
         place, value = next(((n, r[3]) for n, r in enumerate(rows) if r[0] == cid), (len(rows), 0))
         self.reply(msg, struct.pack("<II", place, value) if self.own_character(cid) else struct.pack("<II", len(rows), 0))
 
@@ -1746,7 +1784,8 @@ def kick(account, reason, notice=""):
     return session is not None
 
 
-RANK_TABS = {15098: "honor", 15100: "kills", 15106: "money"}
+# Ranking tab -> (stat for Total, stat for a period). Crystal's Total is the balance; a period counts crystal earned.
+RANK_TABS = {15098: ("honor", "honor"), 15100: ("kills", "kills"), 15106: ("money", "crystal")}
 RANK_CAMP = 0x10  # camps are not kept yet, so every name on the Ranking window is green
 RANK_NO_TEAM = 0  # teams are not kept yet either
 

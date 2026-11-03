@@ -202,6 +202,12 @@ async def scenario():
     check("my place, counted from 0", struct.unpack("<II", r.body) == (0, ls.START_MONEY))
     r = await ben.request(15, 15107, struct.pack("<IB", amy_id, 1))
     check("not someone else's", struct.unpack("<II", r.body)[1] == 0)
+    r = await amy.request(15, 15098, struct.pack("<BII", 4, 0, 20))  # Daily (what goes in it: tools/test_db.py)
+    check("Daily lists only who earned honor today", struct.unpack("<II", r.body) == (0, 0))
+    r = await amy.request(15, 15099, struct.pack("<IB", amy_id, 4))
+    check("and my place today has no score", struct.unpack("<II", r.body) == (0, 0))
+    r = await amy.request(15, 15100, struct.pack("<BBII", 1, 3, 0, 20))  # Shooting, Weekly
+    check("nobody has kills this week", struct.unpack("<II", r.body) == (0, 0))
 
     # --- talents ---
     r = await amy.request(14, 14043, struct.pack("<I", amy_id))

@@ -83,7 +83,11 @@ reply layout, and answer with real data.
 - [x] Request read in game 2026-11-03: u8 period (1 Total, 2 Monthly, 3 Weekly, 4 Daily) | u32 first row | u32 rows
       (20); Shooting (15100) has one more u8 in front. My place: u32 character id | u8 period. The u32 after the camp
       byte is a team id: anything but 0 makes the client ask UpdateTeamInfo (15,15023) once per row, so 0 is sent
-- [ ] Periods: only totals are kept, so Daily, Weekly and Monthly show the totals too
+- [x] Periods (2026-11-03, tested offline): honor, kills and crystal earned are also counted per day, week (from
+      Monday) and month, server local time, in stats "<stat>_day" etc. next to "at_day" etc. A counter starts again
+      when the next one is added in a new period. Daily, Weekly and Monthly list only characters who earned something
+      in it; Crystal's Total stays the balance. Not seen in game yet. For Shooting the period is taken from the later
+      of its two bytes, a guess
 
 ## Other open items
 - [x] Anti-addiction banner in the hall

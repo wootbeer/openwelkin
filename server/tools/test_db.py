@@ -76,6 +76,23 @@ def characters():
     ls.STORE.add_stats(cid, kills=50)
     ls.STORE.top("kills")
     check("and are kept for a while", ls.STORE.top("kills")[0][0] == cid + 1)
+    ls.TOP_EVERY = 0
+    check("today counts too", ls.STORE.stats(cid)["kills_day"] == 52 and ls.STORE.stats(cid)["kills_month"] == 52)
+    day = ls.STORE.top("kills", "day")
+    check("a period ranks what was earned in it", [r[:4:3] for r in day[:2]] == [(cid, 52), (cid + 1, 5)], str(day))
+    ls.STORE.add_stats(cid + 1, kills=-ls.STORE.stats(cid + 1)["kills"], talent_reset=0)
+    ls.STORE.add_stats(cid, money=3)
+    check("other stats leave the periods alone", ls.STORE.stats(cid)["kills_day"] == 52)
+    ls.STORE.by_id(cid)["stats"]["at_day"] -= 1  # as if the kills were yesterday
+    check("yesterday is not today, and nothing earned is not listed", ls.STORE.top("kills", "day") == [],
+          str(ls.STORE.top("kills", "day")))
+    ls.STORE.add_stats(cid, kills=1)
+    reopen()
+    st = ls.STORE.stats(cid)
+    check("a new day starts again", st["kills_day"] == 1 and st["kills_week"] == 53 and st["at_day"] == ls.period_now("day"),
+          str(st))
+    check("and a new period is saved as such", ls.STORE.top("kills", "day")[0][:4:3] == (cid, 1))
+    ls.TOP_EVERY = 60
     ls.STORE.set_contact(cid, "friends", cid + 1, True)
     ls.STORE.set_contact(cid, "blocked", cid + 1, True)
     ls.STORE.set_contact(cid, "friends", cid + 1, True)
