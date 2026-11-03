@@ -260,6 +260,7 @@ RANK_THRESHOLDS = [int(50 * n ** 1.8) for n in range(71)]
 TALENTS = {1: (1311, 0, 0, 0, 3), 2: (1314, 0, 1, 5, 3), 3: (1301, 0, 2, 10, 3), 4: (1312, 1, 0, 0, 3),
            5: (1313, 2, 0, 0, 3), 6: (1315, 2, 1, 5, 3)}
 TOP_ROWS, TOP_EVERY = 20, 60.0  # rows on a Ranking tab, seconds a sorted list is kept: every character is read to make one
+CACHE_ACCOUNTS = 5000  # gate: accounts kept loaded after use; online ones always are
 # Ranking periods, as the client numbers them: 1 Total, 2 Monthly, 3 Weekly, 4 Daily. Each of PERIOD_STATS is also
 # counted per period in stats "<stat>_<period>", next to "at_<period>", the period it counts (server local time).
 PERIOD_STATS = ("honor", "kills", "crystal")
@@ -393,23 +394,32 @@ def read_wstr(b, off):
 
 
 class Store:
-    """Accounts and their characters: all in memory for reading, saved to characters.db (gate only)."""
+    """Accounts and their characters, saved to characters.db (gate only). Every character's id, account and name are
+    in memory; the rest is loaded when its account is used, and dropped again a while after."""
     path = os.path.join(STATE_DIR, "characters.db")
-    lock = threading.Lock()
+    lock = threading.RLock()
     indexed = None  # the data the character id index was built from
+    con = None
+    index = {}  # character id -> account, for every character
+    used = {}
+    top_lock = threading.Lock()  # one ranking is made at a time, on its own connection
 
     def __init__(self):
-        self.data = {"next_id": 1000, "accounts": {}}
-        self.con = None
+        self.data = {"next_id": 1000, "accounts": {}}  # accounts: the loaded ones
         self.changed, self.lines = set(), []  # character ids and event log lines not saved yet
         self.done = {}  # gate: game server run -> its last report applied here (saved with the next batch)
         self.saved = {}  # the same, as far as characters.db has it
+        self.used = collections.OrderedDict()  # loaded accounts, least recently used first
+        self.names = {}
         if ROLE in ("all", "gate"):
             self.con = db.open_characters(self.path)
-            self.data = db.load_characters(self.con)
+            self.reader = db.reader(self.path)
+            known = db.load_index(self.con)
+            self.index = {cid: account for cid, (account, _) in known.items()}
+            self.names = {name.lower(): cid for cid, (_, name) in known.items()}
+            self.data["next_id"] = db.next_id(self.con)
             self.saved = db.load_reports(self.con)
             self.done = dict(self.saved)
-        self.names = {c["name"].lower(): c["id"] for chars in self.data["accounts"].values() for c in chars}
         self.tops = {}  # (stat, period) -> (time made, sorted rows)
 
     dirty = False
@@ -467,27 +477,76 @@ class Store:
         return True
 
     def characters(self, account):
-        return self.data["accounts"].get(account, [])
+        with self.lock:
+            self.load(account)
+            return self.data["accounts"].get(account, [])
+
+    def load(self, account):
+        """Have the account's characters in memory (call with the lock held)."""
+        if self.con is None:
+            return
+        if account in self.used:
+            self.used.move_to_end(account)
+            return
+        if account not in self.data["accounts"]:
+            self.data["accounts"][account] = db.load_account(self.con, account)
+            self.lookup(None)  # the id index is up to date before it is added to
+            self.ids.update((c["id"], (account, c)) for c in self.data["accounts"][account])
+        self.used[account] = None
+        self.unload()
+
+    def unload(self):
+        """Drop the least recently used accounts past CACHE_ACCOUNTS that are not online and have nothing unsaved
+        (call with the lock held)."""
+        extra = len(self.used) - CACHE_ACCOUNTS
+        if extra <= 0:
+            return
+        busy = set(ONLINE) | {a for g in list(LINKS) for a in g.accounts}
+        busy |= {self.index.get(cid) for cid in self.changed}
+        for account in list(itertools.islice(self.used, extra + 100)):
+            if extra <= 0:
+                break
+            if account in busy:
+                self.used.move_to_end(account)
+                continue
+            for c in self.data["accounts"].pop(account, []):
+                self.ids.pop(c["id"], None)
+            del self.used[account]
+            extra -= 1
 
     def create(self, account, name, **fields):
         """The new character's id, or None if the name was taken."""
         with self.lock:
             if name.lower() in self.names:
                 return None
+            self.load(account)
             cid = self.data["next_id"]; self.data["next_id"] += 1
             self.names[name.lower()] = cid
-            self.data["accounts"].setdefault(account, []).append(dict(id=cid, name=name, **fields))
-            self.indexed = None
+            if self.con is not None:
+                self.index[cid] = account
+            c = dict(id=cid, name=name, **fields)
+            self.data["accounts"].setdefault(account, []).append(c)
+            self.lookup(None)
+            self.ids[cid] = (account, c)
             self.mark_dirty(cid)
             self.save()
             return cid
 
     def lookup(self, cid):
-        """(account, character) for a character id, or (None, None). The index is rebuilt after a create."""
-        if self.indexed is not self.data:
-            self.ids = {c["id"]: (a, c) for a, chars in self.data["accounts"].items() for c in chars}
-            self.indexed = self.data
-        return self.ids.get(cid, (None, None))
+        """(account, character) for a character id, or (None, None). Loads the account if needed."""
+        with self.lock:
+            if self.indexed is not self.data:
+                self.ids = {c["id"]: (a, c) for a, chars in self.data["accounts"].items() for c in chars}
+                self.indexed = self.data
+                if self.con is not None:
+                    self.used = collections.OrderedDict.fromkeys(self.data["accounts"])
+            found = self.ids.get(cid)
+            if found is None and cid in self.index:
+                self.load(self.index[cid])
+                found = self.ids.get(cid)
+            elif found is not None and found[0] in self.used:
+                self.used.move_to_end(found[0])
+            return found or (None, None)
 
     def by_id(self, cid):
         return self.lookup(cid)[1]
@@ -562,30 +621,25 @@ class Store:
             return True
 
     def top(self, stat, period=None):
-        """[(character id, name, honor, value)], best first. Sorting reads every character, so a list is kept a while.
-        With a period ("day", "week", "month") only what was earned in the current one counts, and a character with
-        nothing then is left out; so is one with no kills with a weapon ("weapon<id>")."""
-        now = time.time()
+        """[(character id, name, honor, value)], best first. Sorting reads every character from characters.db, so a
+        list is kept a while. With a period ("day", "week", "month") only what was earned in the current one counts,
+        and a character with nothing then is left out; so is one with no kills with a weapon ("weapon<id>")."""
         made, rows = self.tops.get((stat, period), (0.0, []))
-        if now - made < TOP_EVERY:
+        if time.time() - made < TOP_EVERY or self.con is None:
             return rows
-        default = START_MONEY if stat == "money" else 0
-        current = period and period_now(period)
-        everyone = not period and not stat.startswith("weapon")
-        with self.lock:
-            rows = []
-            for chars in self.data["accounts"].values():
-                for c in chars:
-                    st = c.get("stats", {})
-                    if period:
-                        value = st.get(f"{stat}_{period}", 0) if st.get(f"at_{period}") == current else 0
-                    else:
-                        value = int(st.get(stat, default))
-                    if everyone or value > 0:
-                        rows.append((c["id"], c["name"], st.get("honor", 0), int(value)))
-        rows.sort(key=lambda r: (-r[3], r[0]))
-        self.tops[(stat, period)] = (now, rows)
-        return rows
+        with self.top_lock:
+            made, rows = self.tops.get((stat, period), (0.0, []))
+            now = time.time()
+            if now - made < TOP_EVERY:  # made while this one waited
+                return rows
+            self.flush()  # what is still waiting for the next batch counts too
+            rows = db.ranking(self.reader, stat, START_MONEY if stat == "money" else 0,
+                              counter=period and f"{stat}_{period}", current=period and period_now(period),
+                              everyone=not period and not stat.startswith("weapon"))
+            rows = [(cid, name, honor, int(value)) for cid, name, honor, value in rows]
+            rows.sort(key=lambda r: (-r[3], r[0]))
+            self.tops[(stat, period)] = (now, rows)
+            return rows
 
     def reset_talents(self, cid):
         """Forget all talents for crystal. 0, or the client's error code. The client checks the price and the wait too,

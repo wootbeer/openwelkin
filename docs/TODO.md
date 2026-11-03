@@ -223,7 +223,12 @@ reply layout, and answer with real data.
 - [x] Only what changed is written. 10000 characters saved, 800 of them playing: 49 ms per batch, a purchase 0.1 ms.
       The old JSON file took about 1 s per write at that size, before the disk
 - [x] JSON files are imported once and renamed to *.imported; a broken one stops the server and is left alone
-- [ ] All characters are still loaded into memory at start. Load on login if this ever matters
+- [x] Characters load when their account is used, not all at start. The gate keeps every id, account and name, and
+      the last 5000 accounts used (CACHE_ACCOUNTS; online ones and ones with unsaved changes always stay). Rankings
+      are read from characters.db on a second, read-only connection. 50000 characters: start 0.2 s and 11 MB (was
+      17 s and 240 MB), a login load 0.4 ms, a ranking 0.4 to 0.8 s once a minute without holding up the game
+- [ ] A save batch holds the store lock about 0.3 ms per changed character (100 ms for 300): every item, talent
+      and contact is written again even when only stats changed
 - [x] Admin command backup copies the databases into backups/ on each server while it runs. Copying the .db files by
       hand is only safe with the server stopped
 - Load test, 2026-10-30, with SQLite: 800 of 800 fake players on 3 game servers, about 267 each: 14 ms tick (of 33), 45% of

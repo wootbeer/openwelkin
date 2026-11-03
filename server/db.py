@@ -28,6 +28,7 @@ CREATE INDEX IF NOT EXISTS characters_account ON characters (account);
 CREATE TABLE IF NOT EXISTS stats (
     character_id INTEGER NOT NULL REFERENCES characters (id), stat TEXT NOT NULL, value NUMERIC NOT NULL,
     PRIMARY KEY (character_id, stat));
+CREATE INDEX IF NOT EXISTS stats_by_stat ON stats (stat, value);
 CREATE TABLE IF NOT EXISTS items (
     character_id INTEGER NOT NULL REFERENCES characters (id), slot INTEGER NOT NULL, goods INTEGER, item INTEGER NOT NULL,
     days INTEGER NOT NULL, expires INTEGER NOT NULL, active INTEGER NOT NULL, equipped INTEGER NOT NULL,
@@ -64,6 +65,13 @@ def connect(path, schema):
     con.execute("PRAGMA foreign_keys=ON")
     con.executescript(schema)
     con.execute("PRAGMA user_version=1")
+    return con
+
+
+def reader(path):
+    """A second, read-only connection for slow reads (rankings), so writes on the main one need not wait."""
+    con = sqlite3.connect(path, timeout=5, check_same_thread=False)
+    con.execute("PRAGMA query_only=ON")
     return con
 
 
@@ -147,34 +155,81 @@ def write_reports(con, done, now, keep):
     con.execute("DELETE FROM reports WHERE at < ?", (now - keep,))
 
 
-def load_characters(con):
-    """All characters, in the shape the server keeps them in memory: {next_id, accounts: {account: [character]}}."""
-    data = {"next_id": 1000, "accounts": {}}
+def load_account(con, account):
+    """One account's characters, in the shape the server keeps them in memory."""
     ids = {}
-    for cid, account, name, _, gender, model, state, raw, robot in con.execute("SELECT * FROM characters ORDER BY id"):
-        c = dict(id=cid, name=name, gender=gender, model=model, state=state, raw=raw, stats={}, items=[], talents={},
-                 log=[])
+    for cid, _, name, _, gender, model, state, raw, robot in con.execute(
+            "SELECT * FROM characters WHERE account = ? ORDER BY id", (account,)):
+        ids[cid] = c = dict(id=cid, name=name, gender=gender, model=model, state=state, raw=raw, stats={}, items=[],
+                            talents={}, log=[])
         if robot is not None:
             c["robot"] = robot
-        data["accounts"].setdefault(account, []).append(c)
-        ids[cid] = c
-        data["next_id"] = max(data["next_id"], cid + 1)
-    for cid, stat, value in con.execute("SELECT * FROM stats"):
+    if not ids:
+        return []
+    for cid, stat, value in con.execute(
+            "SELECT * FROM stats WHERE character_id IN (SELECT id FROM characters WHERE account = ?)", (account,)):
         ids[cid]["stats"][stat] = value
-    for cid, _, goods, item, days, expires, active, equipped in con.execute("SELECT * FROM items ORDER BY character_id, slot"):
+    for cid, _, goods, item, days, expires, active, equipped in con.execute(
+            "SELECT * FROM items WHERE character_id IN (SELECT id FROM characters WHERE account = ?) "
+            "ORDER BY character_id, slot", (account,)):
         it = dict(item=item, days=days, expires=expires, active=bool(active))
         if goods is not None:
             it["goods"] = goods
         if equipped:
             it["equipped"] = True
         ids[cid]["items"].append(it)
-    for cid, talent, level in con.execute("SELECT * FROM talents"):
+    for cid, talent, level in con.execute(
+            "SELECT * FROM talents WHERE character_id IN (SELECT id FROM characters WHERE account = ?)", (account,)):
         ids[cid]["talents"][talent] = level
-    for cid, kind, other in con.execute("SELECT * FROM contacts"):
+    for cid, kind, other in con.execute(
+            "SELECT * FROM contacts WHERE character_id IN (SELECT id FROM characters WHERE account = ?)", (account,)):
         ids[cid].setdefault(kind, []).append(other)
-    for cid, at, kind, text in con.execute("SELECT character_id, at, kind, text FROM event_log ORDER BY id"):
+    for cid, at, kind, text in con.execute(
+            "SELECT character_id, at, kind, text FROM event_log "
+            "WHERE character_id IN (SELECT id FROM characters WHERE account = ?) ORDER BY id", (account,)):
         ids[cid]["log"].append([at, kind, text])
+    return list(ids.values())
+
+
+def load_characters(con):
+    """All characters: {next_id, accounts: {account: [character]}}. The server loads accounts as they are used;
+    this is for tools and tests."""
+    data = {"next_id": 1000, "accounts": {}}
+    for (account,) in con.execute("SELECT DISTINCT account FROM characters").fetchall():
+        data["accounts"][account] = load_account(con, account)
+    data["next_id"] = next_id(con)
     return data
+
+
+def next_id(con):
+    return max(1000, con.execute("SELECT coalesce(max(id), 0) + 1 FROM characters").fetchone()[0])
+
+
+def load_index(con):
+    """{id: (account, name)} of every character: all the server keeps of characters nobody is using."""
+    return {cid: (account, name) for cid, account, name in con.execute("SELECT id, account, name FROM characters")}
+
+
+def ranking(con, stat, default=0, counter=None, current=None, everyone=False):
+    """[(id, name, honor, value)] in no order. With `counter` (a period's counter, like kills_day) its value counts
+    while at_<period> is `current`. `everyone`: characters without the stat too, at `default`."""
+    if counter:
+        rows = con.execute(
+            "SELECT c.id, c.name, h.value, s.value FROM stats s JOIN characters c ON c.id = s.character_id "
+            "JOIN stats a ON a.character_id = c.id AND a.stat = ? AND a.value = ? "
+            "LEFT JOIN stats h ON h.character_id = c.id AND h.stat = 'honor' "
+            "WHERE s.stat = ? AND s.value > 0", ("at_" + counter.rpartition("_")[2], current, counter))
+    elif everyone:
+        rows = con.execute(
+            "SELECT c.id, c.name, h.value, coalesce(s.value, ?) FROM characters c "
+            "LEFT JOIN stats s ON s.character_id = c.id AND s.stat = ? "
+            "LEFT JOIN stats h ON h.character_id = c.id AND h.stat = 'honor'", (default, stat))
+    else:
+        rows = con.execute(
+            "SELECT c.id, c.name, h.value, s.value FROM stats s JOIN characters c ON c.id = s.character_id "
+            "LEFT JOIN stats h ON h.character_id = c.id AND h.stat = 'honor' "
+            "WHERE s.stat = ? AND s.value > 0", (stat,))
+    return [(cid, name, honor or 0, value) for cid, name, honor, value in rows]
 
 
 def open_characters(path):

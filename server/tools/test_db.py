@@ -30,6 +30,7 @@ def reopen():
     """What a restart sees."""
     ls.STORE.flush()
     ls.STORE.con.close()
+    ls.STORE.reader.close()
     ls.STORE = ls.Store()
 
 
@@ -161,6 +162,33 @@ def rollback():
     check("a failed save loses nothing", ls.STORE.stats(cid).get("kills") == 7)
 
 
+def loading():
+    """Only accounts in use are in memory; the rest is read from characters.db when needed."""
+    ids = [ls.STORE.create(f"many{n}", f"Many{n}", gender=0, model=0, state=1, raw="") for n in range(5)]
+    ls.STORE.add_stats(ids[3], kills=1000)
+    reopen()
+    check("nothing is loaded at start", not ls.STORE.data["accounts"] and ls.STORE.name_taken("many2"))
+    check("a name is found without loading", ls.STORE.id_of_name("Many2") == ids[2] and not ls.STORE.data["accounts"])
+    check("ids carry on without loading", ls.STORE.create("late", "Late", gender=0, model=0, state=1, raw="") > ids[4])
+    top = ls.STORE.top("kills")
+    check("rankings include characters not loaded", top[0][:2] == (ids[3], "Many3") and "many3" not in ls.STORE.used,
+          str(top[:2]))
+    check("a character loads when used", ls.STORE.by_id(ids[1])["name"] == "Many1" and "many1" in ls.STORE.used)
+    check("an account loads when used", [c["id"] for c in ls.STORE.characters("many4")] == [ids[4]])
+    keep, ls.CACHE_ACCOUNTS = ls.CACHE_ACCOUNTS, 2
+    ls.STORE.add_stats(ids[1], kills=1)  # not saved yet: must stay
+    ls.STORE.by_id(ids[0])
+    ls.STORE.by_id(ids[2])
+    check("old accounts are dropped, unsaved ones kept", sorted(ls.STORE.used) == ["many1", "many2"],
+          str(list(ls.STORE.used)))
+    check("a dropped character loads again", ls.STORE.stats(ids[4]).get("kills", 0) == 0
+          and ls.STORE.stats(ids[1])["kills"] == 1)
+    ls.CACHE_ACCOUNTS = keep
+    reopen()
+    check("changes to a kept account are saved", ls.STORE.stats(ids[1])["kills"] == 1)
+    check("an unknown id loads nothing", ls.STORE.by_id(99999999) is None and ls.STORE.characters("nobody") == [])
+
+
 def importing():
     folder = os.path.join(root, "old")
     os.makedirs(folder)
@@ -203,9 +231,11 @@ def main():
         hostile()
         accounts()
         rollback()
+        loading()
         importing()
     finally:
         ls.STORE.con.close()
+        ls.STORE.reader.close()
         ls.ACCOUNTS.con.close()
         ls.BANS.con.close()
         shutil.rmtree(root, ignore_errors=True)
