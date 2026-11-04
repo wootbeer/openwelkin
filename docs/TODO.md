@@ -234,8 +234,8 @@ reply layout, and answer with real data.
 - Load test, 2026-10-30, with SQLite: 800 of 800 fake players on 3 game servers, about 267 each: 14 ms tick (of 33), 45% of
   one core each, 6 MB/s out each (22 KB/s per player), no errors. Move delay median 32 ms, 99% 52 ms, max 87 ms. All
   800 characters reached characters.db. Bandwidth left as it is: far robots already get fewer moves
-- Windows note: COMODO on the dev PC appears to delete server/tools/loadtest.py (and copies of it) shortly after it
-  runs. `git restore server/tools/loadtest.py` brings it back. An exclusion for C:\dev\openwelkin should stop this
+- Windows note: some antivirus programs delete server/tools/loadtest.py (and copies of it) shortly after it runs.
+  `git restore server/tools/loadtest.py` brings it back. An exclusion for the repository folder should stop this
 
 ## Performance (2026-10-29)
 - [x] One game loop thread for all matches at 30 ticks/s instead of a thread per match and a timer thread per shot

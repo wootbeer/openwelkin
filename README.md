@@ -254,7 +254,8 @@ Results on a 16-thread PC are in `docs/TODO.md` (Performance).
 
 ## More
 
-- Protocol notes: `docs/index.html`.
+- Protocol notes: [docs/PROTOCOL.md](docs/PROTOCOL.md) (built from `docs/index.html`, the page to edit, by
+  `server/tools/docs_md.py`).
 - What still needs work: `docs/TODO.md`.
 - Dev scripts (Windows): `scripts/cycle.ps1` restarts the server and client, `scripts/launch.ps1` starts the
   client, `scripts/snap.ps1` screenshots it. They look for the client in `MW_CLIENT_DIR` (default `C:\Games\MarsWar`).
@@ -267,4 +268,7 @@ v3 or later: see `LICENSE`. You can use, change and host it; if you run a modifi
 you must offer your changes to its players under the same license.
 
 MarsWar itself, its client, data files and texts belong to their publisher and are not part of this project.
+This is an unofficial fan project, not affiliated with or endorsed by the game's publisher or developer. MarsWar,
+Welkin4591 and the game's other names are the trademarks of their owners and are used here only to say which
+client this server works with.
 The server only reads them from your own install (`setup_data.py`); do not commit `data/` to the repository.
