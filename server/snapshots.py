@@ -16,7 +16,8 @@ IDENTITY = (1.0, 0.0, 0.0, 0.0,
 
 def world_object(pos=(0.0, 0.0, 0.0), rot=IDENTITY, char=0, b=0, c=0, d=0, e=0, f=0):
     """WorldObject::WriteSnapshot (0x1027f460):
-    vec3 position | 4x4 rotation | u32 owning character id (+0x10) | u32 (+0x6c) | u32 target type (+0x70) | u8 (+0x74)
+    vec3 position | 4x4 rotation | u32 owning character id (+0x10) | u32 nation (+0x6c, WorldObject::GetCurrentNation)
+    | u32 target type (+0x70) | u8 (+0x74)
     | u32 (+0x8c) | u32 (+0x88)
     The character id matters: a robot passes its own +0x10 to its parts, and Equip::IsLocal needs an owner
     (otherwise weapons never load FPV/HUD resources and Weapon::UpdateHUD crashes).
@@ -70,9 +71,9 @@ def armor_info(hp=1000, cur=None):
     return struct.pack("<I", len(armor)) + b"".join(struct.pack("<ii5fi", *a) for a in armor)
 
 
-def robot(parts, pos=(0.0, 0.0, 0.0), rot=IDENTITY, char=0, power=None, hp=1000):
+def robot(parts, pos=(0.0, 0.0, 0.0), rot=IDENTITY, char=0, power=None, hp=1000, nation=0):
     """Robot::WriteSnapshot (0x10250140) = WorldObject | Robot::WriteSystemPartSnapshot (0x1024dc90) | u32 skill fw."""
-    return (world_object(pos=pos, rot=rot, char=char, c=1)  # target type 1 = robot
+    return (world_object(pos=pos, rot=rot, char=char, b=nation, c=1)  # target type 1 = robot
             + system_parts(parts, pos=pos, power=power, hp=hp) + struct.pack("<i", -1))
 
 

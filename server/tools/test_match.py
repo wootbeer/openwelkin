@@ -150,7 +150,12 @@ pa.fire_range = range_b
 pb.pos = (10.0, 0.0, 0.0)
 moves_of_a(1, x=50.0)
 still = moves_of_a(ls.STILL_EVERY * 2, x=50.0)
-ok &= check(f"a robot standing still: {len(still)} of {ls.STILL_EVERY * 2} moves sent", len(still) == 2)
+heights = [struct.unpack_from("<f", x, 12)[0] for x in still]
+ok &= check(f"a robot standing still: sent again once a second ({heights})", len(still) == 4)
+ok &= check("each time first raised, so the client puts it in place at once",
+            heights == [2.0 + ls.SNAP_RISE, 2.0] * 2)
+moving = [struct.unpack_from("<f", x, 12)[0] for x in moves_of_a(5)]
+ok &= check("a walking robot is never raised", moving == [2.0] * 5)
 
 # PvP: A shoots straight at B until B dies
 pb.protected_until = pa.protected_until = 0
@@ -226,6 +231,26 @@ pb.pos = (sky + 20, 0.0, 0.0)
 hp = pb.player_hp
 shoot(aim=(sky, 2.5, 0.0))
 ok &= check("a shot at open sky reaches the whole range", sky + 20 < pa.fire_range and pb.player_hp < hp)
+msg(B, 40130, struct.pack("<I3f", 0, 10.0, 0.0, 0.0))
+step(0.1)
+msg(B, 40130, struct.pack("<I3f", 0, 10.0, 0.0, 30.0))  # B walked away; A's client still draws it where it was
+step(0.5)
+hp = pb.player_hp
+shoot(aim=(14.0, 2.5, 0.0))
+ok &= check("a shot at where a robot was half a second ago hits", pb.player_hp < hp)
+step(ls.TRAIL_SECONDS + 0.2)
+hp = pb.player_hp
+shoot(aim=(14.0, 2.5, 0.0))
+ok &= check("but not after the trail runs out", pb.player_hp == hp)
+msg(B, 40130, struct.pack("<I3f", 0, 10.0, 0.0, 0.0))
+step(0.1)
+ls.STORE.by_id(a_cid)["model"] = ls.STORE.by_id(b_cid)["model"] = ls.ALLIANCE  # the nation chosen at creation
+shoot()
+ok &= check("no damage to a player on your own side", pb.player_hp == hp)
+ls.STORE.by_id(b_cid)["model"] = ls.FEDERAL
+shoot()
+ok &= check("but the other side's players are hit", pb.player_hp < hp)
+ls.STORE.by_id(a_cid)["model"] = ls.STORE.by_id(b_cid)["model"] = 1
 ls.WEAPONS[1] = (100.0, 0.5, 2.0)
 ok &= check("a melee weapon can reach a robot", ls.fire_range(1) > ls.HIT_RADIUS + ls.MUZZLE_REACH)
 del ls.WEAPONS[1]

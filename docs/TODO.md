@@ -79,7 +79,10 @@ reply layout, and answer with real data.
       str (not read) | u8 rank level | u32 score. The client numbers rows itself. My place is counted from 0 and only
       shows under the list past place 18 (2026-11-03, 28 characters: "My Ranking 26 tester 310" under the 20 rows).
       There is no paging: the window shows 20 rows and scrolling sends nothing
-- [ ] Camps are not kept, so every name is green
+- [x] Camps are nations, real client 2026-11-04: the create request carries the side picked on the Choose Nation
+      screen (0x10 Federal, 0x20 Alliance), kept in the "model" column. Rows send it as the camp byte; CharacterOnline
+      sends it after the id, which turns your own name under My Ranking red (Alliance) and puts the Alliance emblem
+      before your name in the hall. Characters made by scripts have none, so their names are almost black
 - [x] Weapon tab, real client 2026-11-03: (15,15108) gives the buttons, u32 n | n x (u32 kind 1 Weapon / else
       Vehicle | u32 weapon id | str name); the ten shop weapons show. (15,15102) list has the Honor layout, request
       u8 period | u32 kind | u32 weapon | u32 first row | u32 rows; (15,15103) my place, u32 character id | u8 period |
@@ -99,7 +102,8 @@ reply layout, and answer with real data.
 ## Other open items
 - [x] Anti-addiction banner in the hall
 - [x] "Waiting to enter arena." popup = GAMEENGINE_DATAUNNORMAL (bad reply data); gone once shop replies were real
-- [ ] Glyph before nameplate names (probably the rank badge; confirm)
+- [ ] Glyph before nameplate names in battle: a small bracket before "Target 1" in red or white. The hall's star before
+      your name became the nation emblem once CharacterOnline sent the nation, so this may be the same thing
 - [ ] Untested: dummy misses aimed at the ground, fixed spawn point, no damage after death, random single-use gate session keys (login path!)
 
 ## Security / robustness (2026-10-20, offline)
@@ -132,7 +136,11 @@ reply layout, and answer with real data.
       2026-11-03, two clients, MW_ROUND_KILLS=1: tester killing Bravo ended the round at once, both saw "tester won the
       round" and their own Record window, both went back to the hall, tester's win was saved, and Quick Enter then
       started a new match. Only kills on players count; target robot kills do not
-- [ ] Teams (all players are on their own side now), respawn point choice. Needs a client session: without knowing what
+- [x] Sides, real client 2026-11-04: GS_Character_Set_BaseInfo's first u32 after the name is the character's nation
+      (+0x30), and the robot snapshot's u32 after the owner is the robot's (+0x6c). Robots of your own nation get a white
+      name, others a red one. The client still sends shots at your own side, so the server ignores them (players only;
+      target dummies have no nation and fight everyone). Kill feed lines carry both nations
+- [ ] Teams within a side, respawn point choice. Needs a client session: without knowing what
       sets the nation, players could not tell the sides apart, so nothing is built yet. Client's Kill arena, read from Game.dll, not
       tried: arena logic 5 in (19,40050), then init data u8 nation | u8 nation | f32. (19,49000) f32 seconds | u8 | f32
       = countdown, (19,52001) u8 nation | i32 = score of a side ("Our Force" / "Enemy Force"), (20,20130) u32 n |
@@ -141,7 +149,10 @@ reply layout, and answer with real data.
 - [ ] Hit detection is generous (HIT_RADIUS 6 around the robot or the client's ray end point): shots at the ground next to a player count.
       2026-11-04, offline: nothing past where the shot landed (plus HIT_RADIUS) is hit any more, so a shot into a wall or
       the ground in front of a robot misses. A shot at open sky lands at exactly WP1Range and still reaches the whole
-      range. Not tried in game; the radius is still 6
+      range. Real client 2026-11-04: shots at a dummy still hit; the client's ray goes through robots (it landed 61.5
+      away behind one); a shot at a standing dummy's shoulder passed 2.2 from its center. Shots are now also checked
+      against where a robot was over the last 1.5 s (clients draw walking robots up to 9 units behind). With that the
+      radius could come down to about 3; not done yet
 - [x] Test tooling: tools/vinput.py drives a client's DirectInput keyboard/mouse (even minimized); tools/quickenter.js presses Quick Enter; MW_FORCE_BF=1 sends every Quick Enter to one battlefield. The client saves LastAccount after login, so set Welkin4591.ini right before each launch.
 
 ## Admin / moderation (2026-10-29, tested offline)
@@ -274,6 +285,10 @@ reply layout, and answer with real data.
       speed (8). Dummies walked at 4 on a sine path, so they jumped back about 2 units at every move (0.8 at 5 a
       second). They now patrol at 8, at a steady speed: no jumps but at the turns (up to 4 units at 2 a second,
       under a degree on screen at that range). Players move with their own client's speed, so they should match too
-- [ ] One of the two dummies (Target 2, next to a big tree on the training ground) keeps walking the old way for
-      about a second after it turns, at any update rate, then jumps back about 3 units. Maybe the client turns
-      robots slowly, or its path runs into the tree
+- [x] Dummies kept walking after a turn or stop, real client 2026-11-04 (Frida reads of where the client draws them,
+      against the server's moves): Robot::MoveTo never applies corrections under 15 units to our remote robots (see
+      GS_Robot_Action in PROTOCOL.md), the client slides a robot on about a second after a stop, and speeds it up over
+      about 4 s from a start. A stopped dummy stayed up to 9 units off for good. Now a robot standing for a second is
+      sent 20 units up and then in place, in one packet: from then on it is exactly where the server has it
+- [ ] Walking robots are still drawn up to 9 units behind the server (the client's own speed-up). Shots use the
+      1.5 s trail; a dummy that speeds up like the client would look better

@@ -75,6 +75,17 @@ SPAWN_PROTECTION = 4.0  # seconds after a respawn before the dummies open fire
 AI_TICK, AI_SPEED, AI_PATROL = 0.2, 8.0, 12.0  # seconds per update, units per second, patrol half-length
 AI_RANGE, AI_BURST, AI_PAUSE, AI_HIT_CHANCE, AI_DAMAGE = 70.0, 6, 1.5, 0.5, 15.0
 HIT_RADIUS, HIT_HEIGHT = 6.0, 2.5  # generous hit sphere: the client raycast passes through remote robots
+# Robot::MoveTo on a robot in view only glides it to a new position closer than 15 units, and the glide never runs
+# for our remote robots (it needs a state bit that only Robot::Revived and RobotCallback::OnEnterLand set). So a robot
+# that stopped stayed where the client's own walking left it, up to 9 units off. A move more than 15 units up or away
+# puts the robot there at once: a robot standing for a second (sent again unchanged) gets one SNAP_RISE up, then its
+# real position, in the same packet. Not sooner: the client lets a robot slide on for about a second after it stops,
+# and a snap during that starts the slide again.
+SNAP_RISE = 20.0
+FEDERAL, ALLIANCE = 0x10, 0x20  # NATION_TYPE: the two sides ("Federal", "Alliance" in Language/ENG.xml)
+NATIONS = (FEDERAL, ALLIANCE)
+DUMMY_NATION = 0  # target dummies are on no side: everyone's enemy (red names); a side's own robots have white names
+TRAIL_SECONDS = 1.5  # a client draws other robots up to about a second behind: shots count against where they were
 MUZZLE_REACH = 15.0     # a shot must start this close to where the server last saw the robot
 RANGE_MARGIN = 1.25     # weapon range is the data's WP1Range times this, for movement between position reports
 DEFAULT_RANGE = 300.0
@@ -1053,7 +1064,9 @@ class Session:
         self.reply(msg, body)
 
     def on_active_character(self, msg):
-        # CS_Active_Character (13,13006) = create character. Request: str name | u8 gender | u32 model? | u32 | u32 | u8?..
+        # CS_Active_Character (13,13006) = create character. Request (CCreateCharacterUI::ClickConfirm): str name | str
+        # (empty) | u32 nation (Choose Nation screen: FEDERAL / ALLIANCE) | u32 0 | u8 0 | u32 gender (1 or 2). The
+        # empty string's length byte is kept as "gender" and the nation as "model" (names from before this was known).
         # Reply read by CS_Active_Character_Observer (0x10401000): u32 new character id; client then re-requests the list.
         if self.account is None or len(STORE.characters(self.account)) >= MAX_CHARACTERS:
             log(f"{self.addr} character create refused (not logged in or character limit)")
@@ -1081,8 +1094,8 @@ class Session:
     def on_character_online(self, msg):
         # CS_CharacterOnline (13,13004). Reply read by CS_CharacterOnline_LoginWorld_Observer (0x10402510), which builds
         # CNewHallUI. Body = character descriptor (deserializer Game.dll 0x1031a010):
-        #   u32 id | u8 state | u32 | u32 | u8 (101..110 sets a flag) | str name | str | u8 rank level (character
-        #   +0x44, "Lv." in the hall) | u8 gender | u32 model
+        #   u32 id | u8 nation (character +0x30: the hall's emblem and the My Ranking colour) | u32 | u32 | u8 (101..110
+        #   sets a flag) | str name | str | u8 rank level (character +0x44, "Lv." in the hall) | u8 | u32
         #   | str | str | str | u32 n | n x (u32 | u16 | u8 | u8)
         debug(f"{self.addr} character online request body={msg.body.hex()}")
         chars = STORE.characters(self.account)
@@ -1094,7 +1107,7 @@ class Session:
         if not self.character:
             threading.Thread(target=self.outbox_loop, daemon=True).start()
         self.character = c
-        body = (struct.pack("<IBIIB", c["id"], c["state"], 0, 0, 0) + wstr(c["name"]) + wstr("")
+        body = (struct.pack("<IBIIB", c["id"], nation_of(c["id"]) or c["state"], 0, 0, 0) + wstr(c["name"]) + wstr("")
                 + struct.pack("<BBI", rank_for(STORE.stats(c["id"]).get("honor", 0)), c["gender"], c["model"])
                 + wstr("") + wstr("") + wstr("")
                 + struct.pack("<I", 0))
@@ -1314,7 +1327,7 @@ class Session:
         page = rows[first:first + min(count, TOP_ROWS)]
         body = struct.pack("<II", len(rows), len(page))
         for cid, name, honor, value in page:
-            body += (struct.pack("<I", cid) + wstr(name) + struct.pack("<BI", RANK_CAMP, RANK_NO_TEAM) + wstr("")
+            body += (struct.pack("<I", cid) + wstr(name) + struct.pack("<BI", nation_of(cid), RANK_NO_TEAM) + wstr("")
                      + struct.pack("<BI", rank_for(honor), value))
         self.reply(msg, body)
 
@@ -1910,7 +1923,6 @@ def kick(account, reason, notice=""):
 
 # Ranking tab -> (stat for Total, stat for a period). Crystal's Total is the balance; a period counts crystal earned.
 RANK_TABS = {15098: ("honor", "honor"), 15100: ("kills", "kills"), 15106: ("money", "crystal")}
-RANK_CAMP = 0x10  # camps are not kept yet, so every name on the Ranking window is green
 RANK_NO_TEAM = 0  # teams are not kept yet either
 
 # (event catalog, event type) -> handler. Names come from the client's observer class names (RTTI).
@@ -2466,6 +2478,7 @@ class Match:
         self.tick_no, self.next_ai, self.now = 0, 0.0, 0.0
         self.over = False  # the round ended: the Record window is showing
         self.targets = {}
+        self.trails = {}  # robot id -> deque of (time, position), the last TRAIL_SECONDS of its moves
         for i, dpos in enumerate(self.bf["dummies"]):
             self.targets[100_000 * (i + 1) + 1] = {
                 "home": dpos, "pos": dpos, "name": f"Target {i + 1}", "cid": DUMMY_CID_BASE + i + 1,
@@ -2491,6 +2504,15 @@ class Match:
         for p in self.peers:
             if p is not skip:
                 p.moves[rid] = (body, pos, reach)
+        trail = self.trails.setdefault(rid, collections.deque())
+        if not trail or trail[-1][1] != pos:
+            trail.append((self.now, pos))
+        while trail and trail[0][0] < self.now - TRAIL_SECONDS:
+            trail.popleft()
+
+    def recent(self, rid, pos):
+        """Where a robot is now and where it was over the last TRAIL_SECONDS."""
+        return [pos] + [p for t, p in self.trails.get(rid, ()) if t >= self.now - TRAIL_SECONDS]
 
     def is_open(self):
         return (self.peers is not None and not self.over and len(self.peers) < MAX_MATCH_PLAYERS
@@ -2528,6 +2550,10 @@ class Match:
                         continue
                 del v.moves[rid]
                 v.sent[rid] = (body, self.tick_no)
+                if last and last[0] == body and body[4:8] == b"\0\0\0\0":  # standing a second: see SNAP_RISE
+                    x, y, z = struct.unpack_from("<3f", body, 8)
+                    send_game_event(self.server, v, 19, 50100, body[:8] + struct.pack("<3f", x, y + SNAP_RISE, z)
+                                    + body[20:], reliable=False)
                 send_game_event(self.server, v, 19, 50100, body, reliable=False)
 
 
@@ -2621,7 +2647,7 @@ def relive_on(server, viewer, rid, cid, pos, facing, hp, max_hp):
 
 def show_dummy(server, viewer, rid, t):
     spawn_robot(server, viewer, t["cid"], rid, t["pos"], t["detachment"], t["name"], local=False)
-    send_base_info(server, viewer, t["cid"], t["name"], rid)
+    send_base_info(server, viewer, t["cid"], t["name"], rid, nation=DUMMY_NATION)
     if t["dead"]:
         send_game_event(server, viewer, 19, 50107, struct.pack("<Iff", rid, 0.0, 0.0))
     else:
@@ -2632,7 +2658,7 @@ def show_player(server, viewer, other):
     """Create another player's robot on viewer's client (as a remote robot)."""
     spawn_robot(server, viewer, other.cid, other.player_rid, other.pos, other.detachment, other.name, local=False)
     send_base_info(server, viewer, other.cid, other.name, other.player_rid, other.kills, other.deaths,
-                   rank_for(STORE.stats(other.cid).get("honor", 0)))
+                   rank_for(STORE.stats(other.cid).get("honor", 0)), nation_of(other.cid))
     if other.player_dead:
         send_game_event(server, viewer, 19, 50107, struct.pack("<Iff", other.player_rid, 0.0, 0.0))
     else:
@@ -2680,7 +2706,8 @@ def join_match(server, peer):
     peer.next_shot = 0.0
     rid = peer.player_rid
     spawn_robot(server, peer, peer.cid, rid, peer.pos, peer.detachment, peer.name, local=True)
-    send_base_info(server, peer, peer.cid, peer.name, rid, rank=rank_for(STORE.stats(peer.cid).get("honor", 0)))
+    send_base_info(server, peer, peer.cid, peer.name, rid, rank=rank_for(STORE.stats(peer.cid).get("honor", 0)),
+                   nation=nation_of(peer.cid))
     # take up the weapon (the client ignores the hotkeys for the first seconds after spawning), then Revived:
     # first-person view (robot +0x308), the only view the weapons fire in
     send_game_event(server, peer, 19, 50105, struct.pack("<Iii", rid, 1, -1))
@@ -2731,11 +2758,12 @@ def on_game_close(server, peer, reason):
         leave_match(peer)
 
 
-def kill_report(m, victim_name, killer_name, weapon):
+def kill_report(m, victim_name, killer_name, weapon, victim_nation=0, killer_nation=0):
     """GS_Robot_Malice (19,50151): wstr victim | u32 nation | wstr killer | u32 nation | u32 weapon flyweight
     (0 = no feed line). Each client compares the names with its own character: victim = me counts a death,
     killer = me a kill streak."""
-    m.broadcast(19, 50151, wstr(victim_name) + struct.pack("<I", 0) + wstr(killer_name) + struct.pack("<II", 0, weapon))
+    m.broadcast(19, 50151, wstr(victim_name) + struct.pack("<I", victim_nation) + wstr(killer_name)
+                + struct.pack("<II", killer_nation, weapon))
 
 
 def credit_kill(server, killer, victim_text):
@@ -2754,7 +2782,7 @@ def hit_dummy(server, m, shooter, rid):
     t["dead"] = True
     log(f"[game] {t['name']} destroyed by {shooter.name}")
     m.broadcast(19, 50107, struct.pack("<Iff", rid, 0.0, 0.0))
-    kill_report(m, t["name"], shooter.name, loadout_weapon(shooter.cid))
+    kill_report(m, t["name"], shooter.name, loadout_weapon(shooter.cid), DUMMY_NATION, nation_of(shooter.cid))
     credit_kill(server, shooter, "a target robot")
     m.later(RESPAWN_DELAY, relive_target, m, rid)
     return True
@@ -2775,7 +2803,8 @@ def hit_player(server, m, victim, damage, killer_name, killer=None):
     STORE.add_log(victim.cid, f"Destroyed by {killer_name}")
     log(f"[game] {victim.name} destroyed by {killer_name}")
     m.broadcast(19, 50107, struct.pack("<Iff", victim.player_rid, 0.0, 0.0))
-    kill_report(m, victim.name, killer_name, loadout_weapon(killer.cid) if killer else DEFAULT_WEAPON)
+    kill_report(m, victim.name, killer_name, loadout_weapon(killer.cid) if killer else DEFAULT_WEAPON,
+                nation_of(victim.cid), nation_of(killer.cid) if killer else DUMMY_NATION)
     if killer:
         credit_kill(server, killer, victim.name)
         killer.player_kills += 1
@@ -2833,13 +2862,25 @@ def pick_victim(m, shooter, origin, aim):
     if landed < reach / RANGE_MARGIN - 1.0:
         reach = min(reach, landed + HIT_RADIUS)
 
-    def hit(pos):
-        return ray_hits(origin, aim, (pos[0], pos[1] + HIT_HEIGHT, pos[2]), HIT_RADIUS, reach)
+    def hit(rid, pos):
+        return any(ray_hits(origin, aim, (x, y + HIT_HEIGHT, z), HIT_RADIUS, reach) for x, y, z in m.recent(rid, pos))
+    if DEBUG:
+        for name, pos in [(t["name"], t["pos"]) for t in m.targets.values()] + [(p.name, p.pos) for p in m.peers
+                                                                                if p is not shooter]:
+            center = (pos[0], pos[1] + HIT_HEIGHT, pos[2])
+            d = [b - a for a, b in zip(origin, aim)]
+            along = sum((c - o) * x for c, o, x in zip(center, origin, d)) / (landed or 1.0)
+            miss = math.dist(center, [o + along * x / (landed or 1.0) for o, x in zip(origin, d)])
+            log(f"[game] shot vs {name} at {tuple(round(v, 1) for v in pos)}: from {tuple(round(v, 1) for v in origin)}"
+                f" to {tuple(round(v, 1) for v in aim)}, passes {miss:.1f} from its center {along:.1f} along")
     for rid, t in m.targets.items():
-        if not t["dead"] and hit(t["pos"]):
+        if not t["dead"] and hit(rid, t["pos"]):
             return rid
+    side = nation_of(shooter.cid)
     for p in m.peers:
-        if p is not shooter and not p.player_dead and hit(p.pos):
+        if p is shooter or p.player_dead or (side and nation_of(p.cid) == side):  # no damage to your own side
+            continue
+        if hit(p.player_rid, p.pos):
             return p
     return None
 
@@ -2863,18 +2904,25 @@ def relive_target(m, rid):
             return
         t = m.targets[rid]
         t.update(hp=float(DUMMY_HP), dead=False, pos=t["home"], phase=0.0, cooldown=AI_PAUSE, burst=0)
+        m.trails.pop(rid, None)
         for p in list(m.peers):
             relive_on(m.server, p, rid, t["cid"], t["pos"], (0.0, 0.0, 1.0), DUMMY_HP, DUMMY_HP)
 
 
-def send_base_info(server, peer, cid, name, rid, kills=0, deaths=0, rank=0):
+def nation_of(cid):
+    """A character's nation: FEDERAL or ALLIANCE, chosen in the client's Choose Nation screen before creating it."""
+    nation = (STORE.by_id(cid) or {}).get("model")
+    return nation if nation in NATIONS else 0
+
+
+def send_base_info(server, peer, cid, name, rid, kills=0, deaths=0, rank=0, nation=0):
     """GS_Character_Set_BaseInfo (19,30040) creates or updates a character (handler Game.dll 0x1035fab0):
     u32 char id | wstr name (character +8, shown on nameplates and in the kill feed) | u32 | u32 | u32
     | u32 rank (+0x44, 0 = Recruit) | u8 | u32 (+0xe8) | u32 (+0x108) | u8 (+0x168) | u8 (+0x169) | u8 (+0x220)
     | u32 kills (+0xf8) | u32 deaths (+0xfc) | u32 n x (u16 | u8) | u32 controlled robot id (+0xec)
     Without it a remote character has no name and its nameplate shows only "[GM]". A character with no group
     (+0xe8 = 0) gets a "[Need Team]" tag over its robot unless the +0x220 byte is set (Robot::updateHeading)."""
-    send_game_event(server, peer, 19, 30040, struct.pack("<I", cid) + wstr(name) + struct.pack("<IIIIB", 0, 0, 0, rank, 0)
+    send_game_event(server, peer, 19, 30040, struct.pack("<I", cid) + wstr(name) + struct.pack("<IIIIB", nation, 0, 0, rank, 0)
                     + struct.pack("<IIBBB", 0, 0, 0, 0, 1) + struct.pack("<III", kills, deaths, 0)
                     + struct.pack("<I", rid))
 
@@ -2909,6 +2957,7 @@ def relive_player(server, peer):
         peer.player_hp, peer.player_dead = float(PLAYER_HP), False
         peer.protected_until = time.time() + SPAWN_PROTECTION
         peer.pos, peer.facing, peer.steer = spawn_point(m, peer.slot), SPAWN_FACING, 0
+        m.trails.pop(peer.player_rid, None)  # where it was before it died does not count
         for p in list(m.peers):
             relive_on(server, p, peer.player_rid, peer.cid, peer.pos, peer.facing, PLAYER_HP, PLAYER_HP)
 
@@ -3003,8 +3052,8 @@ def spawn_robot(server, peer, cid, rid, pos, detachment, name, local):
     power = (512001, rid + 10, snapshots.func_power())  # Func_BasicCore_Energy: energy for reloads
     robot = player_robot(cid) if is_player(cid) else DEFAULT_ROBOT
     send_game_event(server, peer, 19, 50001, struct.pack("<III", cid, robot, rid)
-                    + snapshots.robot(robot_parts(cid, rid, pos), pos=pos, char=cid, power=power, hp=DUMMY_HP)
-                    + b"\x00")
+                    + snapshots.robot(robot_parts(cid, rid, pos), pos=pos, char=cid, power=power, hp=DUMMY_HP,
+                                      nation=nation_of(cid) if is_player(cid) else DUMMY_NATION) + b"\x00")
     if local:
         # ...and again afterwards so the character actually attaches to (and the camera follows) the robot
         send_game_event(server, peer, 19, 30100, struct.pack("<III", cid, rid, 0))

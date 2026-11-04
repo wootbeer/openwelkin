@@ -308,7 +308,7 @@ All gate requests carry a token; replies echo it with result 0.
 *S→C reply · verified*
 
 ```text
-u32 count | count x ( u32 id | str name | u8 gender | u32 model | u8 | u8 state )
+u32 count | count x ( u32 id | str name | u8 | u32 nation | u8 | u8 state )
 ```
 
 Count 0 opens nation select and character creation. State 2, 4 or 8 reopens nation select; anything else makes the client send CS\_CharacterOnline.
@@ -318,7 +318,7 @@ Count 0 opens nation select and character creation. State 2, 4 or 8 reopens nati
 
 *C→S · partial*
 
-Create a character. Request: `str name | u8 gender | u32 model | …`. Reply: `u32 new character id`; the client then asks for the list again.
+Create a character. Request, from `CCreateCharacterUI::ClickConfirm` and seen from the real client: `str name | str (empty) | u32 nation | u32 0 | u8 0 | u32 gender (1 or 2)`. The nation is the side picked on the Choose Nation screen before: 0x10 Federal, 0x20 Alliance (`NATION_TYPE`). The emulator keeps it in the column it calls `model`. Reply: `u32 new character id`; the client then asks for the list again.
 
 <a name="m-13-13004"></a>
 #### CS\_CharacterOnline `(13,13004)`
@@ -326,10 +326,10 @@ Create a character. Request: `str name | u8 gender | u32 model | …`. Reply: `u
 *S→C reply · partial*
 
 ```text
-u32 id | u8 state | u32 | u32 | u8 | str name | str | u8 | u8 gender | u32 model | str | str | str | u32 n | n x (u32 | u16 | u8 | u8)
+u32 id | u8 nation | u32 | u32 | u8 | str name | str | u8 | u8 | u32 | str | str | str | u32 n | n x (u32 | u16 | u8 | u8)
 ```
 
-Builds the hall (`CNewHallUI`).
+Builds the hall (`CNewHallUI`). The byte after the id is the character's nation (character +0x30). Real client 2026-11-04: with 0x20 the hall shows the Alliance emblem before the name instead of a star, and the name under "My Ranking" turns red.
 
 <a name="m-18-18029"></a>
 #### GetShootRoomIDByCountryID `(18,18029)`
@@ -540,11 +540,11 @@ The Ranking window's Honor tab. Shooting is (15,15100) and Crystal is (15,15106)
 
 ```text
 u32 total | u32 count | count x (
-  u32 character id | str name | u8 camp | u32 team
+  u32 character id | str name | u8 nation | u32 team
   | str | u8 rank level | u32 score )
 ```
 
-The client numbers the rows itself and highlights the row whose id is your character. Camp 0x10 draws the name green, 0x20 red, anything else almost black. The second string is read and thrown away; the u32 after the camp is a team id: if it is not 0 the client asks (15,15023) UpdateTeamInfo for it, once per row.
+The client numbers the rows itself and highlights the row whose id is your character. Nation 0x10 (Federal) draws the name green, 0x20 (Alliance) red, anything else almost black. The second string is read and thrown away; the u32 after the camp is a team id: if it is not 0 the client asks (15,15023) UpdateTeamInfo for it, once per row.
 
 <a name="m-15-15099"></a>
 #### CS\_OneCharacterExpRank `(15,15099)`
@@ -893,7 +893,8 @@ Walker\_Basic robot = flyweight 1311. See [Snapshots](#snapshots).
 |---|---|---|
 | character id | u32 | creates the character if it does not exist |
 | name | str | nameplates, kill feed |
-| — | 3 x u32 |  |
+| nation | u32 | character +0x30; 0x10 Federal, 0x20 Alliance |
+| — | 2 x u32 |  |
 | rank | u32 | 0 = Recruit |
 | GM flag | u8 | non-zero adds a "[GM]" nameplate prefix |
 | group id | u32 | +0xe8 |
@@ -952,6 +953,8 @@ u32 robot | u32 steer flags (1 = walking) | vec3 position | vec3 facing
 ```
 
 Remote robots only. Also 50101 (turn), 50102 (jump), 50103.
+
+Calls `Robot::Move(flags)` then `Robot::MoveTo(position)`. MoveTo puts the robot on the position at once when the robot is off screen, or the position is more than 15 units away (or more than 15 up or down). Closer, it only sets a glide, and the glide runs only when bit 0x80 of robot +0x19c is set; only `Robot::Revived` and `RobotCallback::OnEnterLand` set it, and our remote robots never have it. Real client 2026-11-04: the client walks a robot on by itself, speeds it up over about 4 s from a start, and lets it slide about a second after a stop, so a stopped robot stayed up to 9 units from where the server had it. The emulator now sends a robot that has stood for a second (sent again unchanged) twice in one packet: 20 units up, then in place. That puts it exactly where the server has it.
 
 <a name="m-19-50104"></a>
 #### GS\_Robot\_SystemPart (rebuild) `(19,50104)`
@@ -1306,7 +1309,7 @@ Objects are sent as snapshots. The client functions that read them are named `Wr
 
 | Class | Layout | Notes |
 |---|---|---|
-| WorldObject | vec3 pos \| 16 x f32 matrix \| u32 owner char \| u32 \| u32 target type \| u8 \| u32 \| u32 \| u32 n auras \| i32 skill (-1) | target type 1 = robot, 2 = establishment, 4/8/0x10 robot parts, 0x20 plain, 0x40 booty. Parts inherit the owner, and weapons need it. |
+| WorldObject | vec3 pos \| 16 x f32 matrix \| u32 owner char \| u32 nation \| u32 target type \| u8 \| u32 \| u32 \| u32 n auras \| i32 skill (-1) | target type 1 = robot, 2 = establishment, 4/8/0x10 robot parts, 0x20 plain, 0x40 booty. Parts inherit the owner, and weapons need it. Nation (+0x6c, `GetCurrentNation`): real client 2026-11-04, a robot of the other nation (or none) has a red name, one of your own a white name. |
 | SystemPart | WorldObject \| f32 \| f32 |  |
 | RobotBody | SystemPart \| 7 x u32 | flyweight 221010 |
 | RobotArmor | SystemPart \| 5 x u32 | 221020 (2 primary + 2 secondary slots) |
