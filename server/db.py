@@ -39,6 +39,9 @@ CREATE TABLE IF NOT EXISTS talents (
 CREATE TABLE IF NOT EXISTS contacts (
     character_id INTEGER NOT NULL REFERENCES characters (id), kind TEXT NOT NULL, other_id INTEGER NOT NULL,
     PRIMARY KEY (character_id, kind, other_id));
+CREATE TABLE IF NOT EXISTS texts (
+    character_id INTEGER NOT NULL REFERENCES characters (id), key TEXT NOT NULL, text TEXT NOT NULL,
+    PRIMARY KEY (character_id, key));
 CREATE TABLE IF NOT EXISTS event_log (
     id INTEGER PRIMARY KEY, character_id INTEGER NOT NULL REFERENCES characters (id), at INTEGER NOT NULL,
     kind INTEGER NOT NULL, text TEXT NOT NULL);
@@ -131,6 +134,8 @@ def write_character(con, account, c):
     con.execute("DELETE FROM contacts WHERE character_id = ?", (cid,))
     con.executemany("INSERT INTO contacts VALUES (?, ?, ?)",
                     [(cid, kind, other) for kind in ("friends", "blocked") for other in c.get(kind, [])])
+    con.execute("DELETE FROM texts WHERE character_id = ?", (cid,))
+    con.executemany("INSERT INTO texts VALUES (?, ?, ?)", [(cid, k, v) for k, v in c.get("texts", {}).items()])
 
 
 def write_stats(con, cid, stats):
@@ -190,6 +195,9 @@ def load_account(con, account):
     for cid, kind, other in con.execute(
             "SELECT * FROM contacts WHERE character_id IN (SELECT id FROM characters WHERE account = ?)", (account,)):
         ids[cid].setdefault(kind, []).append(other)
+    for cid, key, text in con.execute(
+            "SELECT * FROM texts WHERE character_id IN (SELECT id FROM characters WHERE account = ?)", (account,)):
+        ids[cid].setdefault("texts", {})[key] = text
     for cid, at, kind, text in con.execute(
             "SELECT character_id, at, kind, text FROM event_log "
             "WHERE character_id IN (SELECT id FROM characters WHERE account = ?) ORDER BY id", (account,)):

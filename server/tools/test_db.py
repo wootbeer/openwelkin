@@ -128,6 +128,15 @@ def characters():
     for n in range(ls.MAX_CONTACTS):
         ls.STORE.set_contact(cid, "blocked", 100000 + n, True)
     check("the lists have a limit", len(ls.STORE.contacts(cid, "blocked")) == ls.MAX_CONTACTS)
+    ls.STORE.save_suite(cid, 7, "Fast 1311 0 0 0 2 3101 3102 0")
+    ls.STORE.save_suite(cid, 8, EVIL)
+    ls.STORE.save_suite(cid, 7, "Faster 1311 0 0 0 0 0")
+    reopen()
+    check("loadout presets survive a restart", ls.STORE.suites(cid) == {7: "Faster 1311 0 0 0 0 0", 8: EVIL})
+    for n in range(ls.MAX_SUITES):
+        ls.STORE.save_suite(cid, 100 + n, "x")
+    check("presets have a limit", len(ls.STORE.suites(cid)) == ls.MAX_SUITES
+          and ls.STORE.save_suite(cid, 7, "changed"), str(len(ls.STORE.suites(cid))))
     for n in range(ls.LOG_KEEP + 20):
         ls.STORE.add_log(cid, f"line {n}")
     reopen()

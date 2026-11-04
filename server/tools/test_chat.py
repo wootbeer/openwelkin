@@ -175,6 +175,18 @@ async def scenario():
     await heard(ben)
     await asyncio.sleep(ls.CHAT_EVERY + 0.1)
 
+    # --- loadout presets (Robot Roof) ---
+    r = await amy.request(14, 14005, struct.pack("<I", 3) + ls.wstr("Fast 1311 0 0 0 1 3101 0"))
+    check("a preset is saved", r.result == 0)
+    r = await amy.request(14, 14005, struct.pack("<I", 4) + ls.wstr("x" * (ls.MAX_SUITE_TEXT + 1)))
+    check("a long preset is refused", r.result != 0)
+    r = await amy.request(14, 14005, struct.pack("<I", 4) + ls.wstr("bad\nline"))
+    check("a preset with control characters is refused", r.result != 0)
+    r = await amy.request(14, 14004, struct.pack("<IB", amy_id, 0))
+    check("presets come back", r.body == struct.pack("<II", 1, 3) + ls.wstr("Fast 1311 0 0 0 1 3101 0"), r.body.hex())
+    r = await ben.request(14, 14004, struct.pack("<IB", amy_id, 0))
+    check("no one else reads them", r.body == struct.pack("<I", 0))
+
     # --- battlefront contribution ---
     r = await amy.request(14, 14051, struct.pack("<II", amy_id, 1))
     check("contribution on a front", r.result == 0 and len(r.body) >= 4)

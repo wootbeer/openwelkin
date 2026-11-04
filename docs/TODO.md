@@ -4,12 +4,16 @@ From `loginserver.log`. Each one gets "success + 32 zero bytes" today. Most are 
 but the panels behind them show empty or zero. `(14,14057)` is skipped entirely because a zeroed
 reply crashes the client.
 
+2026-11-04, offline: every reply layout below was read from Game.dll (see "Read from the client, not tried in game" in
+PROTOCOL.md). All of them are safe with the zeroed reply (128 bytes); what is left is real data for them.
+
 Next step for each: find the observer's `OnBegin` (`tools/handler.py <Game.dll> <Observer>`), read the
 reply layout, and answer with real data.
 
 ## Character / progress
-- [ ] (13,13047) CS_CanFetchMoney
-- [ ] (14,14004) CGS_CharacterQuickSuite
+- [x] (13,13047) CS_CanFetchMoney: the reply's one u32 is read and dropped, nothing to do
+- [x] (14,14004) CGS_CharacterQuickSuite and (14,14005) save: Robot Roof loadout presets, kept as the client's text
+      and sent back (tested offline only; the meaning of the numbers in the text is not known)
 - [x] (14,14010) CG_Character_Get_Exploit
 - [ ] (14,14034) UpdateRankUpgrade
 - [x] (14,14040) CGS_GetAllMilitaryRank
@@ -17,7 +21,9 @@ reply layout, and answer with real data.
       front. Real client 2026-11-02: the Total Contribution column and Battle Joined show it; after one kill on Northern Front both show 10
 - [ ] (14,14054) CGS_CGSManager_CommandGradeTable
 - [x] (14,14057) CGS_GetCharacterTodayMilitary
-- [ ] (14,14059) GetCharacterHelpLog
+- [ ] (14,14059) GetCharacterHelpLog: help events seen, "10100|10101|". Nothing in Game.dll sends the save
+      (14,14060), so it stays empty. An empty log at rank level 1 opens the tutorial video; if that shows at
+      every login, send "10100|"
 
 ## Medals / badges
 - [x] (14,14007) CGS_UpdateMyMedal
@@ -54,7 +60,7 @@ reply layout, and answer with real data.
 - [ ] (20,20116) Task_GetHoldTask
 - [x] (21,21047) UpdateAllAnnouncement
 - [ ] (21,21048) CS_GetTaskServerAfficheList
-- [ ] (21,21069) CS_AckTradeRes
+- [x] (21,21069) CS_AckTradeRes: one u32, read and dropped
 - [x] Friend and block lists, real client 2026-11-01: add, delete and block from the name menu (right click), lists come back
       after a server restart, blocked lines stop. Not known: what the list's state value means (the server sends 1 for online)
 
@@ -82,7 +88,8 @@ reply layout, and answer with real data.
 - [x] Camps are nations, real client 2026-11-04: the create request carries the side picked on the Choose Nation
       screen (0x10 Federal, 0x20 Alliance), kept in the "model" column. Rows send it as the camp byte; CharacterOnline
       sends it after the id, which turns your own name under My Ranking red (Alliance) and puts the Alliance emblem
-      before your name in the hall. Characters made by scripts have none, so their names are almost black
+      before your name in the hall. Characters made by older scripts have none, so their names are almost black; tools/loadtest.py now
+      makes bots of both nations
 - [x] Weapon tab, real client 2026-11-03: (15,15108) gives the buttons, u32 n | n x (u32 kind 1 Weapon / else
       Vehicle | u32 weapon id | str name); the ten shop weapons show. (15,15102) list has the Honor layout, request
       u8 period | u32 kind | u32 weapon | u32 first row | u32 rows; (15,15103) my place, u32 character id | u8 period |

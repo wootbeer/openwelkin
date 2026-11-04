@@ -55,6 +55,14 @@
   - [CGS\_UpdateCharacterTalentPoint](#m-14-14044) `(14,14044)`
   - [CGS\_CharacterLearnTalentCost](#m-14-14058) `(14,14058)`
   - [CGS\_CharacterLearnTalent](#m-14-14047) `(14,14047)`
+- [Read from the client, not tried in game](#read-msgs)
+  - [CGS\_CharacterQuickSuite](#m-14-14004) `(14,14004)`
+  - [CGS\_SaveCharacterQuickSuite](#m-14-14005) `(14,14005)`
+  - [GetCharacterHelpLog](#m-14-14059) `(14,14059)`
+  - [UpdateTeamInfo](#m-15-15023) `(15,15023)`
+  - [Task\_GetHoldTask](#m-20-20116) `(20,20116)`
+  - [CS\_GetTaskServerAfficheList](#m-21-21048) `(21,21048)`
+  - [GS\_RequestSuiteInSelling](#m-24-24028) `(24,24028)`
 - [Entering a battle](#battle)
   - [first game message](#m-9-40851) `(9,40851)`
   - [GS\_Battle\_Initialize](#m-19-40050) `(19,40050)`
@@ -769,6 +777,95 @@ u32 character id | u32 talent id
 ```
 
 The upgrade button. Reply: `u32 remaining points`. The client adds the level itself. An empty reply shows the bad-data popup.
+
+<a name="read-msgs"></a>
+
+## Read from the client, not tried in game
+
+Reply layouts read from the observers in Game.dll. A read past the end of a reply is skipped and leaves the old value (often stack junk), so a list reply should always carry its count.
+
+<a name="m-14-14004"></a>
+#### CGS\_CharacterQuickSuite `(14,14004)`
+
+*S→C reply · partial*
+
+```text
+u32 n | n x ( u32 preset id | str text )
+```
+
+Request: `u32 character id | u8`. Loadout presets of the Robot Roof. The client parses the text itself, space separated: `name a b c d k <k numbers> m <m numbers>` (meaning of the numbers not known; names cannot hold spaces). The emulator sends back what 14005 saved.
+
+<a name="m-14-14005"></a>
+#### CGS\_SaveCharacterQuickSuite `(14,14005)`
+
+*C→S · partial*
+
+```text
+u32 preset id | str text
+```
+
+Sent from Game.dll 0x106afdb0, text as in 14004. The ack has no body; any other result shows ROBOTROOFUI\_QUICKSUITESAVE\_FAILED. The emulator keeps 10 presets of up to 400 plain characters.
+
+<a name="m-14-14059"></a>
+#### GetCharacterHelpLog `(14,14059)`
+
+*S→C reply · partial*
+
+```text
+str log | u8 flag
+```
+
+Help events already seen, each id followed by `|`: `10100|10101|`. A log starting with `|` or holding `||` hangs the client. With 10100 missing and rank level (+0x44) 1, the client opens the tutorial video. Nothing in Game.dll sends the save request (14,14060), so the emulator answers with an empty log.
+
+<a name="m-15-15023"></a>
+#### UpdateTeamInfo `(15,15023)`
+
+*S→C reply · partial*
+
+```text
+str name | u32 | u8 | u8 | u8 | str | str | u32 | str | u32 | u32 | str
+| str | u32 | u32 | u32 | u32 | u32 | u32
+```
+
+Request: `u32 team id`. At least 49 bytes. Fills the team name cache, and the player's own team when the id is theirs. Asked for any nonzero team id in ranking rows, so those send 0.
+
+<a name="m-20-20116"></a>
+#### Task\_GetHoldTask `(20,20116)`
+
+*S→C reply · partial*
+
+```text
+u32 n | n x ( str token | str name | str info | u32 type | u32 mode | i32 time
+| 3 x u32 position | u32 target | str | u32 battlefield | str | u32 accepter | str
+| u32 bound object | str | u32 template | u32 level )
+```
+
+Held missions. A body under 4 bytes reads the count from stack junk and loops on huge allocations: always send the count.
+
+<a name="m-21-21048"></a>
+#### CS\_GetTaskServerAfficheList `(21,21048)`
+
+*S→C reply · partial*
+
+```text
+u32 n | n x ( str text | u32 seconds )
+```
+
+Each line goes to the hall's scrolling bar (dialog 0x71) for that many seconds; 0 keeps it until cleared.
+
+<a name="m-24-24028"></a>
+#### GS\_RequestSuiteInSelling `(24,24028)`
+
+*S→C reply · partial*
+
+```text
+u32 (not read) | u32 n | n x ( u32 id | str | str | u32 icon | u32 goods id
+| u32 point price | u32 | u32 money price | u32 )
+```
+
+Shop Package tab. Picture GoodsPic\_&lt;icon>.dds; money price -1 shows the point price instead. Send at least 8 bytes.
+
+Also read, all safe with an empty list: (14,14034) `u32 n | n x (u8 rank | u32)` in the own-corps window; (14,14054) `u32 n | n x (u8 grade | u32)`; (15,15022) corps name and details for a corps id; (15,15074) `u32 n | n x (u32 team | str | str | str flag | u8)`; (15,15093) `u32 n | n x (u32 | u32)`; (17,17079) `u32 0` = no headquarters; (17,17099) `u32 n | n x city link`; (13,13047) and (21,21069) read one u32 and drop it.
 
 <a name="battle"></a>
 

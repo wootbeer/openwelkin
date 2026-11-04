@@ -160,7 +160,9 @@ async def run_bot(i, args, key, res, stop_at):
         if struct.unpack_from("<I", r.body)[0]:
             cid = struct.unpack_from("<I", r.body, 4)[0]
         else:
-            r = await gate.request(13, 13006, ls.wstr(f"Bot{i}") + bytes([1]) + struct.pack("<I", 1) + bytes(8))
+            # the create request as the client sends it; bots alternate between the two nations
+            nation = (ls.FEDERAL, ls.ALLIANCE)[i % 2]
+            r = await gate.request(13, 13006, ls.wstr(f"Bot{i}") + ls.wstr("") + struct.pack("<IIBI", nation, 0, 0, 1))
             if r.result:
                 raise RuntimeError(f"create character result {r.result}")
             cid = struct.unpack_from("<I", r.body)[0]

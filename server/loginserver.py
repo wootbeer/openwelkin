@@ -722,6 +722,26 @@ class Store:
         """Character ids on a friend ("friends") or block ("blocked") list."""
         return list((self.by_id(cid) or {}).get(kind, []))
 
+    def suites(self, cid):
+        """{preset id: text} of a character's saved loadout presets (Robot Roof, Quick Suite)."""
+        texts = (self.by_id(cid) or {}).get("texts", {})
+        return {int(k[6:]): v for k, v in texts.items() if k.startswith("suite:")}
+
+    def save_suite(self, cid, sid, text):
+        """Keep a loadout preset. False if the character already has MAX_SUITES others."""
+        with self.lock:
+            c = self.by_id(cid)
+            if not c:
+                return False
+            texts = c.setdefault("texts", {})
+            key = f"suite:{sid}"
+            if key not in texts and sum(k.startswith("suite:") for k in texts) >= MAX_SUITES:
+                return False
+            texts[key] = text
+            self.mark_dirty(cid)
+            self.save()
+            return True
+
     def set_contact(self, cid, kind, other, on):
         """Add or remove a list entry. False if the list is full."""
         with self.lock:
@@ -838,6 +858,8 @@ ACCOUNTS = Accounts()
 BANS = Bans()
 ONLINE = {}  # account -> its gate Session; one per account, a second login closes the first
 MAX_CONTACTS = 100  # entries on a friend or block list
+MAX_SUITES = 10  # loadout presets per character
+MAX_SUITE_TEXT = 400  # characters in one preset (a name and a few dozen part ids)
 KICK_NOTICE = 1.5  # seconds a kicked player has to see why, before the connection closes
 CHAT_MAX, CHAT_EVERY, CHAT_QUEUE = 200, 0.5, 100  # characters in a line, seconds between a player's lines, lines waiting
 GM_COMMANDS = {"who", "matches", "kick", "ban", "unban", "bans"}
@@ -1672,6 +1694,29 @@ class Session:
         for row in text.splitlines()[:10]:
             self.chat_line(21200, "Server", row[:CHAT_MAX])
 
+    def on_quick_suites(self, msg):
+        # CGS_CharacterQuickSuite (14,14004), request: u32 character id | u8. Loadout presets of the Robot Roof.
+        # Reply read by CGS_CharacterQuickSuite_Observer (0x10401eb0): u32 n | n x (u32 preset id | str text), the text
+        # as the client saved it with 14005. The client parses it itself (name and numbers, space separated).
+        cid = struct.unpack_from("<I", msg.body)[0] if len(msg.body) >= 4 else None
+        suites = STORE.suites(cid) if self.own_character(cid) else {}
+        self.reply(msg, struct.pack("<I", len(suites)) + b"".join(struct.pack("<I", k) + wstr(v)
+                                                                  for k, v in sorted(suites.items())))
+
+    def on_save_quick_suite(self, msg):
+        # CGS_SaveCharacterQuickSuite (14,14005), request (sent from Game.dll 0x106afdb0): u32 preset id | str text,
+        # "name a b c d k <k numbers> m <m numbers>". The ack has no body; a refusal shows "save failed".
+        # The text is only ever sent back to the same character, but is still kept short and to plain characters.
+        try:
+            sid = struct.unpack_from("<I", msg.body)[0]
+            text, _ = read_wstr(msg.body, 4)
+        except (struct.error, ValueError):
+            return self.reply(msg, b"", result=ERR_PROTOCOL)
+        ok = (self.character is not None and len(text) <= MAX_SUITE_TEXT and text.isprintable()
+              and STORE.save_suite(self.character["id"], sid, text))
+        log(f"{self.addr} save quick suite {sid} -> {'ok' if ok else 'refused'}")
+        self.reply(msg, b"", result=0 if ok else ERR_UNKNOWN)
+
     def own_character(self, cid):
         """True when cid is one of this session's account characters (never trust ids from the client)."""
         return self.account is not None and STORE.find(self.account, cid) is not None
@@ -1975,6 +2020,8 @@ HANDLERS = {
     (15, 15102): Session.on_weapon_rank_list,    # CS_CharacterWeaponRank
     (15, 15103): Session.on_my_weapon_rank,      # CS_OneCharacterWeaponRank
     (14, 14047): Session.on_learn_talent,        # CGS_CharacterLearnTalent
+    (14, 14004): Session.on_quick_suites,        # CGS_CharacterQuickSuite (Robot Roof presets)
+    (14, 14005): Session.on_save_quick_suite,    # CGS_SaveCharacterQuickSuite
     (24, 24009): Session.on_goods_flyweight,     # GS_RequestGoodsFlyweight
     (24, 24002): Session.on_item_flyweight,      # GS_UpdateItemFlyweight
     (24, 24021): Session.on_buy,                 # GS_RequestBuyGoods
