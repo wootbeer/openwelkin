@@ -213,6 +213,19 @@ pb.pos = (far, 0.0, 0.0)
 step(pa.fire_interval)
 step(pa.fire_interval)
 ok &= check("a held trigger stops at the range limit", pb.player_hp == hp)
+msg(A, 40125, b"\0" * 4)
+pb.pos = (10.0, 0.0, 0.0)
+step(pa.fire_interval)
+hp = pb.player_hp
+shoot(aim=(3.0, 2.5, 0.0))
+ok &= check("a shot that landed on a wall in front of the robot does nothing", pb.player_hp == hp)
+shoot(aim=(14.0, 2.5, 0.0))
+ok &= check("a shot that landed on the ground behind it hits", pb.player_hp < hp)
+sky = pa.fire_range / ls.RANGE_MARGIN
+pb.pos = (sky + 20, 0.0, 0.0)
+hp = pb.player_hp
+shoot(aim=(sky, 2.5, 0.0))
+ok &= check("a shot at open sky reaches the whole range", sky + 20 < pa.fire_range and pb.player_hp < hp)
 ls.WEAPONS[1] = (100.0, 0.5, 2.0)
 ok &= check("a melee weapon can reach a robot", ls.fire_range(1) > ls.HIT_RADIUS + ls.MUZZLE_REACH)
 del ls.WEAPONS[1]

@@ -84,7 +84,9 @@ def characters():
     ls.STORE.add_stats(cid + 1, kills=-ls.STORE.stats(cid + 1)["kills"], talent_reset=0)
     ls.STORE.add_stats(cid, money=3)
     check("other stats leave the periods alone", ls.STORE.stats(cid)["kills_day"] == 52)
-    ls.STORE.by_id(cid)["stats"]["at_day"] -= 1  # as if the kills were yesterday
+    with ls.STORE.lock:  # as if the kills were yesterday
+        ls.STORE.by_id(cid)["stats"]["at_day"] -= 1
+        ls.STORE.mark_dirty(cid, stats={"at_day"})
     check("yesterday is not today, and nothing earned is not listed", ls.STORE.top("kills", "day") == [],
           str(ls.STORE.top("kills", "day")))
     ls.STORE.add_stats(cid, kills=1)
@@ -101,6 +103,19 @@ def characters():
     check("a new week starts weapon kills again too", ls.STORE.stats(cid)["weapon3101_week"] == 0
           and ls.STORE.top("weapon3101", "week") == [] and ls.STORE.stats(cid)["weapon3101"] == 2)
     ls.TOP_EVERY = 60
+    with ls.STORE.lock:  # a whole-character change waiting for the batch, then a stats-only one on top of it
+        ls.STORE.by_id(cid)["state"] = 7
+        ls.STORE.mark_dirty(cid)
+    ls.STORE.add_stats(cid, honor=2)
+    honor = ls.STORE.stats(cid)["honor"]
+    reopen()
+    check("a stats change does not hide another waiting change", ls.STORE.by_id(cid)["state"] == 7
+          and ls.STORE.stats(cid)["honor"] == honor)
+    ls.STORE.add_stats(cid, kills=1)
+    check("a stats-only batch writes only those stats", ls.STORE.changed == {cid: {"kills", "kills_day", "kills_week",
+                                                                                  "kills_month"}}, str(ls.STORE.changed))
+    reopen()
+    check("and they are saved", ls.STORE.stats(cid)["kills_day"] == 2)
     ls.STORE.set_contact(cid, "friends", cid + 1, True)
     ls.STORE.set_contact(cid, "blocked", cid + 1, True)
     ls.STORE.set_contact(cid, "friends", cid + 1, True)

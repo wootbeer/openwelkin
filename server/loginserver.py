@@ -408,7 +408,8 @@ class Store:
 
     def __init__(self):
         self.data = {"next_id": 1000, "accounts": {}}  # accounts: the loaded ones
-        self.changed, self.lines = set(), []  # character ids and event log lines not saved yet
+        self.changed, self.lines = {}, []  # not saved yet: character id -> None (all of it) or the stats that
+        # changed; event log lines
         self.done = {}  # gate: game server run -> its last report applied here (saved with the next batch)
         self.saved = {}  # the same, as far as characters.db has it
         self.used = collections.OrderedDict()  # loaded accounts, least recently used first
@@ -432,10 +433,13 @@ class Store:
     def save(self):
         """Write what changed now (call with the lock held), all or nothing."""
         with self.con:
-            for cid in self.changed:
+            for cid, keys in self.changed.items():
                 account, c = self.lookup(cid)
-                if c:
+                if c and keys is None:
                     db.write_character(self.con, account, c)
+                elif c:
+                    st = c.get("stats", {})
+                    db.write_stats(self.con, cid, {k: st[k] for k in keys if k in st})
             db.add_log_lines(self.con, self.lines, LOG_KEEP)
             db.write_reports(self.con, {b: n for b, n in self.done.items() if self.saved.get(b) != n}, int(time.time()),
                              self.REPORTS_KEEP)
@@ -444,12 +448,15 @@ class Store:
         self.lines.clear()
         self.dirty = False
 
-    def mark_dirty(self, cid, line=None):
-        """Save later (call with the lock held): for frequent, low-value changes like kills and log lines."""
+    def mark_dirty(self, cid, line=None, stats=None):
+        """Save later (call with the lock held): for frequent, low-value changes like kills and log lines. With
+        stats, only those stats changed, and only they are written (unless something else is waiting too)."""
         if line:
             self.lines.append((cid, *line))
+        elif stats is None or (cid in self.changed and self.changed[cid] is None):
+            self.changed[cid] = None
         else:
-            self.changed.add(cid)
+            self.changed.setdefault(cid, set()).update(stats)
         self.dirty = True
 
     def flush(self):
@@ -563,6 +570,7 @@ class Store:
             if not c:
                 return
             st = c.setdefault("stats", {})
+            touched = set(deltas)
             for k, v in deltas.items():
                 st[k] = st.get(k, START_MONEY if k == "money" else START_POINTS if k == "points" else 0) + v
             counted = [k for k, v in deltas.items() if v and by_period(k)]
@@ -570,13 +578,16 @@ class Store:
                 now = period_now(p)
                 if st.get(f"at_{p}") != now:  # a new day, week or month: start again
                     st[f"at_{p}"] = now
+                    touched.add(f"at_{p}")
                     for k in list(st):  # zeroed, not removed: saving only writes the stats that are there
                         base, _, end = k.rpartition("_")
                         if end == p and by_period(base):
                             st[k] = 0
+                            touched.add(k)
                 for k in counted:
                     st[f"{k}_{p}"] = st.get(f"{k}_{p}", 0) + deltas[k]
-            self.mark_dirty(cid)
+                    touched.add(f"{k}_{p}")
+            self.mark_dirty(cid, stats=touched)
 
     def buy(self, cid, item, field, price):
         """Charge price from stats[field] and add item to the character's items. False if not enough."""
@@ -2077,7 +2088,7 @@ class RemoteStore(Store):
         self.unsent, self.unsaved = collections.deque(), collections.deque()  # (seq, kind, fields)
         self.report_lock = threading.Lock()
 
-    def mark_dirty(self, cid, line=None):
+    def mark_dirty(self, cid, line=None, stats=None):
         pass
 
     def flush(self):
@@ -2815,9 +2826,15 @@ def in_range(peer, pos):
 
 
 def pick_victim(m, shooter, origin, aim):
-    """What the trigger-pull ray hits: a dummy rid, another player, or None."""
+    """What the trigger-pull ray hits: a dummy rid, another player, or None. The client's aim point is where its
+    ray met the ground or a wall (remote robots do not stop it), so nothing past that point is hit. A shot at open
+    sky ends at exactly the weapon's range (WP1Range), and then the whole range counts."""
+    reach, landed = shooter.fire_range, math.dist(origin, aim)
+    if landed < reach / RANGE_MARGIN - 1.0:
+        reach = min(reach, landed + HIT_RADIUS)
+
     def hit(pos):
-        return ray_hits(origin, aim, (pos[0], pos[1] + HIT_HEIGHT, pos[2]), HIT_RADIUS, shooter.fire_range)
+        return ray_hits(origin, aim, (pos[0], pos[1] + HIT_HEIGHT, pos[2]), HIT_RADIUS, reach)
     for rid, t in m.targets.items():
         if not t["dead"] and hit(t["pos"]):
             return rid

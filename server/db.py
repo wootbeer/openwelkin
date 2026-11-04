@@ -133,6 +133,12 @@ def write_character(con, account, c):
                     [(cid, kind, other) for kind in ("friends", "blocked") for other in c.get(kind, [])])
 
 
+def write_stats(con, cid, stats):
+    """Save only these stats of a character already in the database (call inside a transaction)."""
+    con.executemany("INSERT INTO stats VALUES (?, ?, ?) ON CONFLICT DO UPDATE SET value = excluded.value",
+                    [(cid, k, v) for k, v in stats.items()])
+
+
 def add_log_lines(con, lines, keep):
     """lines = (character id, time, kind, text). Keeps the newest `keep` of each (call inside a transaction)."""
     con.executemany("INSERT INTO event_log (character_id, at, kind, text) VALUES (?, ?, ?, ?)", lines)

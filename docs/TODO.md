@@ -138,7 +138,10 @@ reply layout, and answer with real data.
       = countdown, (19,52001) u8 nation | i32 = score of a side ("Our Force" / "Enemy Force"), (20,20130) u32 n |
       n x 6 str = score table. The local character's nation (+0x30) picks the sides; 0x10 is one of them. Not read yet:
       what sets +0x30, and whether a catalog 20 message reaches the client on the game session
-- [ ] Hit detection is generous (HIT_RADIUS 6 around the robot or the client's ray end point): shots at the ground next to a player count
+- [ ] Hit detection is generous (HIT_RADIUS 6 around the robot or the client's ray end point): shots at the ground next to a player count.
+      2026-11-04, offline: nothing past where the shot landed (plus HIT_RADIUS) is hit any more, so a shot into a wall or
+      the ground in front of a robot misses. A shot at open sky lands at exactly WP1Range and still reaches the whole
+      range. Not tried in game; the radius is still 6
 - [x] Test tooling: tools/vinput.py drives a client's DirectInput keyboard/mouse (even minimized); tools/quickenter.js presses Quick Enter; MW_FORCE_BF=1 sends every Quick Enter to one battlefield. The client saves LastAccount after login, so set Welkin4591.ini right before each launch.
 
 ## Admin / moderation (2026-10-29, tested offline)
@@ -229,8 +232,10 @@ reply layout, and answer with real data.
       the last 5000 accounts used (CACHE_ACCOUNTS; online ones and ones with unsaved changes always stay). Rankings
       are read from characters.db on a second, read-only connection. 50000 characters: start 0.2 s and 11 MB (was
       17 s and 240 MB), a login load 0.4 ms, a ranking 0.4 to 0.8 s once a minute without holding up the game
-- [ ] A save batch holds the store lock about 0.3 ms per changed character (100 ms for 300): every item, talent
-      and contact is written again even when only stats changed
+- [x] A save batch held the store lock about 0.3 ms per changed character (100 ms for 300): every item, talent
+      and contact was written again even when only stats changed. Now a battle stats change writes only the stats
+      it changed, unless something else of that character is waiting too. 300 characters with 12 items, 15 talents
+      and 40 contacts each: 16 ms a batch (was 119 ms)
 - [x] Admin command backup copies the databases into backups/ on each server while it runs. Copying the .db files by
       hand is only safe with the server stopped
 - Load test, 2026-10-30, with SQLite: 800 of 800 fake players on 3 game servers, about 267 each: 14 ms tick (of 33), 45% of
