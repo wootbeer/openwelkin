@@ -534,9 +534,9 @@ u32 count | count x ( u32 battlefront id | u32 contribution )
 <a name="m-15-15098"></a>
 #### CS\_CharacterExpRank `(15,15098)`
 
-*S→C reply · partial*
+*S→C reply · verified*
 
-The Ranking window's Honor tab. Shooting is (15,15100) and Crystal is (15,15106), same layout. Request: `u8 period | u32 first row | u32 rows` (Shooting has one more u8 in front). Period 1 Total, 2 Monthly, 3 Weekly, 4 Daily; the client asks for 20 rows and has no paging. For a period the emulator lists what was earned in it (honor, kills, crystal earned), and only characters who earned something.
+The Ranking window's Honor tab. Shooting is (15,15100) and Crystal is (15,15106), same layout. Request: `u8 period | u32 first row | u32 rows`; Shooting has a u8 1 after the period. Period 1 Total, 2 Monthly, 3 Weekly, 4 Daily; the client asks for 20 rows and has no paging. For a period the emulator lists what was earned in it (honor, kills, crystal earned), and only characters who earned something.
 
 ```text
 u32 total | u32 count | count x (
@@ -549,9 +549,9 @@ The client numbers the rows itself and highlights the row whose id is your chara
 <a name="m-15-15099"></a>
 #### CS\_OneCharacterExpRank `(15,15099)`
 
-*S→C reply · partial*
+*S→C reply · verified*
 
-Request: `u32 character id | u8 period`. Also (15,15101) and (15,15107) for the other tabs.
+Request: `u32 character id | u8 period`. Also (15,15101) and (15,15107) for the other tabs; Shooting's (15,15101) has a u8 1 at the end.
 
 ```text
 u32 place counted from 0 | u32 score
@@ -562,7 +562,7 @@ Shown as "My Ranking" under the list only when the place is past 18 (seen in gam
 <a name="m-15-15108"></a>
 #### CS\_RankedWeaponFlyweight `(15,15108)`
 
-*S→C reply · read, not tried*
+*S→C reply · verified*
 
 The Ranking window's Weapon and Vehicle tab buttons. Request: `u32` (0).
 
@@ -575,9 +575,9 @@ Kind 1 makes a Weapon tab button, any other kind a Vehicle tab button.
 <a name="m-15-15102"></a>
 #### CS\_CharacterWeaponRank `(15,15102)`
 
-*S→C reply · read, not tried*
+*S→C reply · verified*
 
-One weapon's list, same layout as (15,15098). The client reads its request back as `u8 period | u32 | u32 | u32`; the emulator takes those as weapon id, first row and rows. My place is (15,15103): request `u32 character id | u8 period | u32 weapon id | u32`, reply `u32 place | u32 score`. The emulator's score is kills made with that weapon.
+One weapon's list, same layout as (15,15098). Request: `u8 period | u32 kind | u32 weapon id | u32 first row | u32 rows`, kind as in (15,15108). My place is (15,15103): request `u32 character id | u8 period | u32 kind | u32 weapon id`, reply `u32 place | u32 score`. The emulator's score is kills made with that weapon.
 
 <a name="shop-msgs"></a>
 

@@ -70,7 +70,9 @@ PLAYER_HP = 1000  # player robot armor
 KILL_HONOR, KILL_PAY = 10, 5  # Honor and Bonus awarded per destroyed dummy
 # dummy AI: patrol back and forth, engage the player inside AI_RANGE with bursts of AI_BURST shots
 SPAWN_PROTECTION = 4.0  # seconds after a respawn before the dummies open fire
-AI_TICK, AI_SPEED, AI_PATROL = 0.2, 4.0, 12.0  # seconds per update, units per second, patrol half-length
+# AI_SPEED is the Walker's body speed (MOVE_SPEED): between moves the client walks a robot on at that speed, so a
+# dummy that is slower or changes speed jumps back at every move (seen in game 2026-11-03)
+AI_TICK, AI_SPEED, AI_PATROL = 0.2, 8.0, 12.0  # seconds per update, units per second, patrol half-length
 AI_RANGE, AI_BURST, AI_PAUSE, AI_HIT_CHANCE, AI_DAMAGE = 70.0, 6, 1.5, 0.5, 15.0
 HIT_RADIUS, HIT_HEIGHT = 6.0, 2.5  # generous hit sphere: the client raycast passes through remote robots
 MUZZLE_REACH = 15.0     # a shot must start this close to where the server last saw the robot
@@ -1261,10 +1263,10 @@ class Session:
     # CS_CharacterExpRank_Observer 0x1035cf50: u32 total | u32 n | n x (u32 character id (your own row is highlighted) |
     # str name | u8 camp (0x10 green, 0x20 red, else the name is drawn almost black) | u32 team (not 0: the client asks
     # UpdateTeamInfo (15,15023) for it) | str (not read) | u8 rank level | u32 score). The client numbers the rows itself.
-    # Request: [u8 for Shooting] u8 period (1 Total, 2 Monthly, 3 Weekly, 4 Daily) | u32 first row | u32 rows (20); the
-    # window has no paging. My place (15,15099 / 15101 / 15107), request u32 character id | [u8 for Shooting] u8 period:
-    # reply u32 place counted from 0 | u32 score; shown under the list only past place 18. Shooting sends 1 in its extra
-    # byte; that the period is the later byte is a guess (in game only Total was tried there).
+    # Request: u8 period (1 Total, 2 Monthly, 3 Weekly, 4 Daily) | [u8 1 for Shooting] | u32 first row | u32 rows (20);
+    # the window has no paging. My place (15,15099 / 15101 / 15107), request u32 character id | u8 period | [u8 1 for
+    # Shooting]: reply u32 place counted from 0 | u32 score; shown under the list only past place 18. All seen in game
+    # 2026-11-03, every tab and period.
     @staticmethod
     def rank_source(type_, period):
         """(stat, period name) for a Ranking tab: totals for Total, else what was earned in that period."""
@@ -1273,14 +1275,14 @@ class Session:
 
     def on_rank_list(self, msg):
         first, count = struct.unpack_from("<II", msg.body, len(msg.body) - 8) if len(msg.body) >= 9 else (0, TOP_ROWS)
-        period = msg.body[-9] if len(msg.body) >= 9 else 1
+        period = msg.body[0] if len(msg.body) >= 9 else 1
         self.send_rank_rows(msg, STORE.top(*self.rank_source(msg.type, period)), first, count)
 
-    # Weapon tab (read from Game.dll, not tried in game). Its buttons come from CS_RankedWeaponFlyweight (15,15108),
-    # observer 0x1035e0e0: u32 n | n x (u32 kind (1 Weapon tab, else Vehicle tab) | u32 weapon id | str name). A list
-    # (15,15102), observer 0x1035d810, has the Honor layout; the client reads its request back as u8 period | u32 |
-    # u32 | u32, taken here as the weapon then first row and rows. My place (15,15103): u32 character id | u8 period
-    # | u32 weapon | u32, reply u32 place | u32 score. The score is kills made with that weapon.
+    # Weapon tab. Its buttons come from CS_RankedWeaponFlyweight (15,15108), observer 0x1035e0e0: u32 n | n x (u32
+    # kind (1 Weapon tab, else Vehicle tab) | u32 weapon id | str name); real client 2026-11-03, the ten shop weapons
+    # show. A list (15,15102), observer 0x1035d810, has the Honor layout. Its request, seen in game 2026-11-03:
+    # u8 period | u32 kind | u32 weapon | u32 first row | u32 rows (20). My place (15,15103): u32 character id | u8
+    # period | u32 kind | u32 weapon, reply u32 place | u32 score. The score is kills with that weapon.
     def on_ranked_weapons(self, msg):
         body = struct.pack("<I", len(RANKED_WEAPONS))
         for wid in RANKED_WEAPONS:
@@ -1288,12 +1290,12 @@ class Session:
         self.reply(msg, body)
 
     def on_weapon_rank_list(self, msg):
-        period, wid, first, count = struct.unpack_from("<BIII", msg.body) if len(msg.body) >= 13 else (1, 0, 0, 0)
+        period, _, wid, first, count = struct.unpack_from("<BIIII", msg.body) if len(msg.body) >= 17 else (1, 1, 0, 0, 0)
         rows = STORE.top(f"weapon{wid}", PERIODS.get(period)) if wid in RANKED_WEAPONS else []
         self.send_rank_rows(msg, rows, first, count)
 
     def on_my_weapon_rank(self, msg):
-        cid, period, wid = struct.unpack_from("<IBI", msg.body) if len(msg.body) >= 9 else (0, 1, 0)
+        cid, period, _, wid = struct.unpack_from("<IBII", msg.body) if len(msg.body) >= 13 else (0, 1, 1, 0)
         rows = STORE.top(f"weapon{wid}", PERIODS.get(period)) if wid in RANKED_WEAPONS else []
         self.send_my_rank(msg, cid, rows)
 
@@ -1311,7 +1313,7 @@ class Session:
 
     def on_my_rank(self, msg):
         cid = struct.unpack_from("<I", msg.body)[0] if len(msg.body) >= 4 else 0
-        self.send_my_rank(msg, cid, STORE.top(*self.rank_source(msg.type - 1, msg.body[-1] if len(msg.body) >= 5 else 1)))
+        self.send_my_rank(msg, cid, STORE.top(*self.rank_source(msg.type - 1, msg.body[4] if len(msg.body) >= 5 else 1)))
 
     # Contribution on a battlefront: the honor earned there. One front (14,14051): request u32 character id | u32 front,
     # reply u32, polled while the hall is open (Grand Battle Field list, Total Contribution). All fronts (14,14050):
@@ -2913,9 +2915,11 @@ def ai_step(m, now):
         if best:  # stand and face the player
             face, flags = ((dx / dist, 0.0, dz / dist) if dist else (0.0, 0.0, 1.0)), 0
         else:     # patrol along x around home
-            t["phase"] += AI_TICK * AI_SPEED / AI_PATROL
-            t["pos"] = (hx + AI_PATROL * math.sin(t["phase"]), hy, hz)
-            face, flags = (1.0 if math.cos(t["phase"]) >= 0 else -1.0, 0.0, 0.0), 1
+            t["phase"] += AI_TICK * AI_SPEED  # distance walked; at a steady speed, turning at each end
+            u = (t["phase"] + AI_PATROL) % (4 * AI_PATROL)
+            ahead = u < 2 * AI_PATROL
+            t["pos"] = (hx + (u - AI_PATROL if ahead else 3 * AI_PATROL - u), hy, hz)
+            face, flags = (1.0 if ahead else -1.0, 0.0, 0.0), 1
         m.move(rid, struct.pack("<II3f3f", rid, flags, *t["pos"], *face), t["pos"], fire_range(DEFAULT_WEAPON))
         if not best or PASSIVE_DUMMIES:
             continue

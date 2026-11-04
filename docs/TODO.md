@@ -80,19 +80,21 @@ reply layout, and answer with real data.
       shows under the list past place 18 (2026-11-03, 28 characters: "My Ranking 26 tester 310" under the 20 rows).
       There is no paging: the window shows 20 rows and scrolling sends nothing
 - [ ] Camps are not kept, so every name is green
-- [ ] Weapon tab (2026-11-03, read from Game.dll, tested offline only): (15,15108) gives the buttons, u32 n | n x (u32
-      kind 1 Weapon / else Vehicle | u32 weapon id | str name); the emulator lists the shop's weapons. (15,15102) list
-      has the Honor layout, request read back as u8 period | u32 | u32 | u32 (taken as weapon, first row, rows);
-      (15,15103) my place, u32 character id | u8 period | u32 weapon | u32. Kills are counted per weapon
-      ("weapon<id>", with periods). Try in game: that the request's first u32 is the weapon. No vehicles yet
+- [x] Weapon tab, real client 2026-11-03: (15,15108) gives the buttons, u32 n | n x (u32 kind 1 Weapon / else
+      Vehicle | u32 weapon id | str name); the ten shop weapons show. (15,15102) list has the Honor layout, request
+      u8 period | u32 kind | u32 weapon | u32 first row | u32 rows; (15,15103) my place, u32 character id | u8 period |
+      u32 kind | u32 weapon. The emulator had read the kind as the weapon (every list came back empty); fixed. Two
+      Thunder kills showed as "tester 2" under Thunder
+- [ ] Vehicle tab: no vehicles yet
 - [x] Request read in game 2026-11-03: u8 period (1 Total, 2 Monthly, 3 Weekly, 4 Daily) | u32 first row | u32 rows
       (20); Shooting (15100) has one more u8 in front. My place: u32 character id | u8 period. The u32 after the camp
       byte is a team id: anything but 0 makes the client ask UpdateTeamInfo (15,15023) once per row, so 0 is sent
-- [x] Periods (2026-11-03, tested offline): honor, kills and crystal earned are also counted per day, week (from
+- [x] Periods (real client 2026-11-03): honor, kills and crystal earned are also counted per day, week (from
       Monday) and month, server local time, in stats "<stat>_day" etc. next to "at_day" etc. A counter starts again
       when the next one is added in a new period. Daily, Weekly and Monthly list only characters who earned something
-      in it; Crystal's Total stays the balance. Not seen in game yet. For Shooting the period is taken from the later
-      of its two bytes, a guess
+      in it; Crystal's Total stays the balance. In game: Daily Honor showed tester 20 and Daily Shooting tester 2
+      after two kills. Shooting's request is u8 period | u8 1 | ...; the emulator had taken the 1 as the period, so
+      Daily showed all-time kills; fixed (also its my-place request, u32 id | u8 period | u8 1)
 
 ## Other open items
 - [x] Anti-addiction banner in the hall
@@ -262,4 +264,11 @@ reply layout, and answer with real data.
       past that, 2 a second beyond. A robot that has not changed is sent once a second (moves are unreliable, so it
       is still sent now and then). Load test, 64 players, 32 per match, spread 300, Viper (range 250): 15.9 -> 14.1
       KB/s per player, same move delay. Packed together it stays about 22 KB/s: everyone is near and moving
-- [ ] Watch mid and far robots in the real client: do they still move smoothly at 5 and 2 updates a second?
+- [x] Mid and far robots, real client 2026-11-03 (every move forced to 2 a second, a Frida probe reading where the
+      client draws two target robots 30 times a second): between moves the client walks a robot on at its body
+      speed (8). Dummies walked at 4 on a sine path, so they jumped back about 2 units at every move (0.8 at 5 a
+      second). They now patrol at 8, at a steady speed: no jumps but at the turns (up to 4 units at 2 a second,
+      under a degree on screen at that range). Players move with their own client's speed, so they should match too
+- [ ] One of the two dummies (Target 2, next to a big tree on the training ground) keeps walking the old way for
+      about a second after it turns, at any update rate, then jumps back about 3 units. Maybe the client turns
+      robots slowly, or its path runs into the tree
