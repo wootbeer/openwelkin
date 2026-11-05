@@ -348,6 +348,45 @@ async def scenario():
     second = ls.read_wstr(r.body, off + 8)[0]
     check("announcements come from the file", n == 2 and first == "first line" and len(second) == ls.CHAT_MAX)
 
+    # --- the client's own GM / commands ---
+    async def online(name, cid):
+        """A new gate session for the account and its CharacterOnline reply."""
+        _, key, _ = await ts.login(name)
+        gate = await ts.gate_session(key)
+        return gate, (await gate.request(13, 13004, struct.pack("<I", cid))).body
+
+    hal, hal_id = await player("hal")
+    gail, gail_id = await player("gail")
+    gail, body = await online("gail", gail_id)
+    check("a player is not a GM to the client", body[13] == 0)
+    ts.admin("role gail gm")
+    gail, body = await online("gail", gail_id)
+    check("a GM's character comes with GM level 101", body[13] == ls.GM_LEVEL["gm"])
+    kick_cara = struct.pack("<I", hal_id) + ls.wstr("cara") + struct.pack("<I", 5)
+    check("a player's /kick is refused", (await hal.request(13, 13041, kick_cara)).result != 0
+          and "cara" in ts.admin("who"))
+    gail.send(ls.Message(21, 21032, body=ls.wstr("hal") + ls.wstr("hello\x07 there")))
+    told = await heard(hal)
+    check("/tell is a whisper from the GM", told[2:] == ("gail", "hello there"), str(told))
+    await asyncio.sleep(ls.CHAT_EVERY + 0.1)
+    gail.send(ls.Message(21, 21030, body=struct.pack("<HI", 0, 0) + ls.wstr("Hall event")))
+    check("a GM's /announce needs the notice command", await heard(gail) == (21200, 0, "Server", "not allowed"))
+    ts.admin("role gail admin")
+    await asyncio.sleep(ls.CHAT_EVERY + 0.1)
+    gail.send(ls.Message(21, 21031, body=struct.pack("<HII", 2, 0, 0) + ls.wstr("Hall event")))
+    line = await heard(hal)
+    while line and line[0] != 21514:
+        line = await heard(hal)
+    check("an admin's /say is a notice", line == (21514, 0, "Server", "Hall event"), str(line))
+    no_one = struct.pack("<I", gail_id) + ls.wstr("nobody") + struct.pack("<I", 5)
+    check("/kick of someone not online fails", (await gail.request(13, 13041, no_one)).result != 0)
+    check("/kick with someone else's character id fails",
+          (await gail.request(13, 13041, struct.pack("<I", hal_id) + kick_cara[4:])).result != 0)
+    check("a short /kick is refused", (await gail.request(13, 13041, struct.pack("<I", gail_id))).result != 0)
+    kick_hal = struct.pack("<I", gail_id) + ls.wstr("hal") + struct.pack("<I", 5)
+    check("an admin's /kick works", (await gail.request(13, 13041, kick_hal)).result == 0
+          and wait_for(lambda: "hal" not in [r.split()[0] for r in ts.admin("who").splitlines() if r.strip()], 4))
+
     # --- kicked players are told why ---
     async def from_server(gate):
         while True:

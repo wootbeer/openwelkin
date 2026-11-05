@@ -183,6 +183,7 @@ def units():
     key = ls.signed_session("amy")
     check("a session key works", ls.redeem_signed_session(key)[0] == "amy")
     check("a session key works once", ls.redeem_signed_session(key)[0] is None)
+    check("a session key carries the GM level", ls.redeem_signed_session(ls.signed_session("amy", 101))[2] == 101)
     key = ls.signed_session("amy")
     started, ls.STARTED = ls.STARTED, int(ls.time.time()) + 1
     check("a key from before a gate restart is refused", ls.redeem_signed_session(key)[0] is None)

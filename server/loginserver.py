@@ -914,8 +914,9 @@ MAX_SUITES = 10  # loadout presets per character
 MAX_SUITE_TEXT = 400  # characters in one preset (a name and a few dozen part ids)
 KICK_NOTICE = 1.5  # seconds a kicked player has to see why, before the connection closes
 CHAT_MAX, CHAT_EVERY, CHAT_QUEUE = 200, 0.5, 100  # characters in a line, seconds between a player's lines, lines waiting
-GM_COMMANDS = {"who", "matches", "kick", "ban", "unban", "bans", "goto"}
+GM_COMMANDS = {"who", "matches", "kick", "ban", "unban", "bans", "goto", "tell"}
 GOTO_LIMIT = 100000.0  # goto refuses positions farther out than this
+GM_LEVEL = {"player": 0, "gm": 101, "admin": 110}  # sent in CharacterOnline; 101..110 makes the client a GM
 ROLE_COMMANDS = {"player": set(), "gm": GM_COMMANDS, "admin": GM_COMMANDS | {"ipban", "unipban", "role", "backup", "notice"}}
 ONLINE_LOCK = threading.Lock()
 LOGIN_FAILS = {}  # ip -> [failure times]
@@ -1035,6 +1036,7 @@ class Session:
         self.key_index = 7  # server picks rand()%32+1; client only checks the range
         self.rbuf = b""
         self.account = None
+        self.gm_level = 0  # GM_LEVEL of the account's role when it logged in; the client opens its / commands with it
         self.character, self.next_chat, self.next_contact = None, 0.0, 0.0
         self.match = None  # (game server, match id) while in a battle: only the game server knows who shares a match
         self.send_lock = threading.Lock()
@@ -1187,8 +1189,8 @@ class Session:
     def on_character_online(self, msg):
         # CS_CharacterOnline (13,13004). Reply read by CS_CharacterOnline_LoginWorld_Observer (0x10402510), which builds
         # CNewHallUI. Body = character descriptor (deserializer Game.dll 0x1031a010):
-        #   u32 id | u8 nation (character +0x30: the hall's emblem and the My Ranking colour) | u32 | u32 | u8 (101..110
-        #   sets a flag) | str name | str | u8 rank level (character +0x44, "Lv." in the hall) | u8 | u32
+        #   u32 id | u8 nation (character +0x30: the hall's emblem and the My Ranking colour) | u32 | u32 | u8 GM level
+        #   (101..110 sets the GM byte, local character +0xb8, which opens the client's own GM / commands) | str name | str | u8 rank level (character +0x44, "Lv." in the hall) | u8 | u32
         #   | str | str | str | u32 n | n x (u32 | u16 | u8 | u8)
         debug(f"{self.addr} character online request body={msg.body.hex()}")
         chars = STORE.characters(self.account)
@@ -1200,7 +1202,7 @@ class Session:
         if not self.character:
             threading.Thread(target=self.outbox_loop, daemon=True).start()
         self.character = c
-        body = (struct.pack("<IBIIB", c["id"], nation_of(c["id"]) or c["state"], 0, 0, 0) + wstr(c["name"]) + wstr("")
+        body = (struct.pack("<IBIIB", c["id"], nation_of(c["id"]) or c["state"], 0, 0, self.gm_level) + wstr(c["name"]) + wstr("")
                 + struct.pack("<BBI", rank_for(STORE.stats(c["id"]).get("honor", 0)), c["gender"], c["model"])
                 + wstr("") + wstr("") + wstr("")
                 + struct.pack("<I", 0))
@@ -1789,6 +1791,44 @@ class Session:
         log(f"{self.addr} save quick suite {sid} -> {'ok' if ok else 'refused'}")
         self.reply(msg, b"", result=0 if ok else ERR_UNKNOWN)
 
+    # The client's own GM commands, read from Game.dll 2026-11-05 (ChatManager::SendMessage, 0x10386600): a chat line
+    # starting with / from a character whose GM byte is set (GM level 101..110 in CharacterOnline). Each one becomes
+    # the same command as typed with !, so the role is checked again where the roles are, and logged. /tell <name>
+    # <text> is the normal whisper (21,21032).
+    def on_gm_kick(self, msg):
+        # /kick <name> <number>: (13,13041) u32 character id | str name | u32 number (not known; logged). The ack has
+        # no body; GMKickResObserver shows "Kick %s Success!" for result 0, else "Kick %s Failed!".
+        try:
+            name, off = read_wstr(msg.body, 4)
+            number = struct.unpack_from("<I", msg.body, off)[0]
+        except (ValueError, struct.error):
+            return self.reply(msg, result=ERR_PROTOCOL)
+        with ONLINE_LOCK:
+            target = next((s for s in ONLINE.values()
+                           if s.character and s.character["name"].lower() == name.lower()), None)
+        if not self.gm_level or not self.own_character(struct.unpack_from("<I", msg.body)[0]) or not target:
+            return self.reply(msg, result=ERR_UNKNOWN)
+        log(f"[gm] {self.account!r} /kick {name[:32]!r} {number}")
+        self.reply(msg)
+        self.gm_chat(f"kick {target.account}")
+
+    def gm_text(self, msg, off):
+        """The text of a GM / line at off (after the request's numbers), or None."""
+        line = self.chat_text(msg, off) if len(msg.body) >= off else None
+        return line[0] if line and self.gm_level else None
+
+    def on_gm_announce(self, msg):
+        # /announce <kind> [<number> when kind is 1] <text>: (21,21030) u16 kind | u32 | str text
+        text = self.gm_text(msg, 6)
+        if text:
+            self.gm_chat(f"notice {text}")
+
+    def on_gm_say(self, msg):
+        # /say <kind> <number> [<number> when kind is 2] <text>: (21,21031) u16 kind | u32 | u32 | str text
+        text = self.gm_text(msg, 10)
+        if text:
+            self.gm_chat(f"notice {text}")
+
     def own_character(self, cid):
         """True when cid is one of this session's account characters (never trust ids from the client)."""
         return self.account is not None and STORE.find(self.account, cid) is not None
@@ -1975,7 +2015,7 @@ class Session:
                 log(f"{self.addr} login refused: no gate server connected")
                 return self.reply(msg, result=1)  # "Request Timeout"
             gate_ip, gate_port = gate.ip, gate.port
-            key = signed_session(account)
+            key = signed_session(account, gm_level(account))
         else:
             key = secrets.token_hex(16)
             with SESSION_LOCK:
@@ -1997,12 +2037,13 @@ class Session:
         if len(first_msg) > 4:
             key, _ = read_wstr(first_msg, 0)
             if ROLE == "gate":
-                account, expiry = redeem_signed_session(key.split(" ")[0])
+                account, expiry, level = redeem_signed_session(key.split(" ")[0])
             else:
                 with SESSION_LOCK:
                     account, expiry = SESSIONS.pop(key.split(" ")[0], (None, 0))
+                level = gm_level(account) if account else 0
             if account and expiry >= time.time():
-                self.account = account
+                self.account, self.gm_level = account, level
                 log(f"{self.addr} gate session for account {self.account!r}")
                 go_online(self)
         pub = serialization.load_der_public_key(der)
@@ -2138,6 +2179,9 @@ HANDLERS = {
     (21, 21513): Session.on_chat_broadcast,      # Chat_BigBugleSendMessage (hall Broadcast channel)
     (21, 21052): Session.on_chat_battle,         # chat in battle
     (21, 21004): Session.on_chat_channel,        # battle chat box
+    (13, 13041): Session.on_gm_kick,             # GM /kick (GMKickRes)
+    (21, 21030): Session.on_gm_announce,         # GM /announce
+    (21, 21031): Session.on_gm_say,              # GM /say
     (21, 21051): Session.on_chat_private,        # private message, as the hall sends it (seen in game)
     (21, 21032): Session.on_chat_private,        # private message
     (21, 21522): Session.on_friends,             # CHAT_GetFriendListFormDB
@@ -2205,7 +2249,7 @@ UPLINK = None         # gate: link to login; game: link to its gate
 IP_BANS = []          # gate, game: [network, until] from login (bans are saved only there)
 TICKET_KEY_FILE, TICKET_PUB_FILE = "ticket.key", "ticket.pub"
 TICKET_SIGNER, TICKET_VERIFIER = None, None
-SIGNED_PAYLOAD = struct.Struct("<I8s")  # u32 expiry | 8 random bytes; then the account name, then the signature
+SIGNED_PAYLOAD = struct.Struct("<I8sB")  # u32 expiry | 8 random bytes | u8 GM level; then the account name, then the signature
 SPENT_SESSIONS = {}   # gate: random part of used session keys -> expiry
 STARTED = int(time.time())  # gate: older keys are refused, they may have been used before a restart
 LINK_LOCK = threading.Lock()
@@ -2246,32 +2290,33 @@ def ticket_private_key():
     return key
 
 
-def signed_session(account):
+def signed_session(account, gm_level=0):
     """A session key the gate can check by itself: hex of payload | account | Ed25519 signature."""
-    data = SIGNED_PAYLOAD.pack(int(time.time() + SESSION_TTL), secrets.token_bytes(8)) + account.encode("latin-1")
+    data = (SIGNED_PAYLOAD.pack(int(time.time() + SESSION_TTL), secrets.token_bytes(8), gm_level)
+            + account.encode("latin-1"))
     return (data + TICKET_SIGNER.sign(data)).hex()
 
 
 def redeem_signed_session(key):
-    """(account, expiry) for a good unused key, else (None, 0). Each key works once."""
+    """(account, expiry, GM level) for a good unused key, else (None, 0, 0). Each key works once."""
     try:
         raw = bytes.fromhex(key)
         data, signature = raw[:-64], raw[-64:]
         TICKET_VERIFIER.verify(signature, data)
-        expiry, nonce = SIGNED_PAYLOAD.unpack_from(data)
+        expiry, nonce, gm_level = SIGNED_PAYLOAD.unpack_from(data)
         account = data[SIGNED_PAYLOAD.size:].decode("latin-1")
     except (ValueError, struct.error, InvalidSignature):
-        return None, 0
+        return None, 0, 0
     if expiry - SESSION_TTL < STARTED:
-        return None, 0
+        return None, 0, 0
     now = time.time()
     with SESSION_LOCK:
         for k in [k for k, exp in SPENT_SESSIONS.items() if exp < now]:
             del SPENT_SESSIONS[k]
         if nonce in SPENT_SESSIONS:
-            return None, 0
+            return None, 0, 0
         SPENT_SESSIONS[nonce] = expiry
-    return account, expiry
+    return account, expiry, gm_level
 
 
 def report_load():
@@ -2476,6 +2521,8 @@ def on_login_message(link, msg):
         return backup_here()
     if kind == "notice":
         return notice_here(msg["text"])
+    if kind == "tell":
+        return tell_here(msg["name"], msg["text"])
     if kind == "goto":
         return teleport(msg["account"], tuple(msg["pos"]))
     if kind == "gm_reply":
@@ -3541,6 +3588,7 @@ ADMIN_HELP = """commands:
   matches                                running matches and their players
   kick <account>                         disconnect an account (hall and battle)
   goto <account> <x> <y> <z>             move a player's robot in battle (unstick someone)
+  tell <character> <text>                a private line from Server to a player
   ban <account> [time] [reason]          ban and kick; time like 30m, 12h, 7d, 2w (default: permanent)
   unban <account>
   ipban <address or network> [time] [reason]   e.g. 1.2.3.4 or 1.2.3.0/24; kicks everyone on it
@@ -3677,6 +3725,24 @@ def cmd_kick(args, actor):
     return f"kicked {args[0]}" if kick(args[0], f"kicked by {actor}", notice) else f"{args[0]} is not online"
 
 
+def tell_here(name, text):
+    """A private line from Server to a character online on this server. True if they got it."""
+    with ONLINE_LOCK:
+        target = next((s for s in ONLINE.values() if s.character and s.character["name"].lower() == name.lower()), None)
+    if target:
+        target.chat_line(21200, "Server", text)
+    return bool(target)
+
+
+def cmd_tell(args, actor):
+    text = clean_line(" ".join(args[1:]))
+    if not text:
+        return "usage: tell <character> <text>"
+    told = any([ask(g, "tell", False, name=args[0], text=text) for g in list(LINKS)]) if ROLE == "login" else (
+        tell_here(args[0], text))
+    return f"told {args[0][:32]}" if told else f"{args[0][:32]} is not online"
+
+
 def cmd_goto(args, actor):
     usage = "usage: goto <account> <x> <y> <z>"
     if len(args) != 4:
@@ -3808,7 +3874,12 @@ def cmd_role(args, actor):
 
 ADMIN_COMMANDS = {"who": cmd_who, "matches": cmd_matches, "kick": cmd_kick, "ban": cmd_ban, "unban": cmd_unban,
                   "ipban": cmd_ipban, "unipban": cmd_unipban, "bans": cmd_bans, "role": cmd_role, "backup": cmd_backup, "notice": cmd_notice,
-                  "goto": cmd_goto, "help": lambda args, actor: ADMIN_HELP}
+                  "goto": cmd_goto, "tell": cmd_tell, "help": lambda args, actor: ADMIN_HELP}
+
+
+def gm_level(account):
+    """GM_LEVEL of an account's role (login or one-program server: where the roles are)."""
+    return GM_LEVEL.get(ACCOUNTS.role(account), 0)
 
 
 def gm_command(account, line):

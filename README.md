@@ -162,6 +162,7 @@ python server/tools/admin.py who
 | `matches` | Running matches and their players |
 | `kick <account> [reason]` | Disconnect an account (hall and battle). They see the reason in chat first |
 | `goto <account> <x> <y> <z>` | Move a player's robot in battle, for someone stuck. Not tried in game yet |
+| `tell <character> <text>` | A private line from Server to one player |
 | `ban <account> [time] [reason]` | Ban and kick. Time like `30m`, `12h`, `7d`, `2w`; without it the ban is permanent |
 | `unban <account>` | |
 | `ipban <address or network> [time] [reason]` | e.g. `1.2.3.4` or `1.2.3.0/24`. Kicks everyone on it |
@@ -175,8 +176,11 @@ The hall's scrolling announcements are in `announcements.txt` next to the databa
 made on first start, and changes show the next time a player opens the hall.
 
 A player with the role `gm` or `admin` can also type commands in game chat, starting with `!`, like `!kick bob`. A `gm` can
-use `who`, `matches`, `kick`, `goto`, `ban`, `unban` and `bans`. An `admin` can also use `ipban`, `unipban`, `role`, `backup` and `notice`.
+use `who`, `matches`, `kick`, `goto`, `tell`, `ban`, `unban` and `bans`. An `admin` can also use `ipban`, `unipban`, `role`, `backup` and `notice`.
 The reply comes as a private message from Server, and the command goes in `admin.log`.
+
+The client also has its own GM commands starting with `/`, and the server turns them on for `gm` and `admin` characters
+at their next login: `/kick <character> <number>` works like `!kick`, and `/announce` and `/say` like `!notice`. Not tried in game yet.
 
 Banned players see the client's own message: "Account has been locked" (permanent), "Account being punished"
 (timed) or "IP is locked".
