@@ -197,6 +197,12 @@ async def scenario():
     check("who sees both, on their game servers", "bob" in who and "carol" in who and "game port" in who, who)
     matches = await asyncio.to_thread(admin, "matches")
     check("matches lists both servers", matches.count("game port") == 2, matches)
+    moved = await asyncio.to_thread(admin, "goto carol 10 20.5 -30")
+    check("goto reaches a player on a game server", moved.startswith("moved carol"), moved)
+    nobody = await asyncio.to_thread(admin, "goto nobody 1 2 3")
+    check("goto someone not in battle", "not in a battle" in nobody, nobody)
+    bad = await asyncio.to_thread(admin, "goto carol 1 2 nan")
+    check("goto refuses a bad position", "within" in bad, bad)
 
     # --- battle chat stays in the match, and match ids repeat from one game server to the next ---
     async def chat(gate, seconds):

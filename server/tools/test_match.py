@@ -303,6 +303,14 @@ ls.MAX_MATCH_PLAYERS = 32
 
 # account logout (gate closed) takes its characters out of the game
 ls.GAME_SERVER = server
+sent.clear()
+moved = ls.teleport("acctA", (5.0, 6.0, 7.0))
+step(0.1)
+ok &= check("goto moves a player in battle", moved and pa.pos == (5.0, 6.0, 7.0)
+            and got(A, 33000) == [struct.pack("<3f", 5.0, 6.0, 7.0)])
+ok &= check("the others see it move", any(struct.unpack_from("<I3f", b, 0)[0] == pa.player_rid
+                                          and struct.unpack_from("<3f", b, 8) == (5.0, 6.0, 7.0) for b in got(B, 50100)))
+ok &= check("goto someone not in battle", not ls.teleport("nobody", (0.0, 0.0, 0.0)))
 ls.leave_game("acctC", "logged out")
 ok &= check("logout closes the game session", C not in server.peers and pc.match is None)
 for addr in list(server.peers):

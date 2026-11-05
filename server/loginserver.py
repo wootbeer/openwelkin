@@ -895,7 +895,8 @@ MAX_SUITES = 10  # loadout presets per character
 MAX_SUITE_TEXT = 400  # characters in one preset (a name and a few dozen part ids)
 KICK_NOTICE = 1.5  # seconds a kicked player has to see why, before the connection closes
 CHAT_MAX, CHAT_EVERY, CHAT_QUEUE = 200, 0.5, 100  # characters in a line, seconds between a player's lines, lines waiting
-GM_COMMANDS = {"who", "matches", "kick", "ban", "unban", "bans"}
+GM_COMMANDS = {"who", "matches", "kick", "ban", "unban", "bans", "goto"}
+GOTO_LIMIT = 100000.0  # goto refuses positions farther out than this
 ROLE_COMMANDS = {"player": set(), "gm": GM_COMMANDS, "admin": GM_COMMANDS | {"ipban", "unipban", "role", "backup", "notice"}}
 ONLINE_LOCK = threading.Lock()
 LOGIN_FAILS = {}  # ip -> [failure times]
@@ -1999,6 +2000,32 @@ def leave_game(account, reason):
     leave_game_local(account, reason)
 
 
+def teleport_local(account, pos):
+    """Move the account's robot in battle to pos: GS_GMSetLocation (19,33000), vec3 (Game.dll 0x10354260), sets the
+    local character's own robot there; the others see it move. True if the player was in a battle here."""
+    if GAME_SERVER is None:
+        return False
+    hit = False
+    with GAME_LOCK:
+        for peer in list(GAME_SERVER.peers.values()):
+            m = getattr(peer, "match", None)
+            if m and peer.player_rid and STORE.account_of(getattr(peer, "cid", None)) == account:
+                send_game_event(GAME_SERVER, peer, 19, 33000, struct.pack("<3f", *pos))
+                peer.pos = pos
+                m.move(peer.player_rid, struct.pack("<II3f3f", peer.player_rid, 0, *pos, *peer.facing), pos,
+                       peer.fire_range, skip=peer)
+                hit = True
+    return hit
+
+
+def teleport(account, pos):
+    if ROLE == "login":
+        return any([ask(g, "goto", False, account=account, pos=list(pos)) for g in list(LINKS)])
+    if ROLE == "gate":
+        return any([ask(g, "goto", False, account=account, pos=list(pos)) for g in list(LINKS)])
+    return teleport_local(account, pos)
+
+
 def kick(account, reason, notice=""):
     """Disconnect an account from the hall and any battle. True if it was online. notice is shown to the player first,
     as a Broadcast line from Server (the hall holds whispers back for a minute, so one would never show); closing the
@@ -2372,6 +2399,8 @@ def on_login_message(link, msg):
         return backup_here()
     if kind == "notice":
         return notice_here(msg["text"])
+    if kind == "goto":
+        return teleport(msg["account"], tuple(msg["pos"]))
     if kind == "gm_reply":
         with ONLINE_LOCK:
             session = ONLINE.get(msg["account"])
@@ -2410,6 +2439,8 @@ def on_gate_request(link, msg):
         return True
     if kind == "leave":
         leave_game_local(msg["account"], msg["reason"])
+    elif kind == "goto":
+        return teleport_local(msg["account"], tuple(msg["pos"]))
     elif kind == "ipkick":
         ip_kick_game(msg["net"])
     elif kind == "bans":
@@ -3300,6 +3331,7 @@ ADMIN_HELP = """commands:
   who                                    who is online, and in which battle
   matches                                running matches and their players
   kick <account>                         disconnect an account (hall and battle)
+  goto <account> <x> <y> <z>             move a player's robot in battle (unstick someone)
   ban <account> [time] [reason]          ban and kick; time like 30m, 12h, 7d, 2w (default: permanent)
   unban <account>
   ipban <address or network> [time] [reason]   e.g. 1.2.3.4 or 1.2.3.0/24; kicks everyone on it
@@ -3436,6 +3468,21 @@ def cmd_kick(args, actor):
     return f"kicked {args[0]}" if kick(args[0], f"kicked by {actor}", notice) else f"{args[0]} is not online"
 
 
+def cmd_goto(args, actor):
+    usage = "usage: goto <account> <x> <y> <z>"
+    if len(args) != 4:
+        return usage
+    try:
+        pos = tuple(float(a) for a in args[1:])
+    except ValueError:
+        return usage
+    if not all(math.isfinite(v) and abs(v) <= GOTO_LIMIT for v in pos):
+        return f"each of x, y, z must be within {GOTO_LIMIT:g}"
+    if not teleport(args[0], pos):
+        return f"{args[0]} is not in a battle"
+    return f"moved {args[0]} to {pos[0]:g} {pos[1]:g} {pos[2]:g}"
+
+
 def cmd_ban(args, actor):
     if not args:
         return "usage: ban <account> [time] [reason]"
@@ -3552,7 +3599,7 @@ def cmd_role(args, actor):
 
 ADMIN_COMMANDS = {"who": cmd_who, "matches": cmd_matches, "kick": cmd_kick, "ban": cmd_ban, "unban": cmd_unban,
                   "ipban": cmd_ipban, "unipban": cmd_unipban, "bans": cmd_bans, "role": cmd_role, "backup": cmd_backup, "notice": cmd_notice,
-                  "help": lambda args, actor: ADMIN_HELP}
+                  "goto": cmd_goto, "help": lambda args, actor: ADMIN_HELP}
 
 
 def gm_command(account, line):

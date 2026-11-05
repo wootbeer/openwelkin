@@ -72,6 +72,8 @@
 - [Multiplayer](#mp-msgs)
   - [position report](#m-9-40130) `(9,40130)`
   - [GC\_Robot\_Action](#m-9-40100) `(9,40100)`
+  - [GS\_GMCommando](#m-19-31000) `(19,31000)`
+  - [GS\_GMSetLocation](#m-19-33000) `(19,33000)`
 - [Characters & objects](#char-msgs)
   - [GS\_Character\_New\_Character](#m-19-30001) `(19,30001)`
   - [AddToDetachment](#m-19-30500) `(19,30500)`
@@ -960,6 +962,28 @@ f32 time | u32 key | vec3 position | vec3 facing
 Sent now and then; the facing is used for the relayed moves.
 
 Shots: on a trigger pull (9,40122) the server plays the burst on the other clients with the remote-shot event (19,50122), one shot per fire interval until the release (9,40125). Hits on players use the same server-side hit test as the dummies; the armor update (19,50005), death (19,50107) and kill report (19,50151) go to everyone.
+
+<a name="m-19-31000"></a>
+#### GS\_GMCommando `(19,31000)`
+
+*S→C · partial*
+
+```text
+u32 robot id | u32 GM state | u32 on
+```
+
+Read from Game.dll (0x103541c0), not sent by the emulator. Sets or clears a bit in the robot's GM states (+0x1a0). State 1 removes the robot's physics body (it no longer collides); state 2 redraws it with Robot::ChangeViewMode.
+
+<a name="m-19-33000"></a>
+#### GS\_GMSetLocation `(19,33000)`
+
+*S→C · partial*
+
+```text
+vec3 position
+```
+
+Read from Game.dll (0x10354260), not tried in game. Puts the local character's own robot at that position. The emulator sends it for the admin command `goto <account> <x> <y> <z>` and moves the robot on the other clients too.
 
 <a name="char-msgs"></a>
 

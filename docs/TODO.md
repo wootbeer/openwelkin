@@ -206,6 +206,10 @@ reply layout, and answer with real data.
       there are no divisions yet). In battle the Team and Division tabs are greyed and do not open without a team or
       division, so their channel numbers wait for teams. Whispers from the battle box are not tried. Enter in battle needs DirectInput: tools/vinput.py enter:0.2 sends a line
 - [ ] The client has its own / GM commands when the character's GM byte is set: (13,13041) and others, not read yet
+- [x] goto <account> <x> <y> <z> (GM), 2026-11-05 offline: GS_GMSetLocation (19,33000) vec3 moves the player's own
+      robot; the server moves it on the others too. Works across split servers (tools/test_split.py). Not tried in
+      game. Also read, not used: GS_GMCommando (19,31000) u32 robot | u32 state | u32 on (1 = no physics body,
+      2 = view mode)
 - [x] notice <text>, real client 2026-11-02: "[Broadcast] Server: ..." in the hall chat; in battle the same line plus big
       red text in the middle for a few seconds. announcements.txt holds the hall scrolling bar
 - [ ] (21,21048) task server notice list: u32 n | n x (str | u32), shown in dialog 0x71 (not known which)
