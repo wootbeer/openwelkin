@@ -260,6 +260,11 @@ def loadout_weapon(cid):
     return (used or weapons[::-1] or [{"item": DEFAULT_WEAPON}])[0]["item"]
 
 
+def package(pkg_id):
+    """The PACKAGES row with this id, or None."""
+    return next((p for p in PACKAGES if p[0] == pkg_id), None)
+
+
 def weapon_stats(wid):
     """(ammo, timing) for the weapon snapshot."""
     ammo, interval = WEAPONS.get(wid, (WEAPON_AMMO, WEAPON_TIMING[0], 0))[:2]
@@ -272,6 +277,17 @@ SHOP = [
     (3213, 900, 90, 7), (3215, 600, 60, 7), (3217, 500, 50, 7),
     (3301, -1, 500, 0), (3302, -1, 500, 0),
 ]
+# Shop Package tab (24,24028): (package id, name, item ids, crystal price or -1, credit price, days; 0 = forever).
+# Buying one adds each of its items to the warehouse, like buying them one by one. The client names a package
+# through an item id (24002); PACKAGE_NAME_BASE + package id is used, which no product has.
+PACKAGES = [
+    (1, "Assault Pack", (3101, 3202, 3205), 1100, 110, 30),
+    (2, "Sniper Pack", (3105, 3215, 3206), 2500, 250, 30),
+    (3, "Engineer Pack", (3201, 3210, 3213, 3217), 1900, 190, 7),
+]
+PACKAGE_NAME_BASE = 9000
+GOODS_OF = {pid: gid for gid, (pid, *_) in enumerate(SHOP, 1)}  # product id -> shop goods id (the warehouse lists goods)
+assert all(i in GOODS_OF for p in PACKAGES for i in p[2]), "every package item must be sold in SHOP"
 RANKED_WEAPONS = [pid for pid, *_ in SHOP if pid in WEAPONS and PRODUCTS.get(pid, {}).get("type") == 8]  # Ranking, Weapon
 RANK_THRESHOLDS = [int(50 * n ** 1.8) for n in range(71)]
 
@@ -608,7 +624,8 @@ class Store:
             self.mark_dirty(cid, stats=touched)
 
     def buy(self, cid, item, field, price):
-        """Charge price from stats[field] and add item to the character's items. False if not enough."""
+        """Charge price from stats[field] and add item (or a list of items) to the character's items. False if not
+        enough."""
         with self.lock:
             c = self.by_id(cid)
             if not c:
@@ -618,7 +635,7 @@ class Store:
             if price < 0 or have < price:
                 return False
             st[field] = have - price
-            c.setdefault("items", []).append(item)
+            c.setdefault("items", []).extend(item if isinstance(item, list) else [item])
             self.mark_dirty(cid)
             self.save()
             return True
@@ -1301,7 +1318,8 @@ class Session:
         # Price kind 2 = rented by days. Any other kind is "per use", and the English template for that
         # (GUITEXT_MARKET_*_TIMES_TEMPLATE "%dCrystal(%s)") has %s where the client passes a number: it crashes.
         iid = struct.unpack_from("<I", msg.body)[0] if len(msg.body) >= 4 else 0
-        name = PRODUCTS.get(iid, {}).get("name", f"Item {iid}")
+        pkg = package(iid - PACKAGE_NAME_BASE)
+        name = pkg[1] if pkg else PRODUCTS.get(iid, {}).get("name", f"Item {iid}")
         debug(f"{self.addr} item flyweight {iid} -> {name}")
         self.reply(msg, wstr(name) + struct.pack("<BBB", 1, 1, 2) + wstr("") + struct.pack("<II", iid, 0))
 
@@ -1795,6 +1813,42 @@ class Session:
         # 24010 "Crystal of your balance is insufficient", 24011 "Your credit is not enough"
         self.reply(msg, b"", result=0 if ok else (24010 if field == "money" else 24011))
 
+    def on_packages(self, msg):
+        # GS_RequestSuiteInSelling (24,24028), request: u32 0xffff | u32 1 (not read). Reply read by
+        # GS_RequestSuiteInSellingObserver (0x1035a6f0), one 0x80-byte record per package at manager +0x244:
+        #   u32 | u32 count | count x (u32 package id | str (+4) | str (+0x3c) | u32 picture id (GoodsPic_<n>.dds, +0x64)
+        #   | u32 item id (+0x68, its 24002 name is shown) | u32 credit price (+0x6c) | u32 (+0x70)
+        #   | u32 crystal price (+0x74, -1 = not for crystal) | u32 (+0x78))
+        # CMarketUI::OnSuiteUpdated (0x10550110) shows "%d Crystal" when there is a crystal price, else "%d Credits".
+        body = struct.pack("<II", 0, len(PACKAGES))
+        for pkg_id, name, items, crystal, credit, _days in PACKAGES:
+            contents = ", ".join(PRODUCTS.get(i, {}).get("name", str(i)) for i in items)
+            body += struct.pack("<I", pkg_id) + wstr(name) + wstr(contents)
+            body += struct.pack("<6I", items[0], PACKAGE_NAME_BASE + pkg_id, credit, 0, crystal & 0xFFFFFFFF, 0)
+        self.reply(msg, body)
+
+    def on_buy_package(self, msg):
+        # (24,24029) buy a package, request: u32 character id | u8 currency (1 = Crystal, else Credit) | u32 package
+        # id. The reply has no body: on result 0 the client asks for money (24019) or points (24020), then the in-use
+        # list (24006); otherwise it shows the error text for the result code.
+        if len(msg.body) < 9:
+            return self.reply(msg, b"", result=ERR_PROTOCOL)
+        cid, currency, pkg_id = struct.unpack_from("<IBI", msg.body)
+        pkg = package(pkg_id)
+        if not self.own_character(cid) or not pkg:
+            log(f"{self.addr} package buy refused: cid={cid} package={pkg_id}")
+            return self.reply(msg, b"", result=24004)  # "Such items do not exist."
+        _, name, items, crystal, credit, days = pkg
+        field, price = ("money", crystal) if currency == 1 else ("points", credit)
+        if price < 0:
+            return self.reply(msg, b"", result=24004)
+        new = [{"goods": GOODS_OF[pid], "item": pid, "days": days, "expires": 0, "active": False} for pid in items]
+        ok = STORE.buy(cid, new, field, price)
+        log(f"{self.addr} package buy cid={cid} package={pkg_id} {field}-{price} -> {'ok' if ok else 'refused'}")
+        if ok:
+            STORE.add_log(cid, f"Bought {name} for {price} {'Crystal' if field == 'money' else 'Credit'}")
+        self.reply(msg, b"", result=0 if ok else (24010 if field == "money" else 24011))
+
     def on_my_goods(self, msg):
         # GS_RequestMyGoods (24,24011), request: u32 character id | u8 | u32 | u32 (seen 2, 1, 10000).
         # Reply read by GS_RequestMyGoodsObserver (0x10355f90): u32 | u32 count | count x (u32 instance id
@@ -2032,6 +2086,7 @@ def teleport_local(account, pos):
             if m and peer.player_rid and STORE.account_of(getattr(peer, "cid", None)) == account:
                 send_game_event(GAME_SERVER, peer, 19, 33000, struct.pack("<3f", *pos))
                 peer.pos = pos
+                placed(peer)
                 m.move(peer.player_rid, struct.pack("<II3f3f", peer.player_rid, 0, *pos, *peer.facing), pos,
                        peer.fire_range, skip=peer)
                 hit = True
@@ -2124,6 +2179,8 @@ HANDLERS = {
     (24, 24009): Session.on_goods_flyweight,     # GS_RequestGoodsFlyweight
     (24, 24002): Session.on_item_flyweight,      # GS_UpdateItemFlyweight
     (24, 24021): Session.on_buy,                 # GS_RequestBuyGoods
+    (24, 24028): Session.on_packages,            # GS_RequestSuiteInSelling (shop Package tab)
+    (24, 24029): Session.on_buy_package,         # buy a package
     (24, 24006): Session.on_items_in_use,        # GS_UpdateItemInUse
     (24, 24007): Session.on_set_in_use,          # GS_SetItemInUse (Warehouse drag and drop)
     (24, 24025): Session.on_expired_items,       # GS_RequestExpiredItem (Warehouse expired list)
@@ -2582,6 +2639,13 @@ STALE_PEER = 15.0     # seconds without any packet before a player is taken out 
 PASSIVE_DUMMIES = os.environ.get("MW_PASSIVE_DUMMIES") == "1"  # dev: dummies don't shoot (PvP tests)
 FORCE_BF = int(os.environ.get("MW_FORCE_BF", "0") or 0)  # dev: every Quick Enter goes to this battlefield
 MOVE_SPEED, JUMP_SPEED = 8.0, 5.0  # Walker body flyweight NormalSpeed / JumpSpeed
+# Speed check (MW_MOVE_CHECK=0 turns it off). A player's position reports may cover MOVE_LIMIT units a second
+# (twice the body speed); up to MOVE_BURST units can be banked, so reports that arrive bunched after a lag spike
+# still pass. Falling does not count. A report past that is not passed on, and the robot is put back where it last
+# was (GS_GMSetLocation, at most every SNAP_EVERY seconds). For MOVE_GRACE seconds after the server places a robot
+# (spawn, respawn, goto), reports still on their way from the old place are dropped without a warning.
+MOVE_CHECK = os.environ.get("MW_MOVE_CHECK", "1") != "0"
+MOVE_LIMIT, MOVE_BURST, MOVE_GRACE, SNAP_EVERY = 2 * MOVE_SPEED, 40.0, 1.5, 0.5
 SPAWN_DROP = 3.0      # spawn this far above the battlefield's spawn height
 SLOT_OFFSET = 5.0     # players spawn this far apart along x (slot 1 on the battlefield's spawn point)
 MAX_MATCH_PLAYERS = int(os.environ.get("MW_MATCH_PLAYERS", "32") or 32)  # players per match; a full one opens another
@@ -2907,6 +2971,7 @@ def join_match(server, peer):
     peer.name = character_name(peer.cid)
     peer.detachment = 10 + slot  # every player on their own side: free for all
     peer.pos, peer.facing = spawn_point(m, slot), SPAWN_FACING
+    placed(peer)
     peer.player_hp, peer.player_dead = float(PLAYER_HP), False
     peer.trigger, peer.kills, peer.deaths, peer.fire, peer.steer = 0, 0, 0, None, 0
     peer.player_kills = 0  # target robots do not count towards a round
@@ -3168,6 +3233,36 @@ def award_kill(server, peer, victim_text="a target robot"):
     STORE.add_log(peer.cid, f"Destroyed {victim_text} (+{KILL_HONOR} honor, +{KILL_PAY} crystal)")
 
 
+def placed(peer):
+    """The server just put the player's robot at peer.pos: the speed check starts again from there."""
+    peer.placed_at = peer.move_at = time.time()
+    peer.move_budget = MOVE_BURST
+
+
+def move_allowed(server, peer, pos):
+    """Speed check for a position report (see MOVE_LIMIT). True if it may be used."""
+    now = time.time()
+    if not MOVE_CHECK or getattr(peer, "move_at", None) is None:
+        return True
+    budget = min(MOVE_BURST, peer.move_budget + MOVE_LIMIT * (now - peer.move_at))
+    peer.move_at = now
+    dx, dy, dz = (a - b for a, b in zip(pos, peer.pos))
+    dist = math.sqrt(dx * dx + max(dy, 0.0) ** 2 + dz * dz)  # y is up; falling is free
+    if dist <= budget:
+        peer.move_budget = budget - dist
+        return True
+    peer.move_budget = budget
+    if now - peer.placed_at < MOVE_GRACE:
+        return False
+    peer.bad_moves = getattr(peer, "bad_moves", 0) + 1
+    if now - getattr(peer, "snapped_at", 0.0) >= SNAP_EVERY:
+        peer.snapped_at = now
+        send_game_event(server, peer, 19, 33000, struct.pack("<3f", *peer.pos))
+        log(f"[game] {getattr(peer, 'name', '?')} moved {dist:.1f} with {budget:.1f} allowed: put back "
+            f"({peer.bad_moves} so far)")
+    return False
+
+
 def relive_player(server, peer):
     with GAME_LOCK:
         m = getattr(peer, "match", None)
@@ -3176,6 +3271,7 @@ def relive_player(server, peer):
         peer.player_hp, peer.player_dead = float(PLAYER_HP), False
         peer.protected_until = time.time() + SPAWN_PROTECTION
         peer.pos, peer.facing, peer.steer = spawn_point(m, peer.slot), SPAWN_FACING, 0
+        placed(peer)
         m.trails.pop(peer.player_rid, None)  # where it was before it died does not count
         for p in list(m.peers):
             relive_on(server, p, peer.player_rid, peer.cid, peer.pos, peer.facing, PLAYER_HP, PLAYER_HP)
@@ -3323,7 +3419,7 @@ def on_game_message(server, peer, raw):
     if key == (9, 40130) and len(body) >= 16:
         # the player's robot position report: u32 | vec3. Moves its robot on the other clients.
         pos = struct.unpack_from("<3f", body, 4)
-        if all(math.isfinite(v) for v in pos):
+        if all(math.isfinite(v) for v in pos) and move_allowed(server, peer, pos):
             peer.pos = pos
             m.move(peer.player_rid, struct.pack("<II3f3f", peer.player_rid, peer.steer, *pos, *peer.facing), pos,
                    peer.fire_range, skip=peer)
@@ -3332,7 +3428,7 @@ def on_game_message(server, peer, raw):
         # 0 = standing) | vec3 pos | vec3 facing -- the same layout as GS_Robot_Action (19,50100), relayed as is.
         steer = struct.unpack_from("<I", body, 4)[0]
         pos, facing = struct.unpack_from("<3f", body, 8), struct.unpack_from("<3f", body, 20)
-        if all(math.isfinite(v) for v in pos + facing):
+        if all(math.isfinite(v) for v in pos + facing) and move_allowed(server, peer, pos):
             peer.steer, peer.pos = steer, pos
             if any(abs(v) > 1e-3 for v in facing):
                 peer.facing = facing

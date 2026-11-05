@@ -66,6 +66,7 @@ client then needs the moved login port).
 | `MW_STATS_EVERY` | `60` | Seconds between `[stats]` lines in the log (players, tick time, CPU, traffic). `0` = off. |
 | `MW_ROBOT` | (empty) | Dev only: force the player's robot type, e.g. `1313` (Walker Scout). |
 | `MW_KILL_MODE` | `0` | `1` makes battlefields with rounds nation against nation: the client's own team arena, with each side's kills on screen. The side that reaches `MW_ROUND_KILLS` wins. Not tried in game yet. |
+| `MW_MOVE_CHECK` | `1` | `0` turns off the speed check: a robot that moves faster than twice the walking speed is put back where it was. Not tried in game yet. |
 | `MW_PASSIVE_DUMMIES` | `0` | Dev only: `1` stops the target dummies from shooting (PvP tests). |
 | `MW_FORCE_BF` | `0` | Dev only: every Quick Enter goes to this battlefield id (multi-client tests). |
 | `MW_SKIP` | (empty) | Dev only: `catalog:type,...` requests to leave unanswered. |
@@ -209,6 +210,9 @@ start a new line. Show replies as plain text, because they contain names and rea
 - 5 failed logins from one IP lock that IP out for 5 minutes.
 - Nothing but login is accepted before a connection logs in; idle unauthenticated connections close after 30 s.
 - Connection limits: 1024 TCP connections, 512 game sessions (idle sessions expire after 60 s).
+- Speed check: position reports may cover 16 units a second (twice the walking speed), with up to 40 units saved up
+  for reports that arrive bunched after lag. Falling does not count. A faster move is not passed on, and the robot is
+  put back where it was. Shots must come from the robot and stay within the weapon's range.
 - The admin port only listens on 127.0.0.1 and wants the key from `admin.key` first.
 - The admin web page only listens on 127.0.0.1, wants the same key, locks after 5 wrong keys, and checks every field
   before it becomes a command. `tools/test_webadmin.py` attacks it.

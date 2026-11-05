@@ -269,7 +269,8 @@ def main():
     if not args.keep:
         state = tempfile.mkdtemp(prefix="mw-loadtest-server-")
         senv = dict(env, MW_STATE_DIR=state, MW_STATS_EVERY="5", MW_PUBLIC_IP="127.0.0.1", MW_AUTO_REGISTER="1",
-                    MW_MATCH_PLAYERS=str(args.per_match), MW_DEBUG="0")
+                    MW_MATCH_PLAYERS=str(args.per_match), MW_DEBUG="0",
+                    MW_MOVE_CHECK="0")  # bots send the time as their height
         server = subprocess.Popen([sys.executable, "loginserver.py"], cwd=SERVER_DIR, env=senv, text=True,
                                   stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         ready = threading.Event()

@@ -279,6 +279,32 @@ async def scenario():
     r = await amy.request(24, 24025, struct.pack("<IB", amy_id, 0))
     check("nothing expired yet", r.result == 0 and r.body == struct.pack("<I", 0))
 
+    # --- shop Package tab ---
+    r = await amy.request(24, 24028, struct.pack("<II", 0xFFFF, 1))
+    count = struct.unpack_from("<I", r.body, 4)[0]
+    pid, = struct.unpack_from("<I", r.body, 8)
+    name, off = ls.read_wstr(r.body, 12)
+    _, off = ls.read_wstr(r.body, off)
+    pic, name_item, credit, _, crystal, _ = struct.unpack_from("<6I", r.body, off)
+    first = ls.PACKAGES[0]
+    check("the Package tab lists the packages", count == len(ls.PACKAGES) and (pid, name) == first[:2]
+          and (pic, credit, crystal) == (first[2][0], first[4], first[3]))
+    r = await amy.request(24, 24002, struct.pack("<I", name_item))
+    check("a package's name comes through its item id", ls.read_wstr(r.body, 0)[0] == first[1])
+    points = struct.unpack("<I", (await amy.request(24, 24020, struct.pack("<I", amy_id))).body)[0]
+    goods = struct.unpack_from("<I", (await amy.request(24, 24011, struct.pack("<IBII", amy_id, 2, 1, 10000))).body, 4)[0]
+    check("a package is bought with Credit", (await amy.request(24, 24029, struct.pack("<IBI", amy_id, 0, pid))).result == 0)
+    after = struct.unpack("<I", (await amy.request(24, 24020, struct.pack("<I", amy_id))).body)[0]
+    r = await amy.request(24, 24011, struct.pack("<IBII", amy_id, 2, 1, 10000))
+    got = struct.unpack_from("<I", r.body, 4)[0]
+    last = [struct.unpack_from("<I", r.body, 8 + 8 * i + 4)[0] for i in range(goods, got)]
+    check("its price is taken once", after == points - first[4], f"{points} -> {after}")
+    check("all its items are in the warehouse", last == [ls.GOODS_OF[i] for i in first[2]], str(last))
+    for bad, why in ((struct.pack("<IBI", amy_id, 0, 99), "an unknown package"),
+                     (struct.pack("<IB", amy_id, 0), "a short request")):
+        check(f"package refused: {why}", (await amy.request(24, 24029, bad)).result != 0)
+    check("no one buys with your Credit", (await ben.request(24, 24029, struct.pack("<IBI", amy_id, 0, pid))).result != 0)
+
     # --- commands ---
     say(amy, "!role amy admin")
     check("a player can not use commands", await heard(amy) == (21200, 0, "Server", "not allowed"))

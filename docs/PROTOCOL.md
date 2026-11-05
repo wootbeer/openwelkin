@@ -65,6 +65,7 @@
   - [Task\_GetHoldTask](#m-20-20116) `(20,20116)`
   - [CS\_GetTaskServerAfficheList](#m-21-21048) `(21,21048)`
   - [GS\_RequestSuiteInSelling](#m-24-24028) `(24,24028)`
+  - [Buy a package](#m-24-24029) `(24,24029)`
 - [Entering a battle](#battle)
   - [first game message](#m-9-40851) `(9,40851)`
   - [GS\_Battle\_Initialize](#m-19-40050) `(19,40050)`
@@ -889,7 +890,18 @@ u32 (not read) | u32 n | n x ( u32 id | str | str | u32 icon | u32 goods id
 | u32 point price | u32 | u32 money price | u32 )
 ```
 
-Shop Package tab. Picture GoodsPic\_&lt;icon>.dds; money price -1 shows the point price instead. Send at least 8 bytes.
+Shop Package tab. Picture GoodsPic\_&lt;icon>.dds; the name shown is the goods id's item name, asked with (24,24002). Money (Crystal) price -1 shows the point (Credit) price instead. Send at least 8 bytes. Request: `u32 0xffff | u32 1`. The two strings are kept (+4, +0x3c) but not shown in the list. The emulator answers with its own packages (the original ones were on the server): the goods id is 9000 + package id, whose item name is the package name. Not tried in game.
+
+<a name="m-24-24029"></a>
+#### Buy a package `(24,24029)`
+
+*C→S · partial*
+
+```text
+u32 character id | u8 currency | u32 package id
+```
+
+Read from Game.dll, not tried in game. Currency 1 = Crystal, else Credit. The reply has no body. On result 0 the client asks for its Crystal (24019) or Credit (24020) and the in-use list (24006) again and shows dialog 0x6b; any other result shows that error text. The emulator puts each item of the package in the warehouse, as if bought one by one.
 
 Also read, all safe with an empty list: (14,14034) `u32 n | n x (u8 rank | u32)` in the own-corps window; (14,14054) `u32 n | n x (u8 grade | u32)`; (15,15022) corps name and details for a corps id; (15,15074) `u32 n | n x (u32 team | str | str | str flag | u8)`; (15,15093) `u32 n | n x (u32 | u32)`; (17,17079) `u32 0` = no headquarters; (17,17099) `u32 n | n x city link`; (13,13047) and (21,21069) read one u32 and drop it; (17,17111) request `u32 battle front id`, reply `str | str | u8`, the first str stored for that front in the hall's joined battle list.
 

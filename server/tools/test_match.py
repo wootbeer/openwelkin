@@ -18,6 +18,7 @@ import fdp  # noqa: E402
 import loginserver as ls  # noqa: E402
 
 ls.log = lambda *a, **k: None
+ls.MOVE_CHECK = False  # on only for its own tests below: the others move robots around freely
 ls.STORE.save = lambda: None
 ls.STORE.data = copy.deepcopy(ls.STORE.data)
 sent = []     # (addr, catalog, type, body)
@@ -312,6 +313,42 @@ pc = join(C, c_cid)
 ok &= check("full match: third player gets a new match", pc.match is not m and pc.match.bfid == m.bfid
             and len(ls.MATCHES) == 2)
 ls.MAX_MATCH_PLAYERS = 32
+
+# speed check: the clock is the real one, so waiting is done by moving the check's own times back
+def wait(peer, dt):
+    peer.move_at -= dt
+    peer.placed_at -= dt
+
+
+def a_moves_to(pos, typ=40130):
+    msg(A, typ, struct.pack("<I3f", 0, *pos) if typ == 40130 else struct.pack("<fI3f3f", 0.0, 1, *pos, 1.0, 0.0, 0.0))
+    return pa.pos == pos
+
+
+ls.MOVE_CHECK = True
+pa.pos = (0.0, 0.0, 0.0)
+ls.placed(pa)
+wait(pa, 5)
+sent.clear()
+ok &= check("speed check: walking passes", a_moves_to((10.0, 0.0, 0.0)) and not got(A, 33000))
+wait(pa, 1)
+ok &= check("speed check: a second later another 16 passes", a_moves_to((10.0, 0.0, 16.0)))
+before = len(got(B, 50100))
+ok &= check("speed check: a jump of 200 is refused", not a_moves_to((210.0, 0.0, 16.0)) and pa.pos == (10.0, 0.0, 16.0))
+ok &= check("speed check: the player is put back", got(A, 33000) == [struct.pack("<3f", 10.0, 0.0, 16.0)])
+ok &= check("speed check: the others never see the jump",
+            not any(struct.unpack_from("<f", x, 8)[0] == 210.0 for x in got(B, 50100)[before:]))
+ok &= check("speed check: GC_Robot_Action is checked too", not a_moves_to((10.0, 0.0, 300.0), typ=40100))
+ok &= check("speed check: put back at most every half second", len(got(A, 33000)) == 1)
+ok &= check("speed check: falling is free", a_moves_to((10.0, -100.0, 16.0)))
+wait(pa, 3)
+ok &= check("speed check: reports bunched up after lag pass",
+            all(a_moves_to((10.0, -100.0, 16.0 + 12 * i)) for i in (1, 2, 3)))
+sent.clear()
+ls.placed(pa)
+ok &= check("speed check: right after a respawn or goto, an old report is dropped quietly",
+            not a_moves_to((500.0, 0.0, 500.0)) and not got(A, 33000))
+ls.MOVE_CHECK = False
 
 # account logout (gate closed) takes its characters out of the game
 ls.GAME_SERVER = server

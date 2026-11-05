@@ -91,7 +91,10 @@ reply layout, and answer with real data.
 - [x] (24,24015) GS_RequestActiveGoods
 - [x] (24,24025) GS_RequestExpiredItem, 2026-11-05 offline: u32 character id | u8; reply u32 n | n x (u32 item id |
       u8). Answered with the activated items whose time ran out. Not tried in game. (24,24026) has an observer but no sender
-- [ ] (24,24028) GS_RequestSuiteInSelling (Package tab)
+- [x] (24,24028) GS_RequestSuiteInSelling (Package tab), 2026-11-05 offline: list read from Game.dll (CMarketUI::
+      OnSuiteUpdated), buy (24,24029) u32 character id | u8 currency (1 Crystal) | u32 package id. The packages are the
+      emulator's own (PACKAGES in loginserver.py); buying one puts each item in the warehouse. Not tried in game: does
+      the tab show the names and prices, and does buying work
 - [ ] Equipping bought items (24006 in-use list, loadout). 2026-11-05, offline: (24,24007) GS_SetItemInUse read
       from Game.dll and answered: u32 character id | u32 item id | u32 slot, sent when an item is dropped in the
       hall Warehouse (slot 0 = dropped back on the list). The slot is saved with the item and 24006 sends it back.
@@ -150,7 +153,13 @@ reply layout, and answer with real data.
       target within the weapon's range (WP1Range + 25%), and pulling the trigger again cannot beat the fire rate.
       Real client, 2026-10-31: kills count, no false "shot from". WP1Range is in map units: a Viper shot at open sky
       aims exactly 200.0 away. Melee weapons have WP1Range 2, so MIN_RANGE keeps them able to hit (no melee weapon tried)
-- [ ] Not stopped: aim bots, shots through walls (needs the terrain on the server), teleporting or speed hacks
+- [ ] Not stopped: aim bots, shots through walls (needs the terrain on the server)
+- [ ] Speed check (2026-11-05, offline): position reports may cover 16 units a second with 40 saved up, falling is
+      free; a faster move is not relayed and the robot is put back with GS_GMSetLocation (19,33000), at most every
+      0.5 s. Reports in the 1.5 s after a spawn, respawn or goto are dropped quietly (they may be from before).
+      MW_MOVE_CHECK=0 turns it off; tools/loadtest.py does, its bots send the time as their height. Try in game:
+      walking, jumping and falling off something high must never log "put back"; does (19,33000) really move the
+      robot back?
 - [x] Batched saves: stats/log lines flushed every 5 s (atomic writes); purchases/talents/creates save at once
 - [x] Request flood (2026-11-05, offline): each hall connection gets 120 requests at once, then 30 a second; more
       are dropped, and after 300 dropped the connection is closed (tools/test_login.py). Equipping and loadout
