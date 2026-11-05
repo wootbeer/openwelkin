@@ -130,6 +130,9 @@ SESSION_LOCK = threading.Lock()
 MAX_FRAME = 4096        # key-exchange frame (an RSA-512 key plus a short first message)
 MAX_PACKET = 64 * 1024  # one encrypted packet
 MAX_STR = 1024          # one string field
+# Requests per connection: a bucket of REQ_BURST, refilled at REQ_RATE a second. The real client sends a few dozen at
+# once when the hall opens, then a few a second. Requests past it are dropped; a connection that keeps going is closed.
+REQ_RATE, REQ_BURST, REQ_DROP_CLOSE = 30.0, 120.0, 300
 # Character names: 2-16 letters (any script, so Chinese names work), digits or underscore
 MAX_CHARACTERS = 4  # per account
 NAME_RE = re.compile(r"^[^\W]{2,16}$")
@@ -658,8 +661,7 @@ class Store:
                     if it.get("equipped") == slot:
                         it.pop("equipped")
                 (used or items)[0]["equipped"] = slot
-            self.mark_dirty(cid)
-            self.save()
+            self.mark_dirty(cid)  # in the next batch: a player can move items around as fast as they like
             return True
 
     def learn_talent(self, cid, tid, maxlvl):
@@ -770,8 +772,7 @@ class Store:
             if key not in texts and sum(k.startswith("suite:") for k in texts) >= MAX_SUITES:
                 return False
             texts[key] = text
-            self.mark_dirty(cid)
-            self.save()
+            self.mark_dirty(cid)  # in the next batch, like set_in_use
             return True
 
     def set_contact(self, cid, kind, other, on):
@@ -1022,6 +1023,7 @@ class Session:
         self.outbox = collections.deque(maxlen=CHAT_QUEUE)  # lines from other players' threads wait here
         self.outbox_ready = threading.Event()
         self.gone = False
+        self.tokens, self.tokens_at, self.dropped = REQ_BURST, time.monotonic(), 0
 
     def close(self):
         """Drop the connection (kick): the session's own thread sees it close and cleans up. A client that ignores the
@@ -1088,8 +1090,25 @@ class Session:
         debug(f"{self.addr} -> {msg}")
         self.send_packet(msg.pack())
 
+    def allow_request(self):
+        """Token bucket: False when the client sends faster than REQ_RATE for longer than REQ_BURST allows."""
+        now = time.monotonic()
+        self.tokens = min(REQ_BURST, self.tokens + (now - self.tokens_at) * REQ_RATE)
+        self.tokens_at = now
+        if self.tokens >= 1.0:
+            self.tokens -= 1.0
+            return True
+        self.dropped += 1
+        if self.dropped in (1, REQ_DROP_CLOSE):
+            log(f"{self.addr} {self.account}: too many requests" + (", closing" if self.dropped >= REQ_DROP_CLOSE else ""))
+        if self.dropped >= REQ_DROP_CLOSE:
+            self.close()
+        return False
+
     # --- handlers ----------------------------------------------------------------------------
     def handle(self, msg):
+        if not self.allow_request():
+            return
         if self.account is None and (msg.catalog, msg.type) not in PRE_AUTH:
             log(f"{self.addr} ignored {msg} before login")
             return

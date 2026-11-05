@@ -64,6 +64,19 @@ s = FakeSession()
 s.handle(ls.Message(10, 10000, token=1, flags=ls.MSG_REQUEST, body=b"\x01\x00"))
 ok &= check("malformed login refused", s.sent[-1].result, ls.LOGIN_FAILED)
 
+# a flood of requests is cut down, then closed
+s = FakeSession(ip="6.6.6.6")
+s.handle(ls.Message(10, 10000, token=1, flags=ls.MSG_REQUEST, body=login_body("flood", "pw")))
+closed = []
+s.close = lambda: closed.append(1)
+for n in range(int(ls.REQ_BURST) + 50):
+    s.handle(ls.Message(13, 13000, token=n, flags=ls.MSG_REQUEST, body=b""))
+ok &= check("a burst is answered, past it requests are dropped", int(ls.REQ_BURST) - 5 <= len(s.sent) <= int(ls.REQ_BURST) + 5,
+            True)
+for n in range(ls.REQ_DROP_CLOSE):
+    s.handle(ls.Message(13, 13000, token=n, flags=ls.MSG_REQUEST, body=b""))
+ok &= check("a client that keeps flooding is closed", bool(closed), True)
+
 # bans and admin commands
 admin = lambda line: ls.admin_command(line, "test")  # noqa: E731
 login("carol", "pw3", ip="7.7.7.7")

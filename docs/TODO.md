@@ -147,6 +147,9 @@ reply layout, and answer with real data.
       aims exactly 200.0 away. Melee weapons have WP1Range 2, so MIN_RANGE keeps them able to hit (no melee weapon tried)
 - [ ] Not stopped: aim bots, shots through walls (needs the terrain on the server), teleporting or speed hacks
 - [x] Batched saves: stats/log lines flushed every 5 s (atomic writes); purchases/talents/creates save at once
+- [x] Request flood (2026-11-05, offline): each hall connection gets 120 requests at once, then 30 a second; more
+      are dropped, and after 300 dropped the connection is closed (tools/test_login.py). Equipping and loadout
+      presets now wait for the 5 s batch instead of a database write each, so moving items fast costs nothing
 - [x] MW_DEBUG gates packet traces; AES and session keys never logged
 - [x] MW_PUBLIC_IP sets the gate/game address sent to clients (was hardcoded 127.0.0.1)
 - [x] server/README.md for people running the server
