@@ -1343,7 +1343,7 @@ Big red text in the middle of the screen with kind 0, which is what the emulator
 
 ### Kill arena
 
-The client has its own team mode: arena logic 5 in [GS\_Battle\_Initialize](#m-19-40050). The other ids are 1 Big, 2 GrabMoney, 3 OD and 4 EM. The emulator does not use these yet. Init data after the logic id: `u8 nation | u8 nation | f32`. The local character's nation (+0x30) picks which side is "Our Force".
+The client has its own team mode: arena logic 5 in [GS\_Battle\_Initialize](#m-19-40050). The other ids are 1 Big, 2 GrabMoney, 3 OD and 4 EM. Init data after the logic id: `u8 nation | u8 nation | f32` (CArenaLogicKill::SetInitData; the f32 is kept at +0x18, use not known). With `MW_KILL_MODE=1` the emulator uses it on battlefields with rounds: it sends both nations and the round length, both scores and the time left when a player joins, a side's new score on each kill of the other nation, and the side that reaches `MW_ROUND_KILLS` (or has more kills when time runs out) wins the round. Not tried in game. The local character's nation (+0x30) picks which side is "Our Force".
 
 <a name="m-19-49000"></a>
 #### Arena\_KILL\_Waiting\_Begin `(19,49000)`
@@ -1376,7 +1376,7 @@ Sets one side's score.
 u32 count | count x 6 x str
 ```
 
-The score table. The handler parses numbers out of some of the strings. Whether a catalog 20 message reaches the client on the game session is not known.
+The score table (dialog 0x68). Each row goes to CArenaScoreUI::AddWarData(s1, s2, u8 from s3, s4, int from s5, u32 from s6): strings 3, 5 and 6 are numbers. Column meanings not known; the emulator does not send it. The handler parses numbers out of some of the strings. Whether a catalog 20 message reaches the client on the game session is not known.
 
 <a name="chat"></a>
 

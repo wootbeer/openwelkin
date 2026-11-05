@@ -8,18 +8,18 @@ import re
 import os
 import random
 import sys
-import tempfile
 import traceback
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-os.environ.setdefault("MW_STATE_DIR", tempfile.mkdtemp(prefix="mw-test-"))  # never the real save files
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # -I leaves the tools folder out
+import tmpdir  # noqa: E402  (removes the temporary folders at exit)
+os.environ.setdefault("MW_STATE_DIR", tmpdir.make("mw-test-"))  # never the real save files
 import loginserver as ls  # noqa: E402
 
 ls.log = lambda *a, **k: None
 ls.STORE.save = lambda: None
 ls.STORE.data = copy.deepcopy(ls.STORE.data)
-import tempfile
-ls.Accounts.path = os.path.join(tempfile.mkdtemp(), "accounts.db")
+ls.Accounts.path = os.path.join(tmpdir.make(), "accounts.db")
 ls.ACCOUNTS = ls.Accounts()
 ls.login_throttled = lambda ip, failed=False: False
 

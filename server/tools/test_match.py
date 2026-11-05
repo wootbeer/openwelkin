@@ -8,11 +8,12 @@ import copy
 import os
 import struct
 import sys
-import tempfile
 import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-os.environ.setdefault("MW_STATE_DIR", tempfile.mkdtemp(prefix="mw-test-"))  # never the real save files
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # -I leaves the tools folder out
+import tmpdir  # noqa: E402  (removes the temporary folders at exit)
+os.environ.setdefault("MW_STATE_DIR", tmpdir.make("mw-test-"))  # never the real save files
 import fdp  # noqa: E402
 import loginserver as ls  # noqa: E402
 
@@ -391,5 +392,47 @@ step(ls.ROUND_WARNING)
 ok &= check("the timer ends the round", m2.over and len(got(B, 30150)) == 2)
 for addr in list(server.peers):
     server.close(server.peers[addr], "test over")
+step()
+
+# Kill mode: the two nations against each other
+ls.KILL_MODE, ls.ROUND_KILLS = True, 2
+ls.STORE.by_id(a_cid)["model"], ls.STORE.by_id(b_cid)["model"], ls.STORE.by_id(c_cid)["model"] = (
+    ls.FEDERAL, ls.ALLIANCE, ls.ALLIANCE)
+wins_a, wins_c = ls.STORE.stats(a_cid).get("wins", 0), ls.STORE.stats(c_cid).get("wins", 0)
+sent.clear()
+pa, pb = join_front(A, a_cid), join_front(B, b_cid)
+pc = join_front(C, c_cid)
+m3 = pa.match
+step()
+ok &= check("kill mode: arena logic 5 with both nations", m3.kill_mode and got(A, 40050)[-1].endswith(
+    struct.pack("<IBBf", ls.ARENA_KILL, ls.FEDERAL, ls.ALLIANCE, float(ls.ROUND_SECONDS))))
+ok &= check("kill mode: a joining player gets both scores and the time left",
+            sorted(got(C, 52001)) == sorted([struct.pack("<Bi", ls.FEDERAL, 0), struct.pack("<Bi", ls.ALLIANCE, 0)])
+            and len(got(C, 49000)) == 1 and 0 < struct.unpack_from("<f", got(C, 49000)[0])[0] <= ls.ROUND_SECONDS)
+kill(pa, pb)
+step()
+ok &= check("kill mode: a kill scores for the killer's side", struct.pack("<Bi", ls.FEDERAL, 1) in got(B, 52001))
+kill(pc, pb)
+step()
+ok &= check("kill mode: a kill on your own side scores nothing", m3.side_kills == {ls.FEDERAL: 1, ls.ALLIANCE: 0})
+kill(pa, pc)
+step()
+ok &= check("kill mode: the side reaching the limit wins", m3.over and any(b"Federal" in x for x in got(B, 30250)))
+ok &= check("kill mode: its players get a win", ls.STORE.stats(a_cid).get("wins") == wins_a + 1
+            and ls.STORE.stats(c_cid).get("wins", 0) == wins_c)
+for addr in list(server.peers):
+    server.close(server.peers[addr], "test over")
+ls.KILL_MODE = False
+step()
+
+# a session flooding messages is cut down, then closed
+pa = join_front(A, a_cid)
+flood = b"".join(struct.pack("<H", 4) + bytes([0x80, 9]) + struct.pack("<H", 1) for _ in range(250))
+for _ in range(2):
+    server.handle(fdp.Packet(0x01, 1, pa.server_session, 12 + len(flood), 0, 0, 0, flood).pack(), A)
+ok &= check("a message flood is dropped past the burst", pa.dropped > 0 and A in server.peers)
+for _ in range(fdp.MSG_DROP_CLOSE // 250 + 1):
+    server.handle(fdp.Packet(0x01, 1, pa.server_session, 12 + len(flood), 0, 0, 0, flood).pack(), A)
+ok &= check("a session that keeps flooding is closed", A not in server.peers)
 print("all ok" if ok else "FAILURES")
 sys.exit(0 if ok else 1)

@@ -40,6 +40,9 @@ MAX_BATCH = 1024      # payload bytes per packet when queued messages are sent t
 DUP_ACKS = 3          # the same ack this many times in a row resends the packet it asks for
 RESEND_AFTER = 4.0    # seconds before the oldest unacked reliable packet is sent again
 MAX_UNACKED = 4096    # reliable packets in flight before a session counts as dead
+# Messages per session: a bucket of MSG_BURST, refilled at MSG_RATE a second (the client sends positions, steering
+# and pings, some tens a second). Past it messages are dropped; after MSG_DROP_CLOSE dropped the session is closed.
+MSG_RATE, MSG_BURST, MSG_DROP_CLOSE = 150.0, 300.0, 3000
 
 
 class Packet:
@@ -81,6 +84,7 @@ class Peer:
         self.unacked = {}          # our reliable packet number -> [packed packet, last send time, sends]
         self.last_ack, self.dup_acks = None, 0
         self.closed = False
+        self.tokens, self.tokens_at, self.dropped = MSG_BURST, time.monotonic(), 0
 
 
 class Server:
@@ -132,10 +136,30 @@ class Server:
             self.send(Packet(0x05, peer.next_reliable, peer.client_session, HEAD.size, 1, peer.expected, 2),
                       addr, quiet=True)
         for raw, catalog, type_ in messages(pkt.payload):
+            if not self.allow_message(peer):
+                if peer.closed:
+                    return
+                continue
             if (catalog, type_) == (9, 9001):  # ping: echo it back unreliably
                 self.send_messages(peer, [raw], reliable=False, quiet=True)
             elif self.on_message:
                 self.on_message(self, peer, raw)
+
+    def allow_message(self, peer):
+        """Token bucket per session. False drops the message; a session that keeps flooding is closed."""
+        now = time.monotonic()
+        peer.tokens = min(MSG_BURST, peer.tokens + (now - peer.tokens_at) * MSG_RATE)
+        peer.tokens_at = now
+        if peer.tokens >= 1.0:
+            peer.tokens -= 1.0
+            return True
+        peer.dropped += 1
+        if peer.dropped == 1:
+            self.log(f"[fdp] {peer.addr} too many messages, dropping")
+        if peer.dropped >= MSG_DROP_CLOSE:
+            self.log(f"[fdp] {peer.addr} kept flooding, closing")
+            self.close(peer, "flooding")
+        return False
 
     def on_syn(self, pkt, addr):
         peer = self.peers.get(addr)

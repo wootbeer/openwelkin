@@ -87,6 +87,7 @@ HIT_RADIUS, HIT_HEIGHT, HIT_LOW, HIT_HIGH = 3.0, 2.5, 0.5, 4.5
 SNAP_RISE = 20.0
 FEDERAL, ALLIANCE = 0x10, 0x20  # NATION_TYPE: the two sides ("Federal", "Alliance" in Language/ENG.xml)
 NATIONS = (FEDERAL, ALLIANCE)
+NATION_NAMES = {FEDERAL: "Federal", ALLIANCE: "Alliance"}
 DUMMY_NATION = 0  # target dummies are on no side: everyone's enemy (red names); a side's own robots have white names
 TRAIL_SECONDS = 1.5  # a client draws other robots up to about a second behind: shots count against where they were
 MUZZLE_REACH = 15.0     # a shot must start this close to where the server last saw the robot
@@ -2587,6 +2588,11 @@ MAX_MATCH_PLAYERS = int(os.environ.get("MW_MATCH_PLAYERS", "32") or 32)  # playe
 ROUND_SECONDS = int(os.environ.get("MW_ROUND_SECONDS", "900") or 0)  # a battlefield round ends after this long, 0 = never
 ROUND_KILLS = int(os.environ.get("MW_ROUND_KILLS", "25") or 0)       # or when a player destroys this many players, 0 = no limit
 ROUND_WARNING = 60    # seconds before the end of a round that players are told
+# Kill mode (MW_KILL_MODE=1, battlefields with rounds): the client's own team arena, logic 5. The two nations play
+# against each other; each side's kills show as "Our Force" / "Enemy Force", and the side with more wins the round.
+# Read from Game.dll (CArenaLogicKill), not tried in game yet.
+KILL_MODE = os.environ.get("MW_KILL_MODE") == "1"
+ARENA_KILL = 5
 RECORD_SECONDS = 20.0 # the Record window's countdown; after it the client goes back to the lobby
 RECORD_GRACE = 10.0   # a client still here this long after that countdown is closed
 MAX_SLOTS = 4000      # joins per match before it takes nobody new (robot ids are slot * 1,000,000 + 1, a u32)
@@ -2652,6 +2658,9 @@ class Match:
         self.timers = []  # heap of (time, sequence, function, args)
         self.tick_no, self.next_ai, self.now = 0, 0.0, 0.0
         self.over = False  # the round ended: the Record window is showing
+        self.kill_mode = KILL_MODE and bool(self.bf.get("rounds"))
+        self.side_kills = dict.fromkeys(NATIONS, 0)
+        self.round_ends = 0.0
         self.targets = {}
         self.trails = {}  # robot id -> deque of (time, position), the last TRAIL_SECONDS of its moves
         for i, dpos in enumerate(self.bf["dummies"]):
@@ -2739,6 +2748,9 @@ def show_message(m, text):
 
 
 def start_round(m):
+    m.round_ends = time.time() + ROUND_SECONDS
+    if m.kill_mode:
+        m.broadcast(19, 49000, lambda p: countdown_body(m))
     if ROUND_SECONDS > ROUND_WARNING:
         m.later(ROUND_SECONDS - ROUND_WARNING, warn_round, m)
     m.later(ROUND_SECONDS, round_timer, m)
@@ -2757,20 +2769,47 @@ def round_timer(m):
         start_round(m)
 
 
+def countdown_body(m):
+    """Arena_KILL_Waiting_Begin (19,49000): f32 seconds | u8 | f32 -> CArenaMessageUI::SetCountDown (Game.dll
+    0x106a0800). Only the seconds are known; the u8 and the second f32 are sent as 0."""
+    return struct.pack("<fBf", max(0.0, m.round_ends - time.time()), 0, 0.0)
+
+
+def side_score_body(nation, score):
+    """Arena_KILL_SetScore (19,52001): u8 nation | i32 score -> CArenaLogicKill::OnSetScore (Our or Enemy Force)."""
+    return struct.pack("<Bi", nation, score)
+
+
+def count_side_kill(m, killer, victim):
+    """Kill mode: a kill on the other nation scores for the killer's side. True if that side reached ROUND_KILLS."""
+    side, other = nation_of(killer.cid), nation_of(victim.cid)
+    if not m.kill_mode or side not in NATIONS or other not in NATIONS or side == other:
+        return False
+    m.side_kills[side] += 1
+    m.broadcast(19, 52001, side_score_body(side, m.side_kills[side]))
+    return bool(ROUND_KILLS) and m.side_kills[side] >= ROUND_KILLS
+
+
 def end_round(m):
-    """Most player kills wins. DisconnectByServer (19,30150, f32 seconds): the Record window shows the player's kills,
+    """Most player kills wins (in Kill mode: the side with more kills, everyone on it). DisconnectByServer (19,30150, f32 seconds): the Record window shows the player's kills,
     deaths and honor with a countdown, then the client goes back to the lobby (seen in game 2026-10-30)."""
     if m.over:
         return
     m.over = True
-    best = max(p.player_kills for p in m.peers)
-    winners = [p for p in m.peers if p.player_kills == best] if best else []
+    if m.kill_mode:
+        fed, all_ = m.side_kills[FEDERAL], m.side_kills[ALLIANCE]
+        side = FEDERAL if fed > all_ else ALLIANCE if all_ > fed else 0
+        winners = [p for p in m.peers if side and nation_of(p.cid) == side]
+        names, best = NATION_NAMES.get(side, ""), max(fed, all_)
+    else:
+        best = max(p.player_kills for p in m.peers)
+        winners = [p for p in m.peers if p.player_kills == best] if best else []
+        names = ", ".join(p.name for p in winners)
     for p in winners:
         record_stats(p, wins=1)
         STORE.add_log(p.cid, f"Won a round of {m.bf['name']}")
-    names = ", ".join(p.name for p in winners)
     log(f"[game] round over in {m.bf['name']} (match {m.id}): {names or 'nobody'} won with {best} kills")
-    show_message(m, f"{names} won the round" if winners else "The round is over")
+    show_message(m, f"{names} won the round" if names else "The round is over")
     m.broadcast(19, 30150, struct.pack("<f", RECORD_SECONDS))
     m.later(RECORD_SECONDS + RECORD_GRACE, close_round, m)
 
@@ -2893,6 +2932,10 @@ def join_match(server, peer):
     for other in m.peers:
         show_player(server, peer, other)
         show_player(server, other, peer)
+    if m.kill_mode:  # the scores and the time left so far
+        for side in NATIONS:
+            send_game_event(server, peer, 19, 52001, side_score_body(side, m.side_kills[side]))
+        send_game_event(server, peer, 19, 49000, countdown_body(m))
     m.peers.append(peer)
     tell_gate_match(peer, m.id)
     log(f"[game] {peer.name} (cid {peer.cid}) joined {m.bf['name']} (match {m.id}) as slot {slot}; "
@@ -2983,7 +3026,8 @@ def hit_player(server, m, victim, damage, killer_name, killer=None):
     if killer:
         credit_kill(server, killer, victim.name)
         killer.player_kills += 1
-        if m.bf.get("rounds") and ROUND_KILLS and killer.player_kills >= ROUND_KILLS:
+        side_won = count_side_kill(m, killer, victim)
+        if side_won or (m.bf.get("rounds") and ROUND_KILLS and not m.kill_mode and killer.player_kills >= ROUND_KILLS):
             end_round(m)
     if not m.over:
         m.later(RESPAWN_DELAY, relive_player, server, victim)
@@ -3257,7 +3301,13 @@ def on_game_message(server, peer, raw):
         peer.cid, peer.bfid = who
         peer.battle_sent = True
         bf = BATTLEFIELDS[peer.bfid]
-        send_game_event(server, peer, 19, 40050, struct.pack("<I", 1) + wstr(bf["world"]) + struct.pack("<BIII", 0, 0, 0, 0))
+        if KILL_MODE and bf.get("rounds"):  # logic data: u8 nation | u8 nation | f32 (CArenaLogicKill::SetInitData);
+            # the client takes its own nation as "Our Force". The f32 is kept at +0x18, use not known
+            logic = struct.pack("<IBBf", ARENA_KILL, FEDERAL, ALLIANCE, float(ROUND_SECONDS))
+        else:
+            logic = struct.pack("<I", 0)
+        send_game_event(server, peer, 19, 40050, struct.pack("<I", 1) + wstr(bf["world"]) + struct.pack("<BII", 0, 0, 0)
+                        + logic)
         return
     if not getattr(peer, "battle_sent", False):
         return  # nothing before the ticket

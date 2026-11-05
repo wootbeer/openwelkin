@@ -16,6 +16,7 @@ import math
 import os
 import random
 import struct
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -24,7 +25,9 @@ import time
 
 SERVER_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, SERVER_DIR)
-os.environ.setdefault("MW_STATE_DIR", tempfile.mkdtemp(prefix="mw-loadtest-"))  # importing loginserver opens files
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # -I leaves the tools folder out
+import tmpdir  # noqa: E402  (removes the temporary folders at exit)
+os.environ.setdefault("MW_STATE_DIR", tmpdir.make("mw-loadtest-"))  # importing loginserver opens files
 import fdp  # noqa: E402
 import loginserver as ls  # noqa: E402
 
@@ -282,7 +285,7 @@ def main():
             print("server did not start")
             server.kill()
             return 1
-        print(f"server started (data in {state}, ports {6001 + args.port_offset}-{6010 + args.port_offset})")
+        print(f"server started (data in {state}, removed after the run; ports {6001 + args.port_offset}-{6010 + args.port_offset})")
     ramp = max(1.0, args.bots / 8)  # account creation (scrypt) is deliberately slow: ~8 new logins/s
     stop_at = time.time() + ramp + 2 + args.seconds
     per = -(-args.bots // args.procs)
@@ -307,6 +310,11 @@ def main():
     time.sleep(1)
     if server:
         server.terminate()
+        try:
+            server.wait(10)
+        except subprocess.TimeoutExpired:
+            server.kill()
+        shutil.rmtree(state, ignore_errors=True)
     lat = [x for r in results for x in r["latency"]]
     joins = [x for r in results for x in r["join_s"]]
     failed = [x for r in results for x in r["failed"]]

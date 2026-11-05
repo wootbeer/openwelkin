@@ -140,6 +140,8 @@ reply layout, and answer with real data.
       account name check, nothing handled before login, 30 s auth timeout, 1024 TCP connection cap
 - [x] Character create: needs login, max 4 per account, malformed name rejected instead of dropping the connection
 - [x] FDP: 512 session cap with 60 s idle expiry; UDP loop catches handler errors
+- [x] Game message flood (2026-11-05, offline): each game session gets 300 messages at once, then 150 a second;
+      more are dropped, and after 3000 dropped the session is closed. A 40-bot load test drops nothing
 - [x] Game sessions need a live battle ticket in the SYN (2026-11-05, offline): before, any made-up SYN opened a
       session, so one machine could fill all 512 and keep them alive. Also at most 16 sessions per address (not
       for 127.x, where tools/loadtest.py runs). tools/test_match.py; load test with 40 bots still joins all
@@ -173,6 +175,10 @@ reply layout, and answer with real data.
       (+0x30), and the robot snapshot's u32 after the owner is the robot's (+0x6c). Robots of your own nation get a white
       name, others a red one. The client still sends shots at your own side, so the server ignores them (players only;
       target dummies have no nation and fight everyone). Kill feed lines carry both nations
+- [ ] Kill mode (MW_KILL_MODE=1), 2026-11-05 offline: arena logic 5, side scores (19,52001), countdown (19,49000),
+      the side that reaches MW_ROUND_KILLS wins and all its players get a win (tools/test_match.py). Try in game:
+      does the score bar show "Our Force" / "Enemy Force", and does the countdown run? The score table (20,20130)
+      is not sent: its columns are not known
 - [ ] Teams within a side, respawn point choice. Needs a client session: without knowing what
       sets the nation, players could not tell the sides apart, so nothing is built yet. Client's Kill arena, read from Game.dll, not
       tried: arena logic 5 in (19,40050), then init data u8 nation | u8 nation | f32. (19,49000) f32 seconds | u8 | f32
