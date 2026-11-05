@@ -793,7 +793,7 @@ Reply layouts read from the observers in Game.dll. A read past the end of a repl
 u32 n | n x ( u32 preset id | str text )
 ```
 
-Request: `u32 character id | u8`. Loadout presets of the Robot Roof. The client parses the text itself, space separated: `name a b c d k <k numbers> m <m numbers>` (meaning of the numbers not known; names cannot hold spaces). The emulator sends back what 14005 saved.
+Request: `u32 character id | u8`. Loadout presets of the Robot Roof (the respawn screen in battle, dialog 108). Real client: presets sent in the hall were parsed, but the battle screen did not show them. The client parses the text itself, space separated: `name a b c d k <k numbers> m <m numbers>` (meaning of the numbers not known; names cannot hold spaces). The emulator sends back what 14005 saved.
 
 <a name="m-14-14005"></a>
 #### CGS\_SaveCharacterQuickSuite `(14,14005)`

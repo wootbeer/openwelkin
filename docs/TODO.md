@@ -13,7 +13,11 @@ reply layout, and answer with real data.
 ## Character / progress
 - [x] (13,13047) CS_CanFetchMoney: the reply's one u32 is read and dropped, nothing to do
 - [x] (14,14004) CGS_CharacterQuickSuite and (14,14005) save: Robot Roof loadout presets, kept as the client's text
-      and sent back (tested offline only; the meaning of the numbers in the text is not known)
+      and sent back. Real client 2026-11-04: two presets put in the database came back in the hall and the client
+      parsed them (character +0xd8 list: id 1, robot 1311, name "Sniper"). The Robot Roof is the respawn screen in
+      battle (dialog 108, CNewRobotRoofUI, Shortcut tab); there the list was empty and the tab showed 10 default
+      slots, so the battle side gets them some other way (not read yet). Saving one in game needs a robot in the
+      left slot, which needs robot items in the warehouse (see Equipping below)
 - [x] (14,14010) CG_Character_Get_Exploit
 - [ ] (14,14034) UpdateRankUpgrade
 - [x] (14,14040) CGS_GetAllMilitaryRank
