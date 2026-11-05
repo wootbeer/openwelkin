@@ -633,6 +633,30 @@ class Store:
             self.save()
             return True
 
+    def set_in_use(self, cid, item_id, slot):
+        """Put an active item with this item id into in-use slot (1-based), or take it out with slot 0. The client
+        names items by item id, so with several of one item the one already in use moves, else a free one goes in."""
+        with self.lock:
+            now = int(time.time())
+            mine = (self.by_id(cid) or {}).get("items", [])
+            items = [it for it in mine if it["item"] == item_id
+                     and it.get("active") and (it.get("expires", 0) == 0 or it["expires"] > now)]
+            used = [it for it in items if it.get("equipped")]
+            if slot == 0:
+                if not used:
+                    return False
+                used[0].pop("equipped")
+            else:
+                if not 1 <= slot <= IN_USE_SLOTS or not items:
+                    return False
+                for it in mine:
+                    if it.get("equipped") == slot:
+                        it.pop("equipped")
+                (used or items)[0]["equipped"] = slot
+            self.mark_dirty(cid)
+            self.save()
+            return True
+
     def learn_talent(self, cid, tid, maxlvl):
         with self.lock:
             c = self.by_id(cid)
@@ -861,6 +885,7 @@ ACCOUNTS = Accounts()
 BANS = Bans()
 ONLINE = {}  # account -> its gate Session; one per account, a second login closes the first
 MAX_CONTACTS = 100  # entries on a friend or block list
+IN_USE_SLOTS = 32  # in-use slots sent with 24006 (the old fixed value; the real count is not known)
 MAX_SUITES = 10  # loadout presets per character
 MAX_SUITE_TEXT = 400  # characters in one preset (a name and a few dozen part ids)
 KICK_NOTICE = 1.5  # seconds a kicked player has to see why, before the connection closes
@@ -1788,18 +1813,29 @@ class Session:
     def on_items_in_use(self, msg):
         # GS_UpdateItemInUse (24,24006), request: u32 character id. Reply read by GS_UpdateItemInUseObserver
         # (0x10359550): u32 slots | u32 count | count x (u32 slot (1-based) | u32 item id | u8 | u32 minutes left
-        # | str)
-        # Items listed here count as equipped: the warehouse hides them. Nothing equips items yet, so the list
-        # stays empty until the loadout is worked out.
+        # | str). Slots is how many in-use slots the character has (vector at character +0x3e4, 0x58 each).
+        # Items listed here count as equipped: the warehouse hides them.
         cid = struct.unpack_from("<I", msg.body)[0] if len(msg.body) >= 4 else 0
         items = [it for it in STORE.items(cid) if it.get("equipped")] if self.own_character(cid) else []
         now = int(time.time())
         items = [it for it in items if it.get("active") and (it["expires"] == 0 or it["expires"] > now)]
-        body = struct.pack("<II", max(32, len(items)), len(items))
-        for slot, it in enumerate(items, 1):
+        body = struct.pack("<II", IN_USE_SLOTS, len(items))
+        for it in sorted(items, key=lambda it: it["equipped"]):
             left = 2000000 if it["expires"] == 0 else (it["expires"] - now) // 60
-            body += struct.pack("<IIBI", slot, it["item"], 0, left) + wstr("")
+            body += struct.pack("<IIBI", it["equipped"], it["item"], 0, left) + wstr("")
         self.reply(msg, body)
+
+    def on_set_in_use(self, msg):
+        # GS_SetItemInUse (24,24007), sent when an item is dropped in the hall Warehouse (CWareHouseUI drop,
+        # 0x10691440; sender 0x106ad960): u32 character id | u32 item id | u32 slot. Slot is 1-based for a slot
+        # control, 0 when an in-use item is dropped back on the list. No reply body: on result 0 the client puts
+        # the item in that slot itself (character +0x3e4), or takes it out.
+        if len(msg.body) < 12:
+            return self.reply(msg, b"", result=ERR_PROTOCOL)
+        cid, item, slot = struct.unpack_from("<III", msg.body)
+        ok = self.own_character(cid) and STORE.set_in_use(cid, item, slot)
+        log(f"{self.addr} set in use cid={cid} item={item} slot={slot} -> {'ok' if ok else 'refused'}")
+        self.reply(msg, b"", result=0 if ok else 24005)  # "This activated item does not exist."
 
     def on_login(self, msg):
         # body: u32 version | str8 account | str8 password | u32 region(10102) | u32 1 | str8 machine hash
@@ -2029,6 +2065,7 @@ HANDLERS = {
     (24, 24002): Session.on_item_flyweight,      # GS_UpdateItemFlyweight
     (24, 24021): Session.on_buy,                 # GS_RequestBuyGoods
     (24, 24006): Session.on_items_in_use,        # GS_UpdateItemInUse
+    (24, 24007): Session.on_set_in_use,          # GS_SetItemInUse (Warehouse drag and drop)
     (24, 24011): Session.on_my_goods,            # GS_RequestMyGoods (warehouse)
     (24, 24003): Session.on_my_active_goods,     # GS_RequestMyActivedGoods (warehouse)
     (24, 24015): Session.on_activate_goods,      # GS_RequestActiveGoods (warehouse Apply)

@@ -240,6 +240,43 @@ async def scenario():
     check("nothing to forget", (await amy.request(14, 14045, struct.pack("<I", amy_id))).result == 14005)
     check("not another character's", (await ben.request(14, 14045, struct.pack("<I", amy_id))).result != 0)
 
+    # --- equipping (Warehouse drag and drop) ---
+    gid = min(range(1, len(ls.SHOP) + 1), key=lambda g: max(ls.SHOP[g - 1][1], ls.SHOP[g - 1][2]))
+    item = ls.SHOP[gid - 1][0]
+    check("bought", (await amy.request(24, 24021, struct.pack("<IBBI", amy_id, 0, 0, gid))).result == 0)
+    r = await amy.request(24, 24011, struct.pack("<IBII", amy_id, 2, 1, 10000))
+    n = struct.unpack_from("<I", r.body, len(r.body) - 8)[0]  # the instance id of the last bought, not activated
+
+    def in_use(r):
+        slots, count = struct.unpack_from("<II", r.body)
+        out, off = [], 8
+        for _ in range(count):
+            slot, it = struct.unpack_from("<II", r.body, off)
+            _, off = ls.read_wstr(r.body, off + 13)
+            out.append((slot, it))
+        return out
+    r = await amy.request(24, 24007, struct.pack("<III", amy_id, item, 2))
+    check("a not activated item cannot be put in use", r.result != 0)
+    check("activated", (await amy.request(24, 24015, struct.pack("<II", amy_id, n))).result == 0)
+    r = await amy.request(24, 24007, struct.pack("<III", amy_id, item, 2))
+    check("an item goes into a slot", r.result == 0)
+    check("the in-use list shows it", in_use(await amy.request(24, 24006, struct.pack("<I", amy_id))) == [(2, item)])
+    r = await amy.request(24, 24007, struct.pack("<III", amy_id, item, 5))
+    check("it can move to another slot", r.result == 0 and
+          in_use(await amy.request(24, 24006, struct.pack("<I", amy_id))) == [(5, item)])
+    for bad, why in ((struct.pack("<III", amy_id, item, ls.IN_USE_SLOTS + 1), "a slot past the last"),
+                     (struct.pack("<III", amy_id, 999999, 1), "an item not owned"),
+                     (struct.pack("<II", amy_id, item), "a short request")):
+        check(f"refused: {why}", (await amy.request(24, 24007, bad)).result != 0)
+    r = await ben.request(24, 24007, struct.pack("<III", amy_id, item, 1))
+    check("no one else equips your items", r.result != 0)
+    check("no one else sees them", in_use(await ben.request(24, 24006, struct.pack("<I", amy_id))) == [])
+    r = await amy.request(24, 24007, struct.pack("<III", amy_id, item, 0))
+    check("slot 0 takes it out", r.result == 0 and
+          in_use(await amy.request(24, 24006, struct.pack("<I", amy_id))) == [])
+    check("taking out twice is refused", (await amy.request(24, 24007, struct.pack("<III", amy_id, item, 0))).result != 0)
+    await amy.request(24, 24007, struct.pack("<III", amy_id, item, 3))
+
     # --- commands ---
     say(amy, "!role amy admin")
     check("a player can not use commands", await heard(amy) == (21200, 0, "Server", "not allowed"))

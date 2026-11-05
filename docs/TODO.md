@@ -90,7 +90,11 @@ reply layout, and answer with real data.
 - [x] (24,24003) GS_RequestMyActivedGoods
 - [x] (24,24015) GS_RequestActiveGoods
 - [ ] (24,24028) GS_RequestSuiteInSelling (Package tab)
-- [ ] Equipping bought items (24006 in-use list, loadout)
+- [ ] Equipping bought items (24006 in-use list, loadout). 2026-11-05, offline: (24,24007) GS_SetItemInUse read
+      from Game.dll and answered: u32 character id | u32 item id | u32 slot, sent when an item is dropped in the
+      hall Warehouse (slot 0 = dropped back on the list). The slot is saved with the item and 24006 sends it back.
+      Not tried in game. Still open: how many slots there really are (32 sent), whether the battle Robot Roof's
+      warehouse lists in-use items, and using them in battle
 
 ## Ranking
 - [x] Ranking window, real client 2026-11-02: Honor and Crystal tabs show names, rank and score; your own row is

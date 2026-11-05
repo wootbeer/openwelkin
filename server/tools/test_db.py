@@ -128,6 +128,12 @@ def characters():
     for n in range(ls.MAX_CONTACTS):
         ls.STORE.set_contact(cid, "blocked", 100000 + n, True)
     check("the lists have a limit", len(ls.STORE.contacts(cid, "blocked")) == ls.MAX_CONTACTS)
+    with ls.STORE.lock:
+        ls.STORE.by_id(cid).setdefault("items", []).append({"item": 3101, "days": 0, "expires": 0, "active": True})
+    check("an item goes in use", ls.STORE.set_in_use(cid, 3101, 7))
+    reopen()
+    check("its in-use slot survives a restart", [it.get("equipped") for it in ls.STORE.items(cid)
+                                                 if it["item"] == 3101 and it.get("active")][-1:] == [7])
     ls.STORE.save_suite(cid, 7, "Fast 1311 0 0 0 2 3101 3102 0")
     ls.STORE.save_suite(cid, 8, EVIL)
     ls.STORE.save_suite(cid, 7, "Faster 1311 0 0 0 0 0")

@@ -127,7 +127,7 @@ def write_character(con, account, c):
     con.execute("DELETE FROM items WHERE character_id = ?", (cid,))
     con.executemany("INSERT INTO items VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     [(cid, n, it.get("goods"), it["item"], it.get("days", 0), it.get("expires", 0),
-                      int(bool(it.get("active"))), int(bool(it.get("equipped"))))
+                      int(bool(it.get("active"))), int(it.get("equipped") or 0))
                      for n, it in enumerate(c.get("items", []))])
     con.execute("DELETE FROM talents WHERE character_id = ?", (cid,))
     con.executemany("INSERT INTO talents VALUES (?, ?, ?)", [(cid, k, v) for k, v in c.get("talents", {}).items()])
@@ -187,7 +187,7 @@ def load_account(con, account):
         if goods is not None:
             it["goods"] = goods
         if equipped:
-            it["equipped"] = True
+            it["equipped"] = equipped  # the in-use slot, 1-based
         ids[cid]["items"].append(it)
     for cid, talent, level in con.execute(
             "SELECT * FROM talents WHERE character_id IN (SELECT id FROM characters WHERE account = ?)", (account,)):

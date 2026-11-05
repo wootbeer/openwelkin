@@ -48,6 +48,7 @@
   - [GS\_RequestActiveGoods](#m-24-24015) `(24,24015)`
   - [GS\_RequestMyActivedGoods](#m-24-24003) `(24,24003)`
   - [GS\_UpdateItemInUse](#m-24-24006) `(24,24006)`
+  - [GS\_SetItemInUse](#m-24-24007) `(24,24007)`
 - [Talents (Robot tab)](#talent-msgs)
   - [CGS\_UpdateTalentInfo](#m-14-14042) `(14,14042)`
   - [CGS\_UpdateCharacterRemainTalentPoint](#m-14-14043) `(14,14043)`
@@ -698,9 +699,20 @@ Applied goods. The client cuts the date at the first `:`, so send just the date.
 u32 slots | u32 count | count x ( u32 slot | u32 item id | u8 | u32 minutes left | str )
 ```
 
-Items listed here count as equipped and are hidden from the warehouse.
+Items listed here count as equipped and are hidden from the warehouse. Slots is the number of in-use slots (the emulator sends 32); slot is 1-based.
 
 > The emulator gives the player the newest applied weapon in battle. The weapon flyweight id is the item id.
+
+<a name="m-24-24007"></a>
+#### GS\_SetItemInUse `(24,24007)`
+
+*C→S · partial*
+
+```text
+u32 character id | u32 item id | u32 slot
+```
+
+Read from Game.dll, not tried in game. Sent when an item is dropped in the hall Warehouse: on a slot (1-based), or with slot 0 when an in-use item is dropped back on the list. The reply has no body; on result 0 the client puts the item in the slot itself, or takes it out. The emulator keeps the slot with the item and refuses items that are not activated, expired or not the player's.
 
 <a name="talent-msgs"></a>
 
