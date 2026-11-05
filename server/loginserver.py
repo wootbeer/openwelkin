@@ -74,7 +74,10 @@ SPAWN_PROTECTION = 4.0  # seconds after a respawn before the dummies open fire
 # dummy that is slower or changes speed jumps back at every move (seen in game 2026-11-03)
 AI_TICK, AI_SPEED, AI_PATROL = 0.2, 8.0, 12.0  # seconds per update, units per second, patrol half-length
 AI_RANGE, AI_BURST, AI_PAUSE, AI_HIT_CHANCE, AI_DAMAGE = 70.0, 6, 1.5, 0.5, 15.0
-HIT_RADIUS, HIT_HEIGHT = 6.0, 2.5  # generous hit sphere: the client raycast passes through remote robots
+# A robot is hit when the shot passes within HIT_RADIUS of a vertical line from HIT_LOW to HIT_HIGH above its
+# position (a capsule). Was a sphere of 6 around HIT_HEIGHT: shots at the ground next to a robot counted. A shot at a
+# standing dummy's shoulder passed 2.2 from its center (real client 2026-11-04)
+HIT_RADIUS, HIT_HEIGHT, HIT_LOW, HIT_HIGH = 3.0, 2.5, 0.5, 4.5
 # Robot::MoveTo on a robot in view only glides it to a new position closer than 15 units, and the glide never runs
 # for our remote robots (it needs a state bit that only Robot::Revived and RobotCallback::OnEnterLand set). So a robot
 # that stopped stayed where the client's own walking left it, up to 9 units off. A move more than 15 units up or away
@@ -2445,17 +2448,26 @@ def send_game_event(server, peer, catalog, type_, body, reliable=True):
 EVENT_HEAD = struct.Struct("<BBHfI")  # u8 flags | u8 catalog | u16 type | f32 event time | u32 unique key
 
 
-def ray_hits(origin, target, center, radius, reach=math.inf):
-    """Does the ray from origin through target pass within radius of center, in front of the origin and within reach?"""
+def ray_hits_robot(origin, target, pos, reach=math.inf):
+    """Does the ray from origin through target pass within HIT_RADIUS of the robot standing at pos (its capsule),
+    within reach? The distance from a ray to a segment is convex along the ray, so its minimum is at one of three
+    points: closest to the infinite line through the segment, or closest to either end."""
     d = [t - o for t, o in zip(target, origin)]
     n = sum(x * x for x in d) ** 0.5 or 1.0
     d = [x / n for x in d]
-    oc = [c - o for c, o in zip(center, origin)]
-    along = sum(a * b for a, b in zip(oc, d))
-    if along < 0 or along > reach:
-        return False
-    closest = [o + along * x for o, x in zip(origin, d)]
-    return sum((c - p) ** 2 for c, p in zip(center, closest)) <= radius * radius
+    low, high = pos[1] + HIT_LOW, pos[1] + HIT_HIGH
+    rx, rz = pos[0] - origin[0], pos[2] - origin[2]
+
+    def dist2(s):
+        s = min(max(s, 0.0), reach)
+        p = [o + s * x for o, x in zip(origin, d)]
+        y = min(max(p[1], low), high)
+        return (p[0] - pos[0]) ** 2 + (p[1] - y) ** 2 + (p[2] - pos[2]) ** 2
+    flat = d[0] * d[0] + d[2] * d[2]
+    tries = [(rx * d[0] + rz * d[2]) / flat] if flat > 1e-9 else []  # closest to the vertical line
+    for y in (low, high):
+        tries.append(rx * d[0] + (y - origin[1]) * d[1] + rz * d[2])  # closest to an end
+    return min(dist2(s) for s in tries) <= HIT_RADIUS * HIT_RADIUS
 
 
 TICKETS = {}          # battle ticket -> (character id, battlefield id, expiry); issued by QS_ApplyEnter
@@ -2910,7 +2922,7 @@ def pick_victim(m, shooter, origin, aim):
         reach = min(reach, landed + HIT_RADIUS)
 
     def hit(rid, pos):
-        return any(ray_hits(origin, aim, (x, y + HIT_HEIGHT, z), HIT_RADIUS, reach) for x, y, z in m.recent(rid, pos))
+        return any(ray_hits_robot(origin, aim, p, reach) for p in m.recent(rid, pos))
     if DEBUG:
         for name, pos in [(t["name"], t["pos"]) for t in m.targets.values()] + [(p.name, p.pos) for p in m.peers
                                                                                 if p is not shooter]:

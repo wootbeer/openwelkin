@@ -865,7 +865,7 @@ u32 (not read) | u32 n | n x ( u32 id | str | str | u32 icon | u32 goods id
 
 Shop Package tab. Picture GoodsPic\_&lt;icon>.dds; money price -1 shows the point price instead. Send at least 8 bytes.
 
-Also read, all safe with an empty list: (14,14034) `u32 n | n x (u8 rank | u32)` in the own-corps window; (14,14054) `u32 n | n x (u8 grade | u32)`; (15,15022) corps name and details for a corps id; (15,15074) `u32 n | n x (u32 team | str | str | str flag | u8)`; (15,15093) `u32 n | n x (u32 | u32)`; (17,17079) `u32 0` = no headquarters; (17,17099) `u32 n | n x city link`; (13,13047) and (21,21069) read one u32 and drop it.
+Also read, all safe with an empty list: (14,14034) `u32 n | n x (u8 rank | u32)` in the own-corps window; (14,14054) `u32 n | n x (u8 grade | u32)`; (15,15022) corps name and details for a corps id; (15,15074) `u32 n | n x (u32 team | str | str | str flag | u8)`; (15,15093) `u32 n | n x (u32 | u32)`; (17,17079) `u32 0` = no headquarters; (17,17099) `u32 n | n x city link`; (13,13047) and (21,21069) read one u32 and drop it; (17,17111) request `u32 battle front id`, reply `str | str | u8`, the first str stored for that front in the hall's joined battle list.
 
 <a name="battle"></a>
 

@@ -254,6 +254,15 @@ ls.STORE.by_id(a_cid)["model"] = ls.STORE.by_id(b_cid)["model"] = 1
 ls.WEAPONS[1] = (100.0, 0.5, 2.0)
 ok &= check("a melee weapon can reach a robot", ls.fire_range(1) > ls.HIT_RADIUS + ls.MUZZLE_REACH)
 del ls.WEAPONS[1]
+rh, o = ls.ray_hits_robot, (0.0, 2.5, 0.0)
+ok &= check("hit shape: shoulder, head and feet hit", rh(o, (40.0, 2.5, 2.2), (40.0, 0.0, 0.0))
+            and rh(o, (40.0, 7.0, 0.0), (40.0, 0.0, 0.0)) and rh(o, (40.0, -2.0, 0.0), (40.0, 0.0, 0.0)))
+ok &= check("hit shape: 4 to the side or over the head misses", not rh(o, (40.0, 2.5, 4.0), (40.0, 0.0, 0.0))
+            and not rh(o, (40.0, 8.5, 0.0), (40.0, 0.0, 0.0)))
+ok &= check("hit shape: a shot down into the ground beside it misses", not rh(o, (40.0, 0.0, 5.0), (40.0, 0.0, 0.0)))
+ok &= check("hit shape: straight down from above hits, behind the muzzle misses",
+            rh((40.0, 30.0, 0.0), (40.0, 0.0, 1.0), (40.0, 0.0, 0.0)) and not rh(o, (40.0, 2.5, 0.0), (-10.0, 0.0, 0.0)))
+ok &= check("hit shape: past the reach misses", not rh(o, (40.0, 2.5, 0.0), (40.0, 0.0, 0.0), reach=30.0))
 msg(A, 40125, b"\0" * 4)
 pb.pos = (10.0, 0.0, 0.0)
 

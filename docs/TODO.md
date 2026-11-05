@@ -17,7 +17,11 @@ reply layout, and answer with real data.
       parsed them (character +0xd8 list: id 1, robot 1311, name "Sniper"). The Robot Roof is the respawn screen in
       battle (dialog 108, CNewRobotRoofUI, Shortcut tab); there the list was empty and the tab showed 10 default
       slots, so the battle side gets them some other way (not read yet). Saving one in game needs a robot in the
-      left slot, which needs robot items in the warehouse (see Equipping below)
+      left slot, which needs robot items in the warehouse (see Equipping below). 2026-11-05, offline: the battle
+      screen's LoadQuickSuite (0x105dd7f0) reads the same list (local character +0xd8), and the client asks 14004
+      only from the CharacterOnline reply (0x10402510), so once per hall login. So in battle the list was emptied,
+      or the local character is a new object. Next client session: compare the local character's address in the
+      hall and in battle
 - [x] (14,14010) CG_Character_Get_Exploit
 - [ ] (14,14034) UpdateRankUpgrade
 - [x] (14,14040) CGS_GetAllMilitaryRank
@@ -59,6 +63,11 @@ reply layout, and answer with real data.
 - [ ] (17,17079) BF_UpdateMyHeadQuarter / UpdateCorpBasement
 - [ ] (17,17099) BF_UpdateCityLink
 - [x] (17,17110) GetOpenedCampaignInfo
+
+- [x] (17,17111) asked once per joined battle in the hall (from a function next to CHallRank). Request u32 battle
+      front id; reply str | str | u8. The first str goes into that front's JoinedBattleInfo (+8) and the hall's
+      joined battle list is drawn again; the zeroed reply gives empty strings. Result 0x4282 removes the front from
+      the list. Not known what the text is
 
 ## Tasks / announcements / social
 - [ ] (20,20116) Task_GetHoldTask
@@ -163,7 +172,9 @@ reply layout, and answer with real data.
       range. Real client 2026-11-04: shots at a dummy still hit; the client's ray goes through robots (it landed 61.5
       away behind one); a shot at a standing dummy's shoulder passed 2.2 from its center. Shots are now also checked
       against where a robot was over the last 1.5 s (clients draw walking robots up to 9 units behind). With that the
-      radius could come down to about 3; not done yet
+      radius could come down to about 3. 2026-11-05, offline: now a capsule, radius 3 around a vertical line from
+      0.5 to 4.5 above the robot's position (was a sphere of 6 around 2.5). Shoulder, head and feet shots hit; 4 to
+      the side, over the head, or into the ground beside a robot miss (tools/test_match.py). Not tried in game
 - [x] Test tooling: tools/vinput.py drives a client's DirectInput keyboard/mouse (even minimized); tools/quickenter.js presses Quick Enter; MW_FORCE_BF=1 sends every Quick Enter to one battlefield. The client saves LastAccount after login, so set Welkin4591.ini right before each launch.
 
 ## Admin / moderation (2026-10-29, tested offline)
