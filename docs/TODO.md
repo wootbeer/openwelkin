@@ -89,6 +89,8 @@ reply layout, and answer with real data.
 - [x] (24,24011) GS_RequestMyGoods
 - [x] (24,24003) GS_RequestMyActivedGoods
 - [x] (24,24015) GS_RequestActiveGoods
+- [x] (24,24025) GS_RequestExpiredItem, 2026-11-05 offline: u32 character id | u8; reply u32 n | n x (u32 item id |
+      u8). Answered with the activated items whose time ran out. Not tried in game. (24,24026) has an observer but no sender
 - [ ] (24,24028) GS_RequestSuiteInSelling (Package tab)
 - [ ] Equipping bought items (24006 in-use list, loadout). 2026-11-05, offline: (24,24007) GS_SetItemInUse read
       from Game.dll and answered: u32 character id | u32 item id | u32 slot, sent when an item is dropped in the

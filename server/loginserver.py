@@ -633,6 +633,11 @@ class Store:
             self.save()
             return True
 
+    def expired(self, cid):
+        """Item ids of the character's activated items whose time ran out."""
+        now = int(time.time())
+        return [it["item"] for it in self.items(cid) if it.get("active") and 0 < it.get("expires", 0) <= now]
+
     def set_in_use(self, cid, item_id, slot):
         """Put an active item with this item id into in-use slot (1-based), or take it out with slot 0. The client
         names items by item id, so with several of one item the one already in use moves, else a free one goes in."""
@@ -1825,6 +1830,14 @@ class Session:
             body += struct.pack("<IIBI", it["equipped"], it["item"], 0, left) + wstr("")
         self.reply(msg, body)
 
+    def on_expired_items(self, msg):
+        # GS_RequestExpiredItem (24,24025), sent by CWareHouseUI::ShowExpired: u32 character id | u8. Reply read by
+        # GS_RequestExpiredItemObserver (0x103566f0): u32 n | n x (u32 item id | u8 (not known, 0 sent)). The client
+        # empties its expired list (+0x264 of the item manager) and adds each item id.
+        cid = struct.unpack_from("<I", msg.body)[0] if len(msg.body) >= 4 else 0
+        gone = STORE.expired(cid) if self.own_character(cid) else []
+        self.reply(msg, struct.pack("<I", len(gone)) + b"".join(struct.pack("<IB", i, 0) for i in gone))
+
     def on_set_in_use(self, msg):
         # GS_SetItemInUse (24,24007), sent when an item is dropped in the hall Warehouse (CWareHouseUI drop,
         # 0x10691440; sender 0x106ad960): u32 character id | u32 item id | u32 slot. Slot is 1-based for a slot
@@ -2066,6 +2079,7 @@ HANDLERS = {
     (24, 24021): Session.on_buy,                 # GS_RequestBuyGoods
     (24, 24006): Session.on_items_in_use,        # GS_UpdateItemInUse
     (24, 24007): Session.on_set_in_use,          # GS_SetItemInUse (Warehouse drag and drop)
+    (24, 24025): Session.on_expired_items,       # GS_RequestExpiredItem (Warehouse expired list)
     (24, 24011): Session.on_my_goods,            # GS_RequestMyGoods (warehouse)
     (24, 24003): Session.on_my_active_goods,     # GS_RequestMyActivedGoods (warehouse)
     (24, 24015): Session.on_activate_goods,      # GS_RequestActiveGoods (warehouse Apply)

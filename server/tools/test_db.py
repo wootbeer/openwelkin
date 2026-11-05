@@ -8,6 +8,7 @@ import re
 import shutil
 import sys
 import tempfile
+import time
 
 TOOLS = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(TOOLS))
@@ -134,6 +135,10 @@ def characters():
     reopen()
     check("its in-use slot survives a restart", [it.get("equipped") for it in ls.STORE.items(cid)
                                                  if it["item"] == 3101 and it.get("active")][-1:] == [7])
+    with ls.STORE.lock:
+        ls.STORE.by_id(cid)["items"].append({"item": 3102, "days": 1, "expires": int(time.time()) - 5, "active": True})
+    check("an expired item is listed", 3102 in ls.STORE.expired(cid) and 3101 not in ls.STORE.expired(cid))
+    check("and cannot go in use", not ls.STORE.set_in_use(cid, 3102, 1))
     ls.STORE.save_suite(cid, 7, "Fast 1311 0 0 0 2 3101 3102 0")
     ls.STORE.save_suite(cid, 8, EVIL)
     ls.STORE.save_suite(cid, 7, "Faster 1311 0 0 0 0 0")

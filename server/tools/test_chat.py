@@ -276,6 +276,8 @@ async def scenario():
           in_use(await amy.request(24, 24006, struct.pack("<I", amy_id))) == [])
     check("taking out twice is refused", (await amy.request(24, 24007, struct.pack("<III", amy_id, item, 0))).result != 0)
     await amy.request(24, 24007, struct.pack("<III", amy_id, item, 3))
+    r = await amy.request(24, 24025, struct.pack("<IB", amy_id, 0))
+    check("nothing expired yet", r.result == 0 and r.body == struct.pack("<I", 0))
 
     # --- commands ---
     say(amy, "!role amy admin")

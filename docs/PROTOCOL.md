@@ -48,6 +48,7 @@
   - [GS\_RequestActiveGoods](#m-24-24015) `(24,24015)`
   - [GS\_RequestMyActivedGoods](#m-24-24003) `(24,24003)`
   - [GS\_UpdateItemInUse](#m-24-24006) `(24,24006)`
+  - [GS\_RequestExpiredItem](#m-24-24025) `(24,24025)`
   - [GS\_SetItemInUse](#m-24-24007) `(24,24007)`
 - [Talents (Robot tab)](#talent-msgs)
   - [CGS\_UpdateTalentInfo](#m-14-14042) `(14,14042)`
@@ -702,6 +703,17 @@ u32 slots | u32 count | count x ( u32 slot | u32 item id | u8 | u32 minutes left
 Items listed here count as equipped and are hidden from the warehouse. Slots is the number of in-use slots (the emulator sends 32); slot is 1-based.
 
 > The emulator gives the player the newest applied weapon in battle. The weapon flyweight id is the item id.
+
+<a name="m-24-24025"></a>
+#### GS\_RequestExpiredItem `(24,24025)`
+
+*S→C reply · partial*
+
+```text
+u32 n | n x ( u32 item id | u8 )
+```
+
+Read from Game.dll, not tried in game. Request: `u32 character id | u8`, sent by the Warehouse when it shows expired items. The client empties its expired list and adds each item id. The u8 is not known (the emulator sends 0). The observer for (24,24026) GS\_RequestRemoveExpiredItem is registered, but nothing in Game.dll sends that request.
 
 <a name="m-24-24007"></a>
 #### GS\_SetItemInUse `(24,24007)`
