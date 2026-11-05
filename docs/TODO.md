@@ -232,8 +232,13 @@ reply layout, and answer with real data.
 - [ ] Team and Division chat. Real client 2026-11-03: the hall's Division Channel sends (21,21004) u16 2 | str (dropped:
       there are no divisions yet). In battle the Team and Division tabs are greyed and do not open without a team or
       division, so their channel numbers wait for teams. Whispers from the battle box are not tried. Enter in battle needs DirectInput: tools/vinput.py enter:0.2 sends a line
-- [x] The client has its own / GM commands: no. 2026-11-05, offline: Game.dll has no / command strings; (13,13041) is
-      only GMKickRes, the reply to a GM kick
+- [ ] The client's own / commands, 2026-11-05 offline (ChatManager::SendMessage, 0x10386600). A chat line starting
+      with / is a command. With the character's GM byte (+0xb8) set, the word after / is looked up: kick (13,13041,
+      "name number"), announce (21,21030), say (21,21031), tell (21,21032), banchat, hideme and moveto (requests
+      not read yet), god, godspeed and damage (only change the GM's own client), bf (does nothing). Without the GM
+      byte, the letter after / picks a squad ("Detachment") action: /a N apply to join, /e N enter, /L leave,
+      /l apply to be leader, /t N set the target zone (their requests not read yet), /h hides the screen's
+      windows and HUD (client only). Nothing answers these yet; squads need teams first
 - [x] goto <account> <x> <y> <z> (GM), 2026-11-05 offline: GS_GMSetLocation (19,33000) vec3 moves the player's own
       robot; the server moves it on the others too. Works across split servers (tools/test_split.py). Not tried in
       game. Also read, not used: GS_GMCommando (19,31000) u32 robot | u32 state | u32 on (1 = no physics body,
