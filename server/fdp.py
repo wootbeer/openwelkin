@@ -91,7 +91,7 @@ class Server:
         self.peers = {}
         self.on_message = None  # callback(server, peer, raw message) for game-server messages
         self.on_close = None    # callback(server, peer, reason) when a session ends
-        self.allow = None       # callback(addr) -> False to ignore a new session (banned address)
+        self.allow = None       # callback(addr, connect stream, open peers) -> False to ignore a new session
         self.stats = dict.fromkeys(("pkts_in", "bytes_in", "pkts_out", "bytes_out", "resent"), 0)
         self.next_expiry = 0.0
 
@@ -140,8 +140,10 @@ class Server:
     def on_syn(self, pkt, addr):
         peer = self.peers.get(addr)
         if not peer or peer.client_session != pkt.session:
-            if self.allow and not self.allow(addr):
-                self.debug(f"[fdp] {addr} SYN ignored: address not allowed")
+            (n,) = struct.unpack_from("<I", pkt.payload) if len(pkt.payload) >= 4 else (0,)
+            stream = pkt.payload[4:4 + n]
+            if self.allow and not self.allow(addr, stream, self.peers):
+                self.debug(f"[fdp] {addr} SYN ignored: not allowed")
                 return
             if not peer and len(self.peers) >= MAX_PEERS and not self.expire_idle():
                 self.log(f"[fdp] {addr} SYN ignored: {len(self.peers)} sessions open")
@@ -150,8 +152,7 @@ class Server:
                 self.close(peer, "reconnected")
             peer = self.peers[addr] = Peer(addr, pkt.session)
             peer.last_seen = time.time()
-            (n,) = struct.unpack_from("<I", pkt.payload) if len(pkt.payload) >= 4 else (0,)
-            peer.connect_stream = pkt.payload[4:4 + n]
+            peer.connect_stream = stream
             self.log(f"[fdp] {addr} new session client={pkt.session} server={peer.server_session} "
                      f"connect_stream={peer.connect_stream.hex()}")
         reply = Packet(0x07, peer.next_reliable, pkt.session, HEAD.size, SPLIT_SYN_ACK, peer.server_session, 1)

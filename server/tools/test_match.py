@@ -36,6 +36,7 @@ class Sock:
 server = fdp.Server(Sock(), lambda *a: None, ls.hexdump)
 server.on_message = ls.on_game_message
 server.on_close = ls.on_game_close
+server.allow = ls.admit_game_session
 a_cid = ls.STORE.create("acctA", "Alpha", gender=1, model=1, state=1, raw="")
 b_cid = ls.STORE.create("acctB", "Bravo", gender=1, model=1, state=1, raw="")
 c_cid = ls.STORE.create("acctC", "Charlie", gender=1, model=1, state=1, raw="")
@@ -93,9 +94,19 @@ ok = True
 pa = connect(A, a_cid)
 msg(A, 40851, b"\0" * 4)
 ok &= check("A gets battle init", len(got(A, 40050)) == 1)
-px = connect(X, a_cid, ticket=12345)
-msg(X, 40851, b"\0" * 4)
-ok &= check("no ticket, no battle", len(got(X, 40050)) == 0)
+try:
+    connect(X, a_cid, ticket=12345)
+except KeyError:
+    pass
+ok &= check("no ticket, no session", X not in server.peers and not any(a == X for a, *_ in packets))
+for port in range(ls.MAX_GAME_PER_IP + 2):
+    try:
+        connect(("9.9.9.9", 100 + port), a_cid)
+    except KeyError:
+        pass
+ok &= check("sessions per address are capped", sum(a[0] == "9.9.9.9" for a in server.peers) == ls.MAX_GAME_PER_IP)
+for a in [a for a in server.peers if a[0] == "9.9.9.9"]:
+    server.close(server.peers[a], "test")
 msg(A, 30050, b"\0" * 4)
 ok &= check("A spawned as Alpha", pa.name == "Alpha" and pa.player_rid == ls.PLAYER_RID_STEP + 1)
 before = len(packets)

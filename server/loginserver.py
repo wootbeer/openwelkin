@@ -2571,6 +2571,7 @@ def ray_hits_robot(origin, target, pos, reach=math.inf):
     return min(dist2(s) for s in tries) <= HIT_RADIUS * HIT_RADIUS
 
 
+MAX_GAME_PER_IP = 16  # game sessions from one address (players behind one router share it); not for 127.x
 TICKETS = {}          # battle ticket -> (character id, battlefield id, expiry); issued by QS_ApplyEnter
 TICKET_TTL = 120.0    # seconds between Quick Enter and the game server connection
 MATCHES = {}          # match id -> Match
@@ -2613,6 +2614,20 @@ def issue_ticket(cid, bfid):
         ticket = secrets.randbits(32) or 1
         TICKETS[ticket] = (cid, bfid, now + TICKET_TTL)
         return ticket
+
+
+def admit_game_session(addr, stream, peers):
+    """A new FDP session only with a live battle ticket in its connect stream, from an address not banned and with
+    fewer than MAX_GAME_PER_IP sessions open. Without this, anyone could fill every session slot with made-up SYNs.
+    The ticket is only looked at here; the first game message (9,40851) uses it up."""
+    if banned_ip(addr[0]) or len(stream) < 4:
+        return False
+    if not addr[0].startswith("127.") and sum(1 for a in peers if a[0] == addr[0]) >= MAX_GAME_PER_IP:
+        return False  # loopback is this machine (tools/loadtest.py); it cannot come from outside
+    (ticket,) = struct.unpack_from("<I", stream)
+    with GAME_LOCK:
+        live = TICKETS.get(ticket)
+    return bool(live and live[2] >= time.time())
 
 
 def redeem_ticket(peer):
@@ -3712,7 +3727,7 @@ def serve_udp(port):
         GAME_SERVER = server
         server.on_message = on_game_message
         server.on_close = on_game_close
-        server.allow = lambda addr: not banned_ip(addr[0])
+        server.allow = admit_game_session
         threading.Thread(target=game_loop, args=(server,), daemon=True).start()
     while True:
         try:

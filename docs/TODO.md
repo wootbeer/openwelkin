@@ -140,6 +140,9 @@ reply layout, and answer with real data.
       account name check, nothing handled before login, 30 s auth timeout, 1024 TCP connection cap
 - [x] Character create: needs login, max 4 per account, malformed name rejected instead of dropping the connection
 - [x] FDP: 512 session cap with 60 s idle expiry; UDP loop catches handler errors
+- [x] Game sessions need a live battle ticket in the SYN (2026-11-05, offline): before, any made-up SYN opened a
+      session, so one machine could fill all 512 and keep them alive. Also at most 16 sessions per address (not
+      for 127.x, where tools/loadtest.py runs). tools/test_match.py; load test with 40 bots still joins all
 - [x] Refusals use the client's own codes (Language/ErrorInfoENG.xml): 10001 bad login, 10002 locked, 2401x shop...
 - [x] Shots are checked on the game server (2026-10-30, offline): the muzzle must be within 15 units of the robot, the
       target within the weapon's range (WP1Range + 25%), and pulling the trigger again cannot beat the fire rate.
