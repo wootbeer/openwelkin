@@ -452,9 +452,34 @@ ok &= check("kill mode: a kill scores for the killer's side", struct.pack("<Bi",
 kill(pc, pb)
 step()
 ok &= check("kill mode: a kill on your own side scores nothing", m3.side_kills == {ls.FEDERAL: 1, ls.ALLIANCE: 0})
+ls.SCORE_TABLE = True
 kill(pa, pc)
 step()
+ls.SCORE_TABLE = False
 ok &= check("kill mode: the side reaching the limit wins", m3.over and any(b"Federal" in x for x in got(B, 30250)))
+
+
+def score_rows(body):
+    n, at = struct.unpack_from("<I", body)[0], 4
+    rows = []
+    for _ in range(n):
+        row = []
+        for _ in range(6):
+            size = body[at]  # short strings: a one-byte length
+            row.append(body[at + 1:at + 1 + size].decode())
+            at += 1 + size
+        rows.append(row)
+    return rows, struct.unpack_from("<I", body, at)[0], at + 4 == len(body)
+
+
+tables = got(B, 20130)
+rows, seconds, whole = score_rows(tables[0]) if tables else ([], 0, False)
+ok &= check("score table: sent in place of DisconnectByServer", len(tables) == 1 and not got(B, 30150) and whole)
+ok &= check("score table: winner and both sides' kills, with the countdown",
+            [r[1:4] for r in rows] == [["Winner", "1", "Federal"], ["Federal kills", "1", "2"],
+                                       ["Alliance kills", "1", "0"]]
+            and all(r[0].endswith(".dds") and r[4] == "14" and r[5] == "ff22cf00" for r in rows)
+            and seconds == int(ls.RECORD_SECONDS))
 ok &= check("kill mode: its players get a win", ls.STORE.stats(a_cid).get("wins") == wins_a + 1
             and ls.STORE.stats(c_cid).get("wins", 0) == wins_c)
 for addr in list(server.peers):

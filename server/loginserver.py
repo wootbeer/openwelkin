@@ -2659,6 +2659,12 @@ KILL_MODE = os.environ.get("MW_KILL_MODE") == "1"
 ARENA_KILL = 5
 RECORD_SECONDS = 20.0 # the Record window's countdown; after it the client goes back to the lobby
 RECORD_GRACE = 10.0   # a client still here this long after that countdown is closed
+# MW_SCORE_TABLE=1: end a round with GS_ScoreTable (20,20130) in place of DisconnectByServer (19,30150). Both fill the
+# same Record window (dialog 0x68, CArenaScoreUI) with the player's own rows and the countdown; 20130 also adds rows of
+# its own under "Campaign". Read from Game.dll 2026-11-05, not tried in game: does a catalog 20 message reach the
+# client in battle, and does it go back to the lobby after this countdown the way it does after 30150?
+SCORE_TABLE = os.environ.get("MW_SCORE_TABLE") == "1"
+SCORE_COLOR = 0xFF22CF00  # the green the client uses for its own rows
 MAX_SLOTS = 4000      # joins per match before it takes nobody new (robot ids are slot * 1,000,000 + 1, a u32)
 TICK_HZ = 30          # game loop rate: timers, AI, and each player's queued events go out once per tick
 NEAR_DISTANCE = 100.0  # a viewer gets every move of robots this close, or within its own or the robot's weapon
@@ -2854,6 +2860,26 @@ def count_side_kill(m, killer, victim):
     return bool(ROUND_KILLS) and m.side_kills[side] >= ROUND_KILLS
 
 
+def score_table_body(rows, seconds):
+    """(20,20130), read by the arena's ScoreTable observer (Kill arena: 0x106a0920): u32 n | n x 6 str | u32 seconds.
+    Each row goes to CArenaScoreUI::AddWarData as icon (.dds) | label | flag (the client's own rows use 1) | value |
+    font size | color as hex text; the seconds start the "back to lobby" countdown. Rows are (icon, label, value)."""
+    out = struct.pack("<I", len(rows))
+    for icon, label, value in rows:
+        for s in (icon, label, "1", str(value), "14", f"{SCORE_COLOR:08x}"):
+            out += wstr(s)
+    return out + struct.pack("<I", int(seconds))
+
+
+def round_rows(m, names, best):
+    rows = [("BattleRecord_105.dds", "Winner", names or "Nobody")]
+    if m.kill_mode:
+        rows += [("BattleRecord_104.dds", f"{NATION_NAMES[n]} kills", m.side_kills[n]) for n in (FEDERAL, ALLIANCE)]
+    else:
+        rows.append(("BattleRecord_104.dds", "Most kills", best))
+    return rows
+
+
 def end_round(m):
     """Most player kills wins (in Kill mode: the side with more kills, everyone on it). DisconnectByServer (19,30150, f32 seconds): the Record window shows the player's kills,
     deaths and honor with a countdown, then the client goes back to the lobby (seen in game 2026-10-30)."""
@@ -2874,7 +2900,10 @@ def end_round(m):
         STORE.add_log(p.cid, f"Won a round of {m.bf['name']}")
     log(f"[game] round over in {m.bf['name']} (match {m.id}): {names or 'nobody'} won with {best} kills")
     show_message(m, f"{names} won the round" if names else "The round is over")
-    m.broadcast(19, 30150, struct.pack("<f", RECORD_SECONDS))
+    if SCORE_TABLE:
+        m.broadcast(20, 20130, score_table_body(round_rows(m, names, best), RECORD_SECONDS))
+    else:
+        m.broadcast(19, 30150, struct.pack("<f", RECORD_SECONDS))
     m.later(RECORD_SECONDS + RECORD_GRACE, close_round, m)
 
 

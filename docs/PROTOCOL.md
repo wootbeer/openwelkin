@@ -403,7 +403,7 @@ Requests the hall sends after login. All are gate requests with a token; the rep
 u32 count | count x ( u32 id | str text | u32 )
 ```
 
-Lines for the hall's scrolling announcement bar.
+Lines for the hall's scrolling announcement bar. A second observer (0x10590dd0) also empties the New Lobby's scrolling text and its GM lines in chat, then gives each row to CChatMessageUI::AddGMHallAnnounce(id, text, last u32) and CNewHallUI::AddBroadcast(text, last u32, id).
 
 <a name="m-24-24019"></a>
 #### GS\_UpdateCharacterMoney `(24,24019)`
@@ -878,7 +878,7 @@ Held missions. A body under 4 bytes reads the count from stack junk and loops on
 u32 n | n x ( str text | u32 seconds )
 ```
 
-Each line goes to the hall's scrolling bar (dialog 0x71) for that many seconds; 0 keeps it until cleared.
+Asked once at hall login, from the CharacterOnline reply. Each line goes to CNewHallUI::AddBroadcast(text, u32, 0), the New Lobby's (dialog 0x71) scrolling text; the u32 becomes the float CScrollingText::AddText keeps next to the time the line was added, so it is probably seconds. The emulator gives the default empty list.
 
 <a name="m-24-24028"></a>
 #### GS\_RequestSuiteInSelling `(24,24028)`
@@ -1385,10 +1385,10 @@ Sets one side's score.
 *S→C · read, not tried*
 
 ```text
-u32 count | count x 6 x str
+u32 count | count x ( str icon | str label | str flag | str value | str font size | str color ) | u32 seconds
 ```
 
-The score table (dialog 0x68). Each row goes to CArenaScoreUI::AddWarData(s1, s2, u8 from s3, s4, int from s5, u32 from s6): strings 3, 5 and 6 are numbers. Column meanings not known; the emulator does not send it. The handler parses numbers out of some of the strings. Whether a catalog 20 message reaches the client on the game session is not known.
+Fills the Arena Battle Report (dialog 0x68), the same window DisconnectByServer opens: first the player's own rows (kills/deaths, crystal, honor), then the title "Campaign" and one line per row, then the "back to lobby" countdown. Each row goes to CArenaScoreUI::AddData as a .dds icon (the client's own are BattleRecord\_101 to 105), the label and value texts, the flag as a number (the client's own rows use 1), the font size as a number (14) and the text color as hex (ff22cf00, the client's green). Neither message clears the window, so send one or the other. The emulator sends it in place of DisconnectByServer with MW\_SCORE\_TABLE=1: winner, then each side's kills in Kill mode or the most kills otherwise. Not known: whether a catalog 20 message reaches the client in battle, and whether it goes back to the lobby after this countdown.
 
 <a name="chat"></a>
 
