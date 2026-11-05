@@ -704,7 +704,7 @@ u32 slots | u32 count | count x ( u32 slot | u32 item id | u8 | u32 minutes left
 
 Items listed here count as equipped and are hidden from the warehouse. Slots is the number of in-use slots (the emulator sends 32); slot is 1-based.
 
-> The emulator gives the player the newest applied weapon in battle. The weapon flyweight id is the item id.
+> The emulator gives the player the weapon in the lowest in-use slot in battle, else the newest applied weapon. The weapon flyweight id is the item id.
 
 <a name="m-24-24025"></a>
 #### GS\_RequestExpiredItem `(24,24025)`

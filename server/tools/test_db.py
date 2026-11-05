@@ -137,6 +137,13 @@ def characters():
                                                  if it["item"] == 3101 and it.get("active")][-1:] == [7])
     with ls.STORE.lock:
         ls.STORE.by_id(cid)["items"].append({"item": 3102, "days": 1, "expires": int(time.time()) - 5, "active": True})
+    with ls.STORE.lock:
+        ls.STORE.by_id(cid)["items"].append({"item": 3104, "days": 0, "expires": 0, "active": True})
+    ls.STORE.set_in_use(cid, 3101, 0)
+    check("the newest weapon goes to battle", ls.loadout_weapon(cid) == 3104)
+    check("unless another is in use", ls.STORE.set_in_use(cid, 3101, 2) and ls.loadout_weapon(cid) == 3101)
+    check("the lowest slot wins", ls.STORE.set_in_use(cid, 3104, 1) and ls.loadout_weapon(cid) == 3104)
+    ls.STORE.set_in_use(cid, 3104, 0)
     check("an expired item is listed", 3102 in ls.STORE.expired(cid) and 3101 not in ls.STORE.expired(cid))
     check("and cannot go in use", not ls.STORE.set_in_use(cid, 3102, 1))
     ls.STORE.save_suite(cid, 7, "Fast 1311 0 0 0 2 3101 3102 0")

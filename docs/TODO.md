@@ -96,7 +96,8 @@ reply layout, and answer with real data.
       from Game.dll and answered: u32 character id | u32 item id | u32 slot, sent when an item is dropped in the
       hall Warehouse (slot 0 = dropped back on the list). The slot is saved with the item and 24006 sends it back.
       Not tried in game. Still open: how many slots there really are (32 sent), whether the battle Robot Roof's
-      warehouse lists in-use items, and using them in battle
+      warehouse lists in-use items. In battle the weapon in the lowest in-use slot is used (else the newest
+      activated one)
 
 ## Ranking
 - [x] Ranking window, real client 2026-11-02: Honor and Crystal tabs show names, rank and score; your own row is

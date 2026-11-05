@@ -247,13 +247,13 @@ DEFAULT_WEAPON = 3101  # Viper
 
 
 def loadout_weapon(cid):
-    """The character's weapon for battle: the newest activated, unexpired weapon item, else the Viper."""
+    """The character's weapon for battle: the weapon in the lowest in-use slot (Warehouse, 24007), else the newest
+    activated, unexpired weapon item, else the Viper."""
     now = time.time()
-    for it in reversed(STORE.items(cid)):
-        if (it.get("active") and it["item"] in WEAPONS and PRODUCTS.get(it["item"], {}).get("type") == 8
-                and (it["expires"] == 0 or it["expires"] > now)):
-            return it["item"]
-    return DEFAULT_WEAPON
+    weapons = [it for it in STORE.items(cid) if it.get("active") and it["item"] in WEAPONS
+               and PRODUCTS.get(it["item"], {}).get("type") == 8 and (it["expires"] == 0 or it["expires"] > now)]
+    used = sorted((it for it in weapons if it.get("equipped")), key=lambda it: it["equipped"])
+    return (used or weapons[::-1] or [{"item": DEFAULT_WEAPON}])[0]["item"]
 
 
 def weapon_stats(wid):
