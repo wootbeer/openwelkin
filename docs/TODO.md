@@ -93,8 +93,10 @@ reply layout, and answer with real data.
       u8). Answered with the activated items whose time ran out. Not tried in game. (24,24026) has an observer but no sender
 - [x] (24,24028) GS_RequestSuiteInSelling (Package tab), 2026-11-05 offline: list read from Game.dll (CMarketUI::
       OnSuiteUpdated), buy (24,24029) u32 character id | u8 currency (1 Crystal) | u32 package id. The packages are the
-      emulator's own (PACKAGES in loginserver.py); buying one puts each item in the warehouse. Not tried in game: does
-      the tab show the names and prices, and does buying work
+      emulator's own (PACKAGES in loginserver.py); buying one puts each item in the warehouse. Real client 2026-11-05:
+      the package id is the picture, GoodsPic_9000..9006 are gift boxes with the original names on them (9005/9006 are
+      vehicle packages, not used yet); the tab lists them from the second time it is opened; Infantry Gear Package
+      bought for 1000 Crystal, its four items showed in the Warehouse
 - [ ] Equipping bought items (24006 in-use list, loadout). 2026-11-05, offline: (24,24007) GS_SetItemInUse read
       from Game.dll and answered: u32 character id | u32 item id | u32 slot, sent when an item is dropped in the
       hall Warehouse (slot 0 = dropped back on the list). The slot is saved with the item and 24006 sends it back.
@@ -185,14 +187,13 @@ reply layout, and answer with real data.
       name, others a red one. The client still sends shots at your own side, so the server ignores them (players only;
       target dummies have no nation and fight everyone). Kill feed lines carry both nations
 - [ ] Kill mode (MW_KILL_MODE=1), 2026-11-05 offline: arena logic 5, side scores (19,52001), countdown (19,49000),
-      the side that reaches MW_ROUND_KILLS wins and all its players get a win (tools/test_match.py). Try in game:
-      does the score bar show "Our Force" / "Enemy Force", and does the countdown run? The score table (20,20130)
-      is read (2026-11-05, offline) and sent with MW_SCORE_TABLE=1, see below
-- [ ] Score table (20,20130) with MW_SCORE_TABLE=1, 2026-11-05 offline: it fills the same Arena Battle Report
-      (dialog 0x68) as DisconnectByServer, and adds rows under "Campaign": winner, then each side's kills (Kill mode)
-      or the most kills. Rows are icon .dds | label | flag | value | font size | hex color, all as strings, then
-      u32 seconds. Sent in place of 30150, because neither clears the window. Try in game: do the rows show, and
-      does the client go back to the lobby after the countdown
+      the side that reaches MW_ROUND_KILLS wins and all its players get a win (tools/test_match.py). Real client
+      2026-11-05: the "Our Force" / "Enemy Force" bar and a timer show. Not yet seen: the scores counting up after a
+      kill (needs two players on different sides), and the timer running (it showed 00:00 at the end of a round)
+- [x] Score table (20,20130), real client 2026-11-05: a Kill mode round ends with it in place of 30150 (neither
+      clears the Record window). Under "Campaign": winner, then each side's kills; then the 20 s countdown and back
+      to the lobby. Only arena logics register a 20130 observer, so other battles keep 30150. Catalog 20 game
+      messages have no event envelope: with one, the row count read 0 and the countdown read the event key
 - [ ] Teams within a side, respawn point choice. Needs a client session: without knowing what
       sets the nation, players could not tell the sides apart, so nothing is built yet. Client's Kill arena, read from Game.dll, not
       tried: arena logic 5 in (19,40050), then init data u8 nation | u8 nation | f32. (19,49000) f32 seconds | u8 | f32
@@ -238,8 +239,10 @@ reply layout, and answer with real data.
       GM words: kick (13,13041) and announce / say (21,21030 / 21031) are answered as !kick and !notice; tell is the
       normal whisper; banchat (21,21008) is !mute; moveto, hideme and damage go to the game server as (9,11000)
       u32 command | argument, and only moveto is done (the battle ticket carries the GM level); god and godspeed
-      only change the GM's own client; bf does nothing. Try in game: does a GM character show anything different, and do /kick and
-      /announce work. Without the GM byte the letter after / picks a squad ("Detachment") action: /a N apply to join,
+      only change the GM's own client; bf does nothing. Real client 2026-11-05: / commands only work in the battle
+      chat box (the hall's Lobby box sends a normal Broadcast line); battle base info (19,30040) must carry the GM
+      byte too, or it is cleared on entering a battle; /announce 0 Battle hello showed "Battle" as a notice: the client
+      reads the text with >>, so only its first word is sent. Not tried: /kick, /banchat, /moveto. Without the GM byte the letter after / picks a squad ("Detachment") action: /a N apply to join,
       /e N enter, /L leave, /l apply to be leader, /t N set the target zone (requests not read yet), /h hides the
       screen's windows and HUD (client only). Squads need teams first
 - [x] goto <account> <x> <y> <z> (GM), 2026-11-05 offline: GS_GMSetLocation (19,33000) vec3 moves the player's own

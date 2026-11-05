@@ -278,14 +278,17 @@ SHOP = [
     (3301, -1, 500, 0), (3302, -1, 500, 0),
 ]
 # Shop Package tab (24,24028): (package id, name, item ids, crystal price or -1, credit price, days; 0 = forever).
-# Buying one adds each of its items to the warehouse, like buying them one by one. The client names a package
-# through an item id (24002); PACKAGE_NAME_BASE + package id is used, which no product has.
+# Buying one adds each of its items to the warehouse, like buying them one by one. The id is also the picture: the
+# client has GoodsPic_9000..9006.dds, gift boxes with the package's name on them (real client 2026-11-05; 9005
+# Ground Vehicle and 9006 Air Vehicle wait for vehicles). The contents are the emulator's own. The id is also the
+# item id the client asks 24002 for, which no product has.
 PACKAGES = [
-    (1, "Assault Pack", (3101, 3202, 3205), 1100, 110, 30),
-    (2, "Sniper Pack", (3105, 3215, 3206), 2500, 250, 30),
-    (3, "Engineer Pack", (3201, 3210, 3213, 3217), 1900, 190, 7),
+    (9000, "Infantry 30 Days Package", (3101, 3205, 3206), 1100, 110, 30),
+    (9001, "Ultimate Package", (3110, 3108, 3213, 3215, 3217), 7000, 700, 30),
+    (9002, "Almighty Package", (3104, 3106, 3201, 3210, 3206), 4500, 450, 30),
+    (9003, "Infantry Weapon Package", (3101, 3103, 3105), 3800, 380, 30),
+    (9004, "Infantry Gear Package", (3201, 3202, 3205, 3206), 1000, 100, 30),
 ]
-PACKAGE_NAME_BASE = 9000
 GOODS_OF = {pid: gid for gid, (pid, *_) in enumerate(SHOP, 1)}  # product id -> shop goods id (the warehouse lists goods)
 assert all(i in GOODS_OF for p in PACKAGES for i in p[2]), "every package item must be sold in SHOP"
 RANKED_WEAPONS = [pid for pid, *_ in SHOP if pid in WEAPONS and PRODUCTS.get(pid, {}).get("type") == 8]  # Ranking, Weapon
@@ -1340,7 +1343,7 @@ class Session:
         # Price kind 2 = rented by days. Any other kind is "per use", and the English template for that
         # (GUITEXT_MARKET_*_TIMES_TEMPLATE "%dCrystal(%s)") has %s where the client passes a number: it crashes.
         iid = struct.unpack_from("<I", msg.body)[0] if len(msg.body) >= 4 else 0
-        pkg = package(iid - PACKAGE_NAME_BASE)
+        pkg = package(iid)
         name = pkg[1] if pkg else PRODUCTS.get(iid, {}).get("name", f"Item {iid}")
         debug(f"{self.addr} item flyweight {iid} -> {name}")
         self.reply(msg, wstr(name) + struct.pack("<BBB", 1, 1, 2) + wstr("") + struct.pack("<II", iid, 0))
@@ -1895,15 +1898,18 @@ class Session:
     def on_packages(self, msg):
         # GS_RequestSuiteInSelling (24,24028), request: u32 0xffff | u32 1 (not read). Reply read by
         # GS_RequestSuiteInSellingObserver (0x1035a6f0), one 0x80-byte record per package at manager +0x244:
-        #   u32 | u32 count | count x (u32 package id | str (+4) | str (+0x3c) | u32 picture id (GoodsPic_<n>.dds, +0x64)
-        #   | u32 item id (+0x68, its 24002 name is shown) | u32 credit price (+0x6c) | u32 (+0x70)
-        #   | u32 crystal price (+0x74, -1 = not for crystal) | u32 (+0x78))
+        #   u32 | u32 count | count x (u32 package id | str (+4) | str (+0x3c) | u32 picture id (GoodsPic_<n>.dds, +0x64;
+        #   the cell's title is the 24002 name of this id too) | u32 item id (+0x68, must be one the client knows, else
+        #   the cell is left out) | u32 credit price (+0x6c) | u32 (+0x70) | u32 crystal price (+0x74, -1 = not for
+        #   crystal) | u32 (+0x78))
         # CMarketUI::OnSuiteUpdated (0x10550110) shows "%d Crystal" when there is a crystal price, else "%d Credits".
+        # Real client 2026-11-05: the tab only shows the packages from the second time it is opened; the first time it
+        # still shows the License tab's goods.
         body = struct.pack("<II", 0, len(PACKAGES))
         for pkg_id, name, items, crystal, credit, _days in PACKAGES:
             contents = ", ".join(PRODUCTS.get(i, {}).get("name", str(i)) for i in items)
             body += struct.pack("<I", pkg_id) + wstr(name) + wstr(contents)
-            body += struct.pack("<6I", items[0], PACKAGE_NAME_BASE + pkg_id, credit, 0, crystal & 0xFFFFFFFF, 0)
+            body += struct.pack("<6I", pkg_id, pkg_id, credit, 0, crystal & 0xFFFFFFFF, 0)
         self.reply(msg, body)
 
     def on_buy_package(self, msg):
@@ -2686,8 +2692,13 @@ def send_game_event(server, peer, catalog, type_, body, reliable=True):
     """Push a game-server event. The client's GameDefaultMessageHandler (Game.dll 0x106c43d0) only turns catalog 9
     and 19 messages without multicast flags into Events, and expects the body to start with an envelope:
         f32 event time (passed to EventAttemper::AddEvent; 0 = now) | u32 unique key (duplicates dropped) | payload
+    Other catalogs reach their observers without it: real client 2026-11-05, a (20,20130) with the envelope read the
+    f32 time as its row count and the key as its countdown, so those go out as the bare body.
     """
     with GAME_LOCK:
+        if catalog not in (9, 19):
+            server.queue(peer, struct.pack("<BBH", MSG_HAS_TYPE, catalog, type_) + body, reliable)
+            return
         peer.event_key = getattr(peer, "event_key", 0) + 1
         # message header (flags: has type) + envelope; the float is handed to EventAttemper::AddEvent as the event
         # time, 0 = dispatch immediately. Queued: the game loop sends each player's events once per tick, batched.
@@ -2749,11 +2760,10 @@ KILL_MODE = os.environ.get("MW_KILL_MODE") == "1"
 ARENA_KILL = 5
 RECORD_SECONDS = 20.0 # the Record window's countdown; after it the client goes back to the lobby
 RECORD_GRACE = 10.0   # a client still here this long after that countdown is closed
-# MW_SCORE_TABLE=1: end a round with GS_ScoreTable (20,20130) in place of DisconnectByServer (19,30150). Both fill the
-# same Record window (dialog 0x68, CArenaScoreUI) with the player's own rows and the countdown; 20130 also adds rows of
-# its own under "Campaign". Read from Game.dll 2026-11-05, not tried in game: does a catalog 20 message reach the
-# client in battle, and does it go back to the lobby after this countdown the way it does after 30150?
-SCORE_TABLE = os.environ.get("MW_SCORE_TABLE") == "1"
+# A Kill mode round ends with the score table (20,20130) in place of DisconnectByServer (19,30150). Both fill the same
+# Record window (dialog 0x68, CArenaScoreUI) with the player's own rows and the countdown; 20130 also adds rows of its
+# own under "Campaign". Only the arena logics register a 20130 observer, so other battles keep 30150. Real client
+# 2026-11-05: the rows show and the client goes back to the lobby after the countdown.
 SCORE_COLOR = 0xFF22CF00  # the green the client uses for its own rows
 MAX_SLOTS = 4000      # joins per match before it takes nobody new (robot ids are slot * 1,000,000 + 1, a u32)
 TICK_HZ = 30          # game loop rate: timers, AI, and each player's queued events go out once per tick
@@ -2961,13 +2971,10 @@ def score_table_body(rows, seconds):
     return out + struct.pack("<I", int(seconds))
 
 
-def round_rows(m, names, best):
-    rows = [("BattleRecord_105.dds", "Winner", names or "Nobody")]
-    if m.kill_mode:
-        rows += [("BattleRecord_104.dds", f"{NATION_NAMES[n]} kills", m.side_kills[n]) for n in (FEDERAL, ALLIANCE)]
-    else:
-        rows.append(("BattleRecord_104.dds", "Most kills", best))
-    return rows
+def round_rows(m, names):
+    """The score table's rows for a Kill mode round: the winner, then each side's kills."""
+    return [("BattleRecord_105.dds", "Winner", names or "Nobody")] + [
+        ("BattleRecord_104.dds", f"{NATION_NAMES[n]} kills", m.side_kills[n]) for n in (FEDERAL, ALLIANCE)]
 
 
 def end_round(m):
@@ -2990,8 +2997,8 @@ def end_round(m):
         STORE.add_log(p.cid, f"Won a round of {m.bf['name']}")
     log(f"[game] round over in {m.bf['name']} (match {m.id}): {names or 'nobody'} won with {best} kills")
     show_message(m, f"{names} won the round" if names else "The round is over")
-    if SCORE_TABLE:
-        m.broadcast(20, 20130, score_table_body(round_rows(m, names, best), RECORD_SECONDS))
+    if m.kill_mode:
+        m.broadcast(20, 20130, score_table_body(round_rows(m, names), RECORD_SECONDS))
     else:
         m.broadcast(19, 30150, struct.pack("<f", RECORD_SECONDS))
     m.later(RECORD_SECONDS + RECORD_GRACE, close_round, m)
@@ -3055,7 +3062,7 @@ def show_player(server, viewer, other):
     """Create another player's robot on viewer's client (as a remote robot)."""
     spawn_robot(server, viewer, other.cid, other.player_rid, other.pos, other.detachment, other.name, local=False)
     send_base_info(server, viewer, other.cid, other.name, other.player_rid, other.kills, other.deaths,
-                   rank_for(STORE.stats(other.cid).get("honor", 0)), nation_of(other.cid))
+                   rank_for(STORE.stats(other.cid).get("honor", 0)), nation_of(other.cid), getattr(other, "gm_level", 0) > 0)
     if other.player_dead:
         send_game_event(server, viewer, 19, 50107, struct.pack("<Iff", other.player_rid, 0.0, 0.0))
     else:
@@ -3105,7 +3112,7 @@ def join_match(server, peer):
     rid = peer.player_rid
     spawn_robot(server, peer, peer.cid, rid, peer.pos, peer.detachment, peer.name, local=True)
     send_base_info(server, peer, peer.cid, peer.name, rid, rank=rank_for(STORE.stats(peer.cid).get("honor", 0)),
-                   nation=nation_of(peer.cid))
+                   nation=nation_of(peer.cid), gm=getattr(peer, "gm_level", 0) > 0)
     # take up the weapon (the client ignores the hotkeys for the first seconds after spawning), then Revived:
     # first-person view (robot +0x308), the only view the weapons fire in
     send_game_event(server, peer, 19, 50105, struct.pack("<Iii", rid, 1, -1))
@@ -3318,14 +3325,16 @@ def nation_of(cid):
     return nation if nation in NATIONS else 0
 
 
-def send_base_info(server, peer, cid, name, rid, kills=0, deaths=0, rank=0, nation=0):
+def send_base_info(server, peer, cid, name, rid, kills=0, deaths=0, rank=0, nation=0, gm=False):
     """GS_Character_Set_BaseInfo (19,30040) creates or updates a character (handler Game.dll 0x1035fab0):
     u32 char id | wstr name (character +8, shown on nameplates and in the kill feed) | u32 | u32 | u32
-    | u32 rank (+0x44, 0 = Recruit) | u8 | u32 (+0xe8) | u32 (+0x108) | u8 (+0x168) | u8 (+0x169) | u8 (+0x220)
+    | u32 rank (+0x44, 0 = Recruit) | u8 GM (+0xb8) | u32 (+0xe8) | u32 (+0x108) | u8 (+0x168) | u8 (+0x169) | u8 (+0x220)
     | u32 kills (+0xf8) | u32 deaths (+0xfc) | u32 n x (u16 | u8) | u32 controlled robot id (+0xec)
     Without it a remote character has no name and its nameplate shows only "[GM]". A character with no group
-    (+0xe8 = 0) gets a "[Need Team]" tag over its robot unless the +0x220 byte is set (Robot::updateHeading)."""
-    send_game_event(server, peer, 19, 30040, struct.pack("<I", cid) + wstr(name) + struct.pack("<IIIIB", nation, 0, 0, rank, 0)
+    (+0xe8 = 0) gets a "[Need Team]" tag over its robot unless the +0x220 byte is set (Robot::updateHeading).
+    The GM byte puts "[GM]" before the name and, for the player's own character, opens the client's / GM commands
+    in the battle chat box (real client 2026-11-05: sending 0 here took away the GM byte CharacterOnline had set)."""
+    send_game_event(server, peer, 19, 30040, struct.pack("<I", cid) + wstr(name) + struct.pack("<IIIIB", nation, 0, 0, rank, 1 if gm else 0)
                     + struct.pack("<IIBBB", 0, 0, 0, 0, 1) + struct.pack("<III", kills, deaths, 0)
                     + struct.pack("<I", rid))
 

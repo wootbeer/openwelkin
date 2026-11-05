@@ -357,7 +357,7 @@ Builds the hall (`CNewHallUI`). The byte after the id is the character's nation 
 u32 character id | str name | u32 number
 ```
 
-The client's own `/kick <name> <number>`. Its chat box has GM commands when the GM level in CharacterOnline is 101 to 110 (local character +0xb8): kick, announce, say, tell (the normal whisper), banchat, hideme, damage and moveto go to the server; god and godspeed only change the GM's own client. The ack has no body: result 0 shows "Kick %s Success!", anything else "Kick %s Failed!". What the number means is not known. The emulator sends GM level 101 for the gm role and 110 for admin, and runs the same kick as `!kick`.
+The client's own `/kick <name> <number>`. Its chat box has GM commands when the GM level in CharacterOnline is 101 to 110 (local character +0xb8): kick, announce, say, tell (the normal whisper), banchat, hideme, damage and moveto go to the server; god and godspeed only change the GM's own client. The ack has no body: result 0 shows "Kick %s Success!", anything else "Kick %s Failed!". What the number means is not known. They work in the battle chat box only; the hall's Lobby box sends a normal line. The emulator sends GM level 101 for the gm role and 110 for admin, and runs the same kick as `!kick`.
 
 <a name="m-21-21008"></a>
 #### GM banchat `(21,21008)`
@@ -390,7 +390,7 @@ The GM commands that go to the game server, numbered as in the client's list: 7 
 21030: u16 kind | u32 | str text    21031: u16 kind | u32 | u32 | str text
 ```
 
-`/announce <kind> [<number> when kind is 1] <text>` and `/say <kind> <number> [<number> when kind is 2] <text>`. What the kinds and numbers mean is not known; the emulator sends the text as a notice (`!notice`, admins only).
+`/announce <kind> [<number> when kind is 1] <text>` and `/say <kind> <number> [<number> when kind is 2] <text>`. What the kinds and numbers mean is not known; the emulator sends the text as a notice (`!notice`, admins only). The client reads the text with `>>`, so only its first word is sent (real client 2026-11-05).
 
 <a name="m-18-18029"></a>
 #### GetShootRoomIDByCountryID `(18,18029)`
@@ -934,11 +934,11 @@ Asked once at hall login, from the CharacterOnline reply. Each line goes to CNew
 *S→C reply · partial*
 
 ```text
-u32 (not read) | u32 n | n x ( u32 id | str | str | u32 icon | u32 goods id
+u32 (not read) | u32 n | n x ( u32 id | str name | str contents | u32 picture | u32 item id
 | u32 point price | u32 | u32 money price | u32 )
 ```
 
-Shop Package tab. Picture GoodsPic\_&lt;icon>.dds; the name shown is the goods id's item name, asked with (24,24002). Money (Crystal) price -1 shows the point (Credit) price instead. Send at least 8 bytes. Request: `u32 0xffff | u32 1`. The two strings are kept (+4, +0x3c) but not shown in the list. The emulator answers with its own packages (the original ones were on the server): the goods id is 9000 + package id, whose item name is the package name. Not tried in game.
+Shop Package tab. Picture GoodsPic\_&lt;picture>.dds; the client has 9000 to 9006, gift boxes with the package's name on them (Infantry 30Days, Ultimate, Almighty, Infantry Weapon, Infantry Gear, Ground Vehicle, Air Vehicle). The item id must be one the client knows (asked with (24,24002)), or the package is left out. Money (Crystal) price -1 shows the point (Credit) price instead. The buy dialog shows the name and contents strings. Request: `u32 0xffff | u32 1`. The emulator uses the picture number as package id and item id; the contents are its own. Real client 2026-11-05: the tab shows the packages from the second time it is opened (the first time it still shows the License goods).
 
 <a name="m-24-24029"></a>
 #### Buy a package `(24,24029)`
@@ -949,7 +949,7 @@ Shop Package tab. Picture GoodsPic\_&lt;icon>.dds; the name shown is the goods i
 u32 character id | u8 currency | u32 package id
 ```
 
-Read from Game.dll, not tried in game. Currency 1 = Crystal, else Credit. The reply has no body. On result 0 the client asks for its Crystal (24019) or Credit (24020) and the in-use list (24006) again and shows dialog 0x6b; any other result shows that error text. The emulator puts each item of the package in the warehouse, as if bought one by one.
+Real client 2026-11-05: bought, the price came off and the items showed in the Warehouse. Currency 1 = Crystal, else Credit. The reply has no body. On result 0 the client asks for its Crystal (24019) or Credit (24020) and the in-use list (24006) again and shows dialog 0x6b; any other result shows that error text. The emulator puts each item of the package in the warehouse, as if bought one by one.
 
 Also read, all safe with an empty list: (14,14034) `u32 n | n x (u8 rank | u32)` in the own-corps window; (14,14054) `u32 n | n x (u8 grade | u32)`; (15,15022) corps name and details for a corps id; (15,15074) `u32 n | n x (u32 team | str | str | str flag | u8)`; (15,15093) `u32 n | n x (u32 | u32)`; (17,17079) `u32 0` = no headquarters; (17,17099) `u32 n | n x city link`; (13,13047) and (21,21069) read one u32 and drop it; (17,17111) request `u32 battle front id`, reply `str | str | u8`, the first str stored for that front in the hall's joined battle list.
 
@@ -1101,7 +1101,7 @@ Walker\_Basic robot = flyweight 1311. See [Snapshots](#snapshots).
 | nation | u32 | character +0x30; 0x10 Federal, 0x20 Alliance |
 | — | 2 x u32 |  |
 | rank | u32 | 0 = Recruit |
-| GM flag | u8 | non-zero adds a "[GM]" nameplate prefix |
+| GM flag | u8 | character +0xb8: non-zero adds a "[GM]" nameplate prefix and, for your own character, opens the / GM commands in the battle chat box (0 takes away what CharacterOnline set) |
 | group id | u32 | +0xe8 |
 | — | u32 | +0x108 |
 | — | u8, u8 | +0x168, +0x169 |
@@ -1430,13 +1430,13 @@ Sets one side's score.
 <a name="m-20-20130"></a>
 #### Arena\_KILL\_Score `(20,20130)`
 
-*S→C · read, not tried*
+*S→C · verified*
 
 ```text
 u32 count | count x ( str icon | str label | str flag | str value | str font size | str color ) | u32 seconds
 ```
 
-Fills the Arena Battle Report (dialog 0x68), the same window DisconnectByServer opens: first the player's own rows (kills/deaths, crystal, honor), then the title "Campaign" and one line per row, then the "back to lobby" countdown. Each row goes to CArenaScoreUI::AddData as a .dds icon (the client's own are BattleRecord\_101 to 105), the label and value texts, the flag as a number (the client's own rows use 1), the font size as a number (14) and the text color as hex (ff22cf00, the client's green). Neither message clears the window, so send one or the other. The emulator sends it in place of DisconnectByServer with MW\_SCORE\_TABLE=1: winner, then each side's kills in Kill mode or the most kills otherwise. Not known: whether a catalog 20 message reaches the client in battle, and whether it goes back to the lobby after this countdown.
+Fills the Arena Battle Report (dialog 0x68), the same window DisconnectByServer opens: first the player's own rows (kills/deaths, crystal, honor), then the title "Campaign" and one line per row, then the "back to lobby" countdown; after it the client goes back to the lobby. Each row goes to CArenaScoreUI::AddData as a .dds icon (the client's own are BattleRecord\_101 to 105), the label and value texts, the flag as a number (the client's own rows use 1), the font size as a number (14) and the text color as hex (ff22cf00, the client's green). Neither message clears the window, so send one or the other. Only the arena logics (Kill and the others) register an observer for it. No event envelope: catalog 20 bodies start right after the message header. The emulator ends Kill mode rounds with it: winner, then each side's kills (real client 2026-11-05).
 
 <a name="chat"></a>
 

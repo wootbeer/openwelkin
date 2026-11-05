@@ -288,7 +288,7 @@ async def scenario():
     pic, name_item, credit, _, crystal, _ = struct.unpack_from("<6I", r.body, off)
     first = ls.PACKAGES[0]
     check("the Package tab lists the packages", count == len(ls.PACKAGES) and (pid, name) == first[:2]
-          and (pic, credit, crystal) == (first[2][0], first[4], first[3]))
+          and (pic, name_item, credit, crystal) == (pid, pid, first[4], first[3]))
     r = await amy.request(24, 24002, struct.pack("<I", name_item))
     check("a package's name comes through its item id", ls.read_wstr(r.body, 0)[0] == first[1])
     points = struct.unpack("<I", (await amy.request(24, 24020, struct.pack("<I", amy_id))).body)[0]

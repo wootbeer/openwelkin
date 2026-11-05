@@ -65,8 +65,7 @@ client then needs the moved login port).
 | `MW_PORT_OFFSET` | `0` | Added to every port (see Ports). |
 | `MW_STATS_EVERY` | `60` | Seconds between `[stats]` lines in the log (players, tick time, CPU, traffic). `0` = off. |
 | `MW_ROBOT` | (empty) | Dev only: force the player's robot type, e.g. `1313` (Walker Scout). |
-| `MW_KILL_MODE` | `0` | `1` makes battlefields with rounds nation against nation: the client's own team arena, with each side's kills on screen. The side that reaches `MW_ROUND_KILLS` wins. Not tried in game yet. |
-| `MW_SCORE_TABLE` | `0` | `1` ends a round with the score table: the Record window also lists the winner and the kills. Not tried in game yet. |
+| `MW_KILL_MODE` | `0` | `1` makes battlefields with rounds nation against nation: the client's own team arena, with each side's kills on screen. The side that reaches `MW_ROUND_KILLS` wins, and the Record window lists the winner and both sides' kills. Seen in game with one player; the scores counting up are not tried yet. |
 | `MW_MOVE_CHECK` | `1` | `0` turns off the speed check: a robot that moves faster than twice the walking speed is put back where it was. Not tried in game yet. |
 | `MW_PASSIVE_DUMMIES` | `0` | Dev only: `1` stops the target dummies from shooting (PvP tests). |
 | `MW_FORCE_BF` | `0` | Dev only: every Quick Enter goes to this battlefield id (multi-client tests). |
@@ -184,7 +183,8 @@ The reply comes as a private message from Server, and the command goes in `admin
 The client also has its own GM commands starting with `/`, and the server turns them on for `gm` and `admin` characters
 at their next login: `/kick <character> <number>` works like `!kick`, `/announce` and `/say` like `!notice`, `/banchat
 <id> <minutes>` like `!mute` (id 0, then a name: by name), and in battle `/moveto <character>` takes you next to that
-player. Not tried in game yet.
+player. They work in the battle chat box, not the hall's Lobby box, and `/announce` and `/say` only send their first
+word (the client cuts the rest). `/announce` is tried in game; the others are not yet.
 
 Banned players see the client's own message: "Account has been locked" (permanent), "Account being punished"
 (timed) or "IP is locked".

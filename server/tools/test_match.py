@@ -32,7 +32,7 @@ class Sock:
         packets.append((addr, len(msgs), pkt.flags))
         for raw, cat, typ in msgs:
             m = ls.Message.parse(raw)
-            sent.append((addr, cat, typ, m.body[8:]))  # strip the event envelope
+            sent.append((addr, cat, typ, m.body[8:] if cat in (9, 19) else m.body))  # strip the event envelope
 
 
 server = fdp.Server(Sock(), lambda *a: None, ls.hexdump)
@@ -469,10 +469,8 @@ ok &= check("kill mode: a kill scores for the killer's side", struct.pack("<Bi",
 kill(pc, pb)
 step()
 ok &= check("kill mode: a kill on your own side scores nothing", m3.side_kills == {ls.FEDERAL: 1, ls.ALLIANCE: 0})
-ls.SCORE_TABLE = True
 kill(pa, pc)
 step()
-ls.SCORE_TABLE = False
 ok &= check("kill mode: the side reaching the limit wins", m3.over and any(b"Federal" in x for x in got(B, 30250)))
 
 
@@ -491,7 +489,7 @@ def score_rows(body):
 
 tables = got(B, 20130)
 rows, seconds, whole = score_rows(tables[0]) if tables else ([], 0, False)
-ok &= check("score table: sent in place of DisconnectByServer", len(tables) == 1 and not got(B, 30150) and whole)
+ok &= check("kill mode: the score table is sent in place of DisconnectByServer", len(tables) == 1 and not got(B, 30150) and whole)
 ok &= check("score table: winner and both sides' kills, with the countdown",
             [r[1:4] for r in rows] == [["Winner", "1", "Federal"], ["Federal kills", "1", "2"],
                                        ["Alliance kills", "1", "0"]]
