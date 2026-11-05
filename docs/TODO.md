@@ -236,8 +236,9 @@ reply layout, and answer with real data.
       with / is a command. GM level 101..110 in CharacterOnline sets the GM byte (+0xb8); the emulator sends 101 for
       gm and 110 for admin (the gate gets it in the signed session key; a role change counts from the next login).
       GM words: kick (13,13041) and announce / say (21,21030 / 21031) are answered as !kick and !notice; tell is the
-      normal whisper; banchat, hideme and moveto send requests not read yet; god, godspeed and damage only change the
-      GM's own client; bf does nothing. Try in game: does a GM character show anything different, and do /kick and
+      normal whisper; banchat (21,21008) is !mute; moveto, hideme and damage go to the game server as (9,11000)
+      u32 command | argument, and only moveto is done (the battle ticket carries the GM level); god and godspeed
+      only change the GM's own client; bf does nothing. Try in game: does a GM character show anything different, and do /kick and
       /announce work. Without the GM byte the letter after / picks a squad ("Detachment") action: /a N apply to join,
       /e N enter, /L leave, /l apply to be leader, /t N set the target zone (requests not read yet), /h hides the
       screen's windows and HUD (client only). Squads need teams first

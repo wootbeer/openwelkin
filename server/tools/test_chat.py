@@ -387,6 +387,30 @@ async def scenario():
     check("an admin's /kick works", (await gail.request(13, 13041, kick_hal)).result == 0
           and wait_for(lambda: "hal" not in [r.split()[0] for r in ts.admin("who").splitlines() if r.strip()], 4))
 
+    # --- chat mute (!mute, and the client's /banchat) ---
+    ivy, ivy_id = await player("ivy")
+    check("mute needs a time", "usage" in ts.admin("mute ivy") and "usage" in ts.admin("mute ivy perm"))
+    check("mute of nobody", "no character" in ts.admin("mute nobody 10m"))
+    check("mute", "muted ivy until" in ts.admin("mute ivy 10m"))
+    told = await heard(ivy)
+    check("the muted player is told", told and told[3].startswith("You can not chat until"), str(told))
+    say(ivy, "can you hear me")
+    told = await heard(ivy)
+    check("a muted line is not sent", told and told[3].startswith("You can not chat") and "can you hear me" not in str([await heard(gail, 0.3) for _ in range(3)]),
+          str(told))
+    check("unmute", "unmuted ivy" in ts.admin("unmute ivy") and (await heard(ivy))[3] == "You can chat again")
+    await asyncio.sleep(ls.CHAT_EVERY + 0.1)
+    gail.send(ls.Message(21, 21008, body=struct.pack("<I", ivy_id) + struct.pack("<I", 5 * 60)))
+    told = await heard(ivy)
+    check("/banchat by character id mutes", told and told[3].startswith("You can not chat until"), str(told))
+    await asyncio.sleep(ls.CHAT_EVERY + 0.1)
+    gail.send(ls.Message(21, 21008, body=struct.pack("<I", 0) + ls.wstr("ivy") + struct.pack("<I", 0)))
+    told = await heard(ivy)
+    check("/banchat by name with 0 minutes unmutes", told and told[3] == "You can chat again", str(told))
+    hal_gone = struct.pack("<I", ivy_id) + struct.pack("<I", 60)
+    ivy.send(ls.Message(21, 21008, body=hal_gone))
+    check("a player's /banchat does nothing", await heard(ivy, 0.6) is None)
+
     # --- kicked players are told why ---
     async def from_server(gate):
         while True:

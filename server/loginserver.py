@@ -770,6 +770,26 @@ class Store:
     def id_of_name(self, name):
         return self.names.get(name.lower())
 
+    def muted_until(self, cid):
+        """Time a character's chat mute ends, 0 if not muted (kept in its texts as "mute")."""
+        until = float((self.by_id(cid) or {}).get("texts", {}).get("mute", 0) or 0)
+        return until if until > time.time() else 0
+
+    def set_mute(self, name, until):
+        """Mute a character by name until a time (0 = unmute). Its id, or None if there is no such character."""
+        with self.lock:
+            cid = self.id_of_name(name)
+            c = self.by_id(cid) if cid is not None else None
+            if not c:
+                return None
+            texts = c.setdefault("texts", {})
+            if until:
+                texts["mute"] = str(int(until))
+            else:
+                texts.pop("mute", None)
+            self.mark_dirty(cid)
+            return cid
+
     def contacts(self, cid, kind):
         """Character ids on a friend ("friends") or block ("blocked") list."""
         return list((self.by_id(cid) or {}).get(kind, []))
@@ -914,7 +934,7 @@ MAX_SUITES = 10  # loadout presets per character
 MAX_SUITE_TEXT = 400  # characters in one preset (a name and a few dozen part ids)
 KICK_NOTICE = 1.5  # seconds a kicked player has to see why, before the connection closes
 CHAT_MAX, CHAT_EVERY, CHAT_QUEUE = 200, 0.5, 100  # characters in a line, seconds between a player's lines, lines waiting
-GM_COMMANDS = {"who", "matches", "kick", "ban", "unban", "bans", "goto", "tell"}
+GM_COMMANDS = {"who", "matches", "kick", "ban", "unban", "bans", "goto", "tell", "mute", "unmute"}
 GOTO_LIMIT = 100000.0  # goto refuses positions farther out than this
 GM_LEVEL = {"player": 0, "gm": 101, "admin": 110}  # sent in CharacterOnline; 101..110 makes the client a GM
 ROLE_COMMANDS = {"player": set(), "gm": GM_COMMANDS, "admin": GM_COMMANDS | {"ipban", "unipban", "role", "backup", "notice"}}
@@ -1266,11 +1286,11 @@ class Session:
         if bfid not in BATTLEFIELDS:
             return self.reply(msg, result=17000)
         if ROLE == "gate":
-            place = place_in_game(self.account, cid, bfid)
+            place = place_in_game(self.account, cid, bfid, self.gm_level)
             if place is None:
                 return self.reply(msg, result=1)  # no game server: "Request Timeout"
             return self.reply(msg, struct.pack("<IIHI", 1, *place))
-        self.reply(msg, struct.pack("<IIHI", 1, GAME_IP, GAME_PORT, issue_ticket(cid, bfid)))
+        self.reply(msg, struct.pack("<IIHI", 1, GAME_IP, GAME_PORT, issue_ticket(cid, bfid, self.gm_level)))
 
     def on_announcements(self, msg):
         # UpdateAllAnnouncement (21,21047). Reply read by UpdateAllAnnouncementObserver (Game.dll 0x1051e040):
@@ -1619,6 +1639,10 @@ class Session:
         except ValueError:
             return None
         text = clean_line(text)
+        muted = STORE.muted_until(self.character["id"]) if text and not text.startswith("!") else 0
+        if muted:
+            self.chat_line(21200, "Server", f"You can not chat {fmt_until(muted)}")
+            return None
         return (text, off) if text else None
 
     def chat_line(self, type_, name, text, cid=0):
@@ -1828,6 +1852,21 @@ class Session:
         text = self.gm_text(msg, 10)
         if text:
             self.gm_chat(f"notice {text}")
+
+    def on_gm_banchat(self, msg):
+        # /banchat <id> [<name> when the id is 0] <minutes>: (21,21008) u32 character id | str name (only when the id
+        # is 0) | u32 seconds (the client sends minutes x 60). 0 minutes unmutes.
+        try:
+            cid = struct.unpack_from("<I", msg.body)[0]
+            name, off = read_wstr(msg.body, 4) if cid == 0 else ((STORE.by_id(cid) or {}).get("name", ""), 4)
+            secs = struct.unpack_from("<I", msg.body, off)[0]
+        except (ValueError, struct.error):
+            return self.reply(msg, result=ERR_PROTOCOL)
+        if msg.flags & MSG_REQUEST:
+            self.reply(msg)
+        name = name.split()[0] if name.strip() else ""
+        if self.gm_level and name:
+            self.gm_chat(f"mute {name} {max(1, secs // 60)}m" if secs else f"unmute {name}")
 
     def own_character(self, cid):
         """True when cid is one of this session's account characters (never trust ids from the client)."""
@@ -2182,6 +2221,7 @@ HANDLERS = {
     (13, 13041): Session.on_gm_kick,             # GM /kick (GMKickRes)
     (21, 21030): Session.on_gm_announce,         # GM /announce
     (21, 21031): Session.on_gm_say,              # GM /say
+    (21, 21008): Session.on_gm_banchat,          # GM /banchat
     (21, 21051): Session.on_chat_private,        # private message, as the hall sends it (seen in game)
     (21, 21032): Session.on_chat_private,        # private message
     (21, 21522): Session.on_friends,             # CHAT_GetFriendListFormDB
@@ -2326,11 +2366,12 @@ def report_load():
         UPLINK.send("load", players=n)
 
 
-def place_in_game(account, cid, bfid):
+def place_in_game(account, cid, bfid, gm_level=0):
     """gate: announce a player to the emptiest game server: (ip, port, ticket), or None if none answers."""
     for g in sorted(LINKS, key=lambda g: g.load):
         ticket = secrets.randbits(32) or 1
-        if ask(g, "expect", False, ticket=ticket, account=account, cid=cid, bfid=bfid, character=STORE.by_id(cid)):
+        if ask(g, "expect", False, ticket=ticket, account=account, cid=cid, bfid=bfid, character=STORE.by_id(cid),
+               gm=gm_level):
             g.load += 1  # until its next report
             g.accounts.append(account)
             return g.ip, g.port, ticket
@@ -2523,6 +2564,8 @@ def on_login_message(link, msg):
         return notice_here(msg["text"])
     if kind == "tell":
         return tell_here(msg["name"], msg["text"])
+    if kind == "mute":
+        return mute_here(msg["name"], msg["until"])
     if kind == "goto":
         return teleport(msg["account"], tuple(msg["pos"]))
     if kind == "gm_reply":
@@ -2559,7 +2602,7 @@ def on_gate_request(link, msg):
     if kind == "expect":
         STORE.announce(msg["account"], msg["character"])
         with GAME_LOCK:
-            TICKETS[msg["ticket"]] = (msg["cid"], msg["bfid"], time.time() + TICKET_TTL)
+            TICKETS[msg["ticket"]] = (msg["cid"], msg["bfid"], time.time() + TICKET_TTL, msg.get("gm", 0))
         return True
     if kind == "leave":
         leave_game_local(msg["account"], msg["reason"])
@@ -2728,14 +2771,14 @@ MATCH_IDS = itertools.count(1)
 TIMER_IDS = itertools.count()
 
 
-def issue_ticket(cid, bfid):
+def issue_ticket(cid, bfid, gm_level=0):
     """A random single-use battle ticket. The client sends it back as the first u32 of its FDP connect stream."""
     with GAME_LOCK:
         now = time.time()
-        for t in [t for t, (_, _, exp) in TICKETS.items() if exp < now]:
+        for t in [t for t, v in TICKETS.items() if v[2] < now]:
             del TICKETS[t]
         ticket = secrets.randbits(32) or 1
-        TICKETS[ticket] = (cid, bfid, now + TICKET_TTL)
+        TICKETS[ticket] = (cid, bfid, now + TICKET_TTL, gm_level)
         return ticket
 
 
@@ -2754,13 +2797,13 @@ def admit_game_session(addr, stream, peers):
 
 
 def redeem_ticket(peer):
-    """Match the game connection to the character that applied: (cid, bfid) or None."""
+    """Match the game connection to the character that applied: (cid, bfid, GM level) or None."""
     if len(peer.connect_stream) < 4:
         return None
     (ticket,) = struct.unpack_from("<I", peer.connect_stream)
     with GAME_LOCK:
-        cid, bfid, exp = TICKETS.pop(ticket, (None, None, 0))
-    return (cid, bfid) if cid is not None and exp >= time.time() else None
+        cid, bfid, exp, level = TICKETS.pop(ticket, (None, None, 0, 0))
+    return (cid, bfid, level) if cid is not None and exp >= time.time() else None
 
 
 class Match:
@@ -3470,7 +3513,7 @@ def on_game_message(server, peer, raw):
         if not who:
             log(f"[game] {peer.addr} has no valid battle ticket")
             return
-        peer.cid, peer.bfid = who
+        peer.cid, peer.bfid, peer.gm_level = who
         peer.battle_sent = True
         bf = BATTLEFIELDS[peer.bfid]
         if KILL_MODE and bf.get("rounds"):  # logic data: u8 nation | u8 nation | f32 (CArenaLogicKill::SetInitData);
@@ -3516,6 +3559,8 @@ def on_game_message(server, peer, raw):
         # confirms with GS_Robot_SystemPart (19,50105): u32 robot id | i32 slot | i32 (-1) -> Robot::SetCurEquip.
         _, slot = struct.unpack_from("<ii", body)
         send_game_event(server, peer, 19, 50105, struct.pack("<Iii", peer.player_rid, slot, -1))
+    elif key == (9, 11000) and len(body) >= 4:
+        gm_game_command(server, peer, body)
     elif key in ((9, 40122), (9, 40125)):
         # Trigger pulled (9,40122, Weapon::Use): u32 | u32 weapon id | u32 | vec3 muzzle | vec3 target | u32 | u32;
         # trigger released (9,40125). Automatic weapons keep firing client-side between the two (one shot per
@@ -3538,6 +3583,36 @@ def on_game_message(server, peer, raw):
                         what = m.targets[victim]["name"] if isinstance(victim, int) else victim.name
                         log(f"[game] {peer.name} fires at {what}")
                     fire_tick(server, peer, peer.trigger, 0)
+
+
+def gm_game_command(server, peer, body):
+    """The client's own GM commands that go to the game server, (9,11000) from ChatManager::SendMessage: u32 command
+    (its number in the client's list) | its argument. Only for a player whose battle ticket carried a GM level (the
+    gate puts it there from the signed login), and logged. 7 hideme <number> and 8 damage <number> are logged only:
+    what the original server did with them is not known. 11 moveto <character>: the GM's robot goes to that player
+    in the same match."""
+    command, who = struct.unpack_from("<I", body)[0], getattr(peer, "name", peer.addr)
+    if not getattr(peer, "gm_level", 0):
+        return log(f"[game] {who} sent a GM command ({command}) without being a GM")
+    if command == 11:
+        try:
+            name = clean_line(read_wstr(body, 4)[0])
+        except ValueError:
+            return
+        m = getattr(peer, "match", None)
+        with GAME_LOCK:
+            other = next((p for p in (m.peers if m else []) if p.name.lower() == name.lower() and p is not peer), None)
+            if other is None or not getattr(peer, "player_rid", 0):
+                return log(f"[gm] {who} /moveto {name[:32]!r}: not in this match")
+            pos = (other.pos[0] + SLOT_OFFSET, other.pos[1], other.pos[2])
+            send_game_event(server, peer, 19, 33000, struct.pack("<3f", *pos))
+            peer.pos = pos
+            placed(peer)
+            m.move(peer.player_rid, struct.pack("<II3f3f", peer.player_rid, 0, *pos, *peer.facing), pos,
+                   peer.fire_range, skip=peer)
+        return log(f"[gm] {who} /moveto {other.name}")
+    value = struct.unpack_from("<I", body, 4)[0] if len(body) >= 8 else None
+    log(f"[gm] {who} GM command {command} {value} (not done by this server)")
 
 
 def game_tick(server, now):
@@ -3589,6 +3664,8 @@ ADMIN_HELP = """commands:
   kick <account>                         disconnect an account (hall and battle)
   goto <account> <x> <y> <z>             move a player's robot in battle (unstick someone)
   tell <character> <text>                a private line from Server to a player
+  mute <character> <time>                no chat for a while; time like 30m, 12h, 7d
+  unmute <character>
   ban <account> [time] [reason]          ban and kick; time like 30m, 12h, 7d, 2w (default: permanent)
   unban <account>
   ipban <address or network> [time] [reason]   e.g. 1.2.3.4 or 1.2.3.0/24; kicks everyone on it
@@ -3743,6 +3820,33 @@ def cmd_tell(args, actor):
     return f"told {args[0][:32]}" if told else f"{args[0][:32]} is not online"
 
 
+def mute_here(name, until):
+    """Mute a character this server keeps (the gate or one-program server, where characters.db is). Tells them."""
+    if STORE.set_mute(name, until) is None:
+        return False
+    text = f"You can not chat {fmt_until(until)}" if until else "You can chat again"
+    tell_here(name, text)
+    return True
+
+
+def cmd_mute(args, actor):
+    secs = parse_duration(args[1]) if len(args) == 2 else None
+    if not secs:  # a mute always ends: a permanent one is a ban
+        return "usage: mute <character> <time>, time like 30m, 12h, 7d"
+    until = time.time() + secs
+    done = any([ask(g, "mute", False, name=args[0], until=until) for g in list(LINKS)]) if ROLE == "login" else (
+        mute_here(args[0], until))
+    return f"muted {args[0][:32]} {fmt_until(until)}" if done else f"no character {args[0][:32]!r}"
+
+
+def cmd_unmute(args, actor):
+    if len(args) != 1:
+        return "usage: unmute <character>"
+    done = any([ask(g, "mute", False, name=args[0], until=0) for g in list(LINKS)]) if ROLE == "login" else (
+        mute_here(args[0], 0))
+    return f"unmuted {args[0][:32]}" if done else f"no character {args[0][:32]!r}"
+
+
 def cmd_goto(args, actor):
     usage = "usage: goto <account> <x> <y> <z>"
     if len(args) != 4:
@@ -3874,7 +3978,8 @@ def cmd_role(args, actor):
 
 ADMIN_COMMANDS = {"who": cmd_who, "matches": cmd_matches, "kick": cmd_kick, "ban": cmd_ban, "unban": cmd_unban,
                   "ipban": cmd_ipban, "unipban": cmd_unipban, "bans": cmd_bans, "role": cmd_role, "backup": cmd_backup, "notice": cmd_notice,
-                  "goto": cmd_goto, "tell": cmd_tell, "help": lambda args, actor: ADMIN_HELP}
+                  "goto": cmd_goto, "tell": cmd_tell, "mute": cmd_mute,
+                  "unmute": cmd_unmute, "help": lambda args, actor: ADMIN_HELP}
 
 
 def gm_level(account):

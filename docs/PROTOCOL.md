@@ -16,6 +16,8 @@
   - [CS\_Active\_Character](#m-13-13006) `(13,13006)`
   - [CS\_CharacterOnline](#m-13-13004) `(13,13004)`
   - [GM kick](#m-13-13041) `(13,13041)`
+  - [GM banchat](#m-21-21008) `(21,21008)`
+  - [GM game command](#m-9-11000) `(9,11000)`
   - [GM announce / say](#m-21-21030) `(21,21030) (21,21031)`
   - [GetShootRoomIDByCountryID](#m-18-18029) `(18,18029)`
   - [MapInfo](#m-17-17008) `(17,17008)`
@@ -355,7 +357,29 @@ Builds the hall (`CNewHallUI`). The byte after the id is the character's nation 
 u32 character id | str name | u32 number
 ```
 
-The client's own `/kick <name> <number>`. Its chat box has GM commands when the GM level in CharacterOnline is 101 to 110 (local character +0xb8): kick, announce, say, tell (the normal whisper), banchat, hideme and moveto go to the server; god, godspeed and damage only change the GM's own client. The ack has no body: result 0 shows "Kick %s Success!", anything else "Kick %s Failed!". What the number means is not known. The emulator sends GM level 101 for the gm role and 110 for admin, and runs the same kick as `!kick`.
+The client's own `/kick <name> <number>`. Its chat box has GM commands when the GM level in CharacterOnline is 101 to 110 (local character +0xb8): kick, announce, say, tell (the normal whisper), banchat, hideme, damage and moveto go to the server; god and godspeed only change the GM's own client. The ack has no body: result 0 shows "Kick %s Success!", anything else "Kick %s Failed!". What the number means is not known. The emulator sends GM level 101 for the gm role and 110 for admin, and runs the same kick as `!kick`.
+
+<a name="m-21-21008"></a>
+#### GM banchat `(21,21008)`
+
+*C→S · read, not tried*
+
+```text
+u32 character id | str name (only when the id is 0) | u32 seconds
+```
+
+`/banchat <id> [<name>] <minutes>`; the client sends minutes x 60. The emulator runs it as `!mute` (0 minutes: `!unmute`). A muted character's lines are not sent, and they are told until when.
+
+<a name="m-9-11000"></a>
+#### GM game command `(9,11000)`
+
+*C→S game · read, not tried*
+
+```text
+u32 command | u32 value, or str name for moveto
+```
+
+The GM commands that go to the game server, numbered as in the client's list: 7 `/hideme <n>`, 8 `/damage <n>`, 11 `/moveto <character>`. The emulator moves the GM next to that player with GS\_GMSetLocation, and only logs 7 and 8.
 
 <a name="m-21-21030"></a>
 #### GM announce / say `(21,21030) (21,21031)`

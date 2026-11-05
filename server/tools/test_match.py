@@ -360,6 +360,23 @@ ok &= check("goto moves a player in battle", moved and pa.pos == (5.0, 6.0, 7.0)
 ok &= check("the others see it move", any(struct.unpack_from("<I3f", b, 0)[0] == pa.player_rid
                                           and struct.unpack_from("<3f", b, 8) == (5.0, 6.0, 7.0) for b in got(B, 50100)))
 ok &= check("goto someone not in battle", not ls.teleport("nobody", (0.0, 0.0, 0.0)))
+
+# the client's own GM /moveto <character>: (9,11000) u32 11 | str name
+sent.clear()
+moveto = struct.pack("<I", 11) + ls.wstr("Bravo")
+msg(A, 11000, moveto)
+ok &= check("/moveto: refused without a GM level", pa.gm_level == 0 and not got(A, 33000))
+pa.gm_level = ls.GM_LEVEL["gm"]  # what a GM's battle ticket gives
+msg(A, 11000, moveto)
+there = (pb.pos[0] + ls.SLOT_OFFSET, pb.pos[1], pb.pos[2])
+ok &= check("/moveto: a GM goes next to the player", got(A, 33000) == [struct.pack("<3f", *there)] and pa.pos == there)
+sent.clear()
+msg(A, 11000, struct.pack("<I", 11) + ls.wstr("Nobody"))
+msg(A, 11000, struct.pack("<II", 7, 1))
+msg(A, 11000, struct.pack("<I", 11) + b"\xff\xff\xff\xff\xff")
+ok &= check("/moveto: nobody by that name, other commands and bad names move nothing", not got(A, 33000))
+t = ls.issue_ticket(a_cid, 1, 101)
+ok &= check("a battle ticket carries the GM level", ls.TICKETS[t][3] == 101)
 ls.leave_game("acctC", "logged out")
 ok &= check("logout closes the game session", C not in server.peers and pc.match is None)
 for addr in list(server.peers):
