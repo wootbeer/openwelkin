@@ -30,7 +30,7 @@ First packet seen (SYN, resent every 3s, released after 3 tries):
 Server side builder to copy: Dgram_Accept_Bluider_Process::make_respond_packet (IONetwork.dll 0x100407c0).
 SAP NAT detection (ADServer, UDP 5876) sends: fb 00 00 dc ff 12 00 00 00 00 00 00 83 04 "1000".
 """
-import collections, datetime, hashlib, heapq, hmac, ipaddress, itertools, math, os, random, re, secrets, socket, struct, sys
+import collections, datetime, hashlib, heapq, hmac, ipaddress, itertools, json, math, os, random, re, secrets, socket, struct, sys
 import threading, time, traceback
 
 import cluster
@@ -214,6 +214,43 @@ WEAPONS = load_weapons()
 
 
 TERRAINS = {}          # (map folder, kind) -> mapdata.Terrain / mapdata.Walls, or None
+
+
+MAP_STATIONS = os.environ.get("MW_MAP_STATIONS") == "1"  # the maps' own Respawn Platforms (not tried in game yet)
+STATION_ID = 4_100_000_000  # map station i: establishment STATION_ID + 2i, its function + 1 (past robot ids)
+STATIONS = {}  # map folder -> [station]
+
+
+def map_stations(world):
+    """A battlefield's Respawn Platforms: "B01.reb" -> data/maps/B01.stations (setup_data.py, mapdata.build_stations).
+    Each station: esb / fid (object ids), nation (1 none, FEDERAL, ALLIANCE), pos (the platform), use (its use area,
+    reach units around it), respawn (where a robot is put), name. [] if there is no file."""
+    name = os.path.splitext(world)[0]
+    if name not in STATIONS:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "maps", f"{name}.stations")
+        try:
+            with open(path) as f:
+                STATIONS[name] = parse_stations(json.load(f))
+        except (OSError, ValueError):
+            STATIONS[name] = []
+    return STATIONS[name]
+
+
+def parse_stations(raw):
+    """The stations of a .stations file (a JSON list); a bad file gives []."""
+    out = []
+    try:
+        for i, st in enumerate(raw[:200]):
+            pos, use, respawn = (tuple(float(v) for v in st[k][:3]) for k in ("pos", "use", "respawn"))
+            if len(pos) + len(use) + len(respawn) != 9 or not all(map(math.isfinite, pos + use + respawn)):
+                return []
+            radius, height = min(max(float(st["radius"]), 1.0), 30.0), min(max(float(st["height"]), 1.0), 30.0)
+            out.append({"esb": STATION_ID + 2 * i, "fid": STATION_ID + 2 * i + 1, "nation": int(st["nation"]),
+                        "pos": pos, "use": use, "respawn": respawn, "radius": radius, "height": height,
+                        "reach": radius + 5.0, "name": "Respawn Platform"})
+    except (ValueError, KeyError, TypeError, IndexError, AttributeError):
+        return []
+    return out
 
 
 def map_sight(world, kind):
@@ -2940,6 +2977,7 @@ class Match:
         self.trails = {}  # robot id -> deque of (time, position), the last TRAIL_SECONDS of its moves
         self.terrain = terrain(self.bf["world"])
         self.walls = map_sight(self.bf["world"], "walls")
+        self.stations = map_stations(self.bf["world"]) if MAP_STATIONS else []
         for i, dpos in enumerate(self.bf["dummies"]):
             self.targets[100_000 * (i + 1) + 1] = {
                 "home": dpos, "pos": dpos, "name": f"Target {i + 1}", "cid": DUMMY_CID_BASE + i + 1,
@@ -3238,6 +3276,8 @@ def join_match(server, peer):
         show_dummy(server, peer, drid, t)
     if PLATFORM:
         show_platform(server, peer)
+    for st in m.stations:
+        show_station(server, peer, st)
     for other in m.peers:
         show_player(server, peer, other)
         show_player(server, other, peer)
@@ -3269,14 +3309,42 @@ def show_platform(server, peer):
 PLATFORM_REACH = 15.0  # the platform's EffectRange is 10; position reports lag a little
 
 
+def show_station(server, peer, st):
+    """One of the map's Respawn Platforms (MW_MAP_STATIONS), shown like the test platform, at the function's place
+    with the map's use area size."""
+    func = (505002, st["fid"], snapshots.func_robot_receive(effect_range=st["radius"], effect_height=st["height"]))
+    send_game_event(server, peer, 19, 50001, struct.pack("<III", 0, 403002, st["esb"])
+                    + snapshots.establishment([func], pos=st["use"], nation=st["nation"]) + b"\x00")
+
+
+def stations_for(peer):
+    """The stations this player may use: their test platform (MW_PLATFORM) and the map's platforms of their side.
+    Platforms of no side (nation 1, the cities) are shown but not usable."""
+    out = []
+    where = getattr(peer, "platform", None)
+    if PLATFORM and where:
+        out.append({"fid": PLATFORM_ID + 1, "use": where, "respawn": where, "reach": PLATFORM_REACH,
+                    "name": "Respawn Platform"})
+    m = getattr(peer, "match", None)
+    if m and m.stations:
+        nation = nation_of(peer.cid)
+        out += [st for st in m.stations if st["nation"] == nation]
+    return out
+
+
+def station_for(peer, fid):
+    """The station with this function id, if the player may use it, else None."""
+    return next((st for st in stations_for(peer) if st["fid"] == fid), None)
+
+
 def use_function(server, peer, fid):
     """E at a station (9,40301): u32 | u32 function id. Answered with FunctionUse (19,50301): u32 function id; the
     client then calls that function's Active (observer 0x102e3400; it needs the robot to stand at it, robot +0x3f8).
     For the Respawn Platform that opens the Robot Roof with the loadout presets."""
-    where = getattr(peer, "platform", None)
     with GAME_LOCK:
-        near = where and math.dist(where, peer.pos) <= PLATFORM_REACH
-    if fid == PLATFORM_ID + 1 and near and not peer.player_dead:
+        st = station_for(peer, fid)
+        near = st and math.dist(st["use"], peer.pos) <= st["reach"]
+    if near and not peer.player_dead:
         peer.using = fid
         send_game_event(server, peer, 19, 50301, struct.pack("<I", fid))
 
@@ -3290,9 +3358,8 @@ def end_use_function(server, peer):
 
 
 def reborn_locations(peer):
-    """[(function id, name, pos)] the player may respawn at: their Respawn Platform (MW_PLATFORM)."""
-    where = getattr(peer, "platform", None)
-    return [(PLATFORM_ID + 1, "Respawn Platform", where)] if PLATFORM and where else []
+    """[(function id, name, pos)] the player may respawn at: the stations they may use."""
+    return [(st["fid"], st["name"], st["respawn"]) for st in stations_for(peer)]
 
 
 REBORN_EVERY = 2.0  # seconds between respawn point lists to a dead player
@@ -3363,7 +3430,10 @@ def order_robot(server, peer, body):
         m = getattr(peer, "match", None)
         if fid != getattr(peer, "using", None) or not m or peer not in (m.peers or []) or peer.player_dead:
             return
-        if math.dist(peer.platform, peer.pos) > PLATFORM_REACH:
+        st = station_for(peer, fid)
+        if not st:
+            return
+        if math.dist(st["use"], peer.pos) > st["reach"]:
             code = ORDER_TOO_FAR
         elif time.time() < getattr(peer, "ordered_at", 0.0) + ORDER_WAIT:
             code = ORDER_COOLDOWN

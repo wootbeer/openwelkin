@@ -5,9 +5,10 @@
 The server reads item, weapon and robot definitions (data/flyweights/) from the client's ENGFlyweights.opt,
 each map's ground heights (data/maps/<map>.hmd, from Maps/<map>/Terrain01.hmd) to stop shots through hills, and
 each map's solid models (data/maps/<map>.walls, from the map's .reb and the models' collision meshes) to stop shots
-through buildings.
+through buildings, and each map's Respawn Platforms (data/maps/<map>.stations, from the map's .reb).
 That data belongs to the game's publisher, so it is not shipped with the server: run this once instead.
 Default folder: MW_CLIENT_DIR, else the folder above this one (server/ inside the MarsWar install)."""
+import json
 import os
 import shutil
 import subprocess
@@ -32,7 +33,7 @@ def main():
     print(f"unpacked {n} files into {out}")
     maps, out = os.path.join(client, "Maps"), os.path.join(HERE, "data", "maps")
     os.makedirs(out, exist_ok=True)
-    copied = built = 0
+    copied = built = stations = 0
     for name in sorted(os.listdir(maps)) if os.path.isdir(maps) else []:
         src = os.path.join(maps, name, "Terrain01.hmd")
         if os.path.isfile(src):
@@ -43,7 +44,13 @@ def main():
             with open(os.path.join(out, name + ".walls"), "wb") as f:
                 f.write(walls)
             built += 1
-    print(f"copied {copied} map height files and built {built} wall files into {out}")
+        found = mapdata.build_stations(client, name)
+        if found:
+            with open(os.path.join(out, name + ".stations"), "w") as f:
+                json.dump(found, f, indent=0)
+            stations += len(found)
+    print(f"copied {copied} map height files, built {built} wall files and found {stations} Respawn Platforms"
+          f" into {out}")
     return 0
 
 

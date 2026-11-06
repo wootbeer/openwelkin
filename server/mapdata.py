@@ -180,6 +180,31 @@ def build_tree(verts, idx):
     return order, boxes, links
 
 
+def build_stations(client, name):
+    """The map's Respawn Platforms (Esb_Base_RobotPlatform with its Func_RobotPlatform_Receive, joined by the
+    function's EsbParent = the establishment's Name), as a list of dicts: id (EsbID), nation (EsbCurNation: 1 none,
+    0x10 / 0x20 a side), pos (the establishment), use (the function, where its use area is), respawn (the
+    function's EsbProducePos turned into a world point), radius and height of the use area. The client has these
+    objects only as editor placeholders (Hook*): the server has to create them."""
+    path = os.path.join(client, "Maps", name, name + ".reb")
+    if not os.path.isfile(path):
+        return []
+    objs = read_reb(path)
+    esbs = {p.get(" Name"): (m, p) for _, m, p in objs if p.get("FlyweightName") == "Esb_Base_RobotPlatform"}
+    out = []
+    for _, m, p in objs:
+        if p.get("FlyweightName") != "Func_RobotPlatform_Receive" or p.get("EsbParent") not in esbs:
+            continue
+        em, ep = esbs[p["EsbParent"]]
+        local = tuple(float(p.get("EsbProducePos" + a, 0.0)) for a in "XYZ")
+        respawn = tuple(local[0] * m[k] + local[1] * m[4 + k] + local[2] * m[8 + k] + m[12 + k] for k in range(3))
+        out.append({"id": int(ep.get("EsbID", 0)), "nation": int(ep.get("EsbCurNation", 0)),
+                    "pos": [round(v, 2) for v in em[12:15]], "use": [round(v, 2) for v in m[12:15]],
+                    "respawn": [round(v, 2) for v in respawn],
+                    "radius": float(p.get("EsbEffectRadius", 6.0)), "height": float(p.get("EsbEffectHeight", 4.0))})
+    return sorted(out, key=lambda st: st["id"])
+
+
 def build_walls(client, name):
     """The .walls file for map <name> from the client folder, or None. Solid models are the map's PrefabInstance
     objects with CollidesRays on and GhostObject off; the mesh is found by file name, because some maps still

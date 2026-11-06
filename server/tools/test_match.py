@@ -696,6 +696,61 @@ for addr in list(server.peers):
 step()
 ok &= check("leaving the battle forgets the robot picked", a_cid not in ls.BATTLE_CHOICE)
 
+# the maps' own Respawn Platforms (MW_MAP_STATIONS, data/maps/<map>.stations): shown to everyone, used by their side
+ok &= check("a bad stations file gives no stations", ls.parse_stations({"x": 1}) == [] and ls.parse_stations(
+    [{"pos": [0, 0], "use": [0, 0, 0], "respawn": [0, 0, 0], "nation": 1, "radius": 6, "height": 4}]) == []
+    and ls.parse_stations([{"pos": [0, 0, float("nan")], "use": [0, 0, 0], "respawn": [0, 0, 0], "nation": 1,
+                            "radius": 6, "height": 4}]) == [])
+ls.STORE.by_id(a_cid)["model"] = ls.FEDERAL
+
+
+def station(nation, x):
+    return {"pos": [x, 60, 0], "use": [x + 5, 62, 0], "respawn": [x + 10, 64, 0], "nation": nation, "radius": 6,
+            "height": 4}
+
+
+saved_stations, ls.MAP_STATIONS = ls.STATIONS.get("B01"), True
+ls.STATIONS["B01"] = ls.parse_stations([station(ls.FEDERAL, 100), station(ls.ALLIANCE, 200), station(1, 300)])
+ls.MATCHES.clear()
+pa = join_front(A, a_cid)
+own, theirs, city = pa.match.stations
+shown = [struct.unpack_from("<I", b, 8)[0] for b in got(A, 50001) if struct.unpack_from("<I", b, 4)[0] == 403002]
+ok &= check("all of the map's platforms are shown on join",
+            sorted(e for e in shown if e < ls.PLATFORM_ID) == [own["esb"], theirs["esb"], city["esb"]])
+n = len(got(A, 50301))
+pa.pos = (105.0, 62.0, 0.0)
+msg(A, 40301, struct.pack("<II", 0, own["fid"]))
+ok &= check("E at a platform of your side opens it", got(A, 50301)[n:] == [struct.pack("<I", own["fid"])])
+end_use = len(got(A, 50302))
+msg(A, 40302, b"")
+for st in (theirs, city):
+    pa.pos = tuple(st["use"])
+    msg(A, 40301, struct.pack("<II", 0, st["fid"]))
+ok &= check("not one of the other side or of no side", len(got(A, 50301)) == n + 1 and len(got(A, 50302)) == end_use + 1)
+pa.pos = (105.0 + 20.0, 62.0, 0.0)
+msg(A, 40301, struct.pack("<II", 0, own["fid"]))
+ok &= check("not from too far away", len(got(A, 50301)) == n + 1)
+pa.protected_until = 0.0
+ls.hit_player(server, pa.match, pa, ls.PLAYER_HP, "Target 1")
+step()
+locs = got(A, 50331)
+ok &= check("the death map lists only your side's platform", locs and struct.unpack_from("<III", locs[-1]) == (1, 0, 1)
+            and struct.unpack_from("<I", locs[-1], 12)[0] == own["fid"]
+            and locs[-1].endswith(struct.pack("<ff", own["respawn"][0], own["respawn"][2])))
+msg(A, 40331, struct.pack("<II", 0, own["fid"]))
+step(ls.RESPAWN_DELAY + 0.1)
+ok &= check("and you respawn at its produce point", not pa.player_dead and pa.pos == (
+    own["respawn"][0], own["respawn"][1] + ls.SPAWN_DROP, own["respawn"][2]))
+ls.MAP_STATIONS = False
+if saved_stations is None:
+    ls.STATIONS.pop("B01", None)
+else:
+    ls.STATIONS["B01"] = saved_stations
+for addr in list(server.peers):
+    server.close(server.peers[addr], "test over")
+step()
+ls.MATCHES.clear()
+
 # a session flooding messages is cut down, then closed
 pa = join_front(A, a_cid)
 flood = b"".join(struct.pack("<H", 4) + bytes([0x80, 9]) + struct.pack("<H", 1) for _ in range(250))
