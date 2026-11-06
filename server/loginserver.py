@@ -3409,6 +3409,28 @@ def select_reborn(server, peer, loc):
                 return
 
 
+RELIVE_MAX_IDS = 64  # a quick relive lists the player's side's stations; a map has a handful
+
+
+def quick_relive(server, peer, body):
+    """The death dialog's Respawn button (control 6, CAvatarDeadUI::QuickRelive 0x104ae7f0), (9,40335):
+    u32 | u32 n | n x u32 function id. The client lists the functions whose establishment has the player's nation
+    (FuncManager, establishment +0x6c == character +0x30), nearest to the dead robot first. The first one the player
+    may respawn at is picked, as if clicked on the death map (select_reborn). Func_Transport::RequestTransport sends
+    the same id with a single u32 (8 bytes); there is no transport here, so that is ignored."""
+    if len(body) < 12:
+        return
+    n = struct.unpack_from("<I", body, 4)[0]
+    if not 1 <= n <= RELIVE_MAX_IDS or len(body) < 8 + 4 * n:
+        return
+    wanted = struct.unpack_from(f"<{n}I", body, 8)
+    with GAME_LOCK:
+        mine = {fid for fid, _, _ in reborn_locations(peer)} if getattr(peer, "player_dead", False) else set()
+    fid = next((f for f in wanted if f in mine), None)
+    if fid is not None:
+        select_reborn(server, peer, fid)
+
+
 # ProduceRes (19,50312) codes, Func_Receive::OnProduceResult (0x102cad20); the client shows RECEIVER_ERROR_* texts
 ORDER_OK, ORDER_NOT_SUIT, ORDER_TOO_FAR, ORDER_NO_RIGHT, ORDER_COOLDOWN = 19002, 19004, 19015, 19011, 19014
 ORDER_MAX_IDS = 16   # robot + weapons; a robot has at most a handful of slots
@@ -3989,6 +4011,10 @@ def on_game_message(server, peer, raw):
         send_reborn_locations(server, peer)
     elif key == (9, 40331) and len(body) >= 8:
         select_reborn(server, peer, struct.unpack_from("<I", body, 4)[0])
+    elif key == (9, 40335):
+        quick_relive(server, peer, body)
+    elif key in ((9, 40314), (9, 40333)):
+        pass  # cancel an order (orders here are done at once) / big map status every 15 s (answer not known)
     elif key in ((9, 40122), (9, 40125)):
         # Trigger pulled (9,40122, Weapon::Use): u32 | u32 weapon id | u32 | vec3 muzzle | vec3 target | u32 | u32;
         # trigger released (9,40125). Automatic weapons keep firing client-side between the two (one shot per

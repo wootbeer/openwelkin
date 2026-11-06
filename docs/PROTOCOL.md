@@ -90,6 +90,10 @@
   - [ask for respawn points](#m-9-40332) `(9,40332)`
   - [pick a respawn point](#m-9-40331) `(9,40331)`
   - [Respawn in the Robot Roof](#m-9-40310) `(9,40310)`
+  - [quick respawn from the death dialog](#m-9-40335) `(9,40335)`
+  - [Robot Roof stock, several Types](#m-9-40311) `(9,40311)`
+  - [cancel an order](#m-9-40314) `(9,40314)`
+  - [big map status](#m-9-40333) `(9,40333)`
   - [Robot Roof stock](#m-9-40312) `(9,40312)`
   - [GS\_Object\_Detach\_Object](#m-19-50002) `(19,50002)`
   - [GS\_Character\_Delete\_Character](#m-19-30002) `(19,30002)`
@@ -1153,7 +1157,7 @@ Sent at most once a minute while the death map is open (BigMapState::Tick, 0x105
 u32 | u32 respawn point id
 ```
 
-The death map's Respawn button (control 100 in CRadarMapUI::RadarMapUIEvent) sends the point picked by clicking it (CRadarMapUI +0xf7c). The server answers SelectRebornLoc (19,50330) `vec3 pos | f32 quat x, y, z, w | u32 function id | u8 open the map`; the client only takes it for its own dead robot (+0x194 = 2 after Robot::Dead): it moves the robot there, sets the function it is at (+0x3f8, also the character's +0x27c) and turns the camera to the station (Robot::SetRebornFunction). The player then respawns there. Related, not handled: (9,40333) every few seconds while dead, (9,40335) quick relive (CAvatarDeadUI), (19,50332) ReselectRebornLoc. Real client 2026-11-06: SelectRebornLoc moves the camera to the platform, and the respawn happens there. In our window the death dialog covered the map's Respawn button, so it was fired through Frida.
+The death map's Respawn button (control 100 in CRadarMapUI::RadarMapUIEvent) sends the point picked by clicking it (CRadarMapUI +0xf7c). The server answers SelectRebornLoc (19,50330) `vec3 pos | f32 quat x, y, z, w | u32 function id | u8 open the map`; the client only takes it for its own dead robot (+0x194 = 2 after Robot::Dead): it moves the robot there, sets the function it is at (+0x3f8, also the character's +0x27c) and turns the camera to the station (Robot::SetRebornFunction). The player then respawns there. Related: (9,40335) quick relive from the death dialog, (9,40333) big map status, (19,50332) ReselectRebornLoc. Real client 2026-11-06: SelectRebornLoc moves the camera to the platform, and the respawn happens there. In our window the death dialog covered the map's Respawn button, so it was fired through Frida.
 
 <a name="m-9-40310"></a>
 #### Respawn in the Robot Roof `(9,40310)`
@@ -1164,7 +1168,51 @@ The death map's Respawn button (control 100 in CRadarMapUI::RadarMapUIEvent) sen
 u32 | u32 function id | u32 n | n × u32 | u8
 ```
 
-CNewRobotRoofUI::SubmitProduce (0x105dd1c0) calls Func\_Receive::SubmitOrder (0x102cb2e0). The list is the robot (FRobot +0x30, e.g. 1311), then its primary and secondary weapons. The client shows ROBOTROOFUI\_SENDPRODUCE and waits for ProduceRes (19,50312) `u32 function id | u32 code | u32 product` (observer 0x102e3aa0 → OnProduceResult). Codes: 19002 OK (the client then sends (9,40302) and the roof closes), 19003 not enough of the product, 19004 not suitable, 19006 on a vehicle, 19011 / 19013 no right, 19014 in cooldown, 19015 too far, 19012 bound. The server checks the robot was learned and the weapon is owned and fits, then rebuilds the robot on the spot at full armor; at most once every 10 seconds. Empty weapon slots are -1. Not handled: (9,40311) asks for all stock, (9,40314) cancels an order. Real client 2026-11-06: works; the roof closes and the robot comes back with the robot and weapon picked.
+CNewRobotRoofUI::SubmitProduce (0x105dd1c0) calls Func\_Receive::SubmitOrder (0x102cb2e0). The list is the robot (FRobot +0x30, e.g. 1311), then its primary and secondary weapons. The client shows ROBOTROOFUI\_SENDPRODUCE and waits for ProduceRes (19,50312) `u32 function id | u32 code | u32 product` (observer 0x102e3aa0 → OnProduceResult). Codes: 19002 OK (the client then sends (9,40302) and the roof closes), 19003 not enough of the product, 19004 not suitable, 19006 on a vehicle, 19011 / 19013 no right, 19014 in cooldown, 19015 too far, 19012 bound. The server checks the robot was learned and the weapon is owned and fits, then rebuilds the robot on the spot at full armor; at most once every 10 seconds. Empty weapon slots are -1. Related: (9,40311) stock for several Types (not handled), (9,40314) cancels an order (nothing to cancel here). Real client 2026-11-06: works; the roof closes and the robot comes back with the robot and weapon picked.
+
+<a name="m-9-40335"></a>
+#### quick respawn from the death dialog `(9,40335)`
+
+*C→S · from the code*
+
+```text
+u32 | u32 n | n × u32 function id
+```
+
+The death dialog's Respawn button (control 6, CAvatarDeadUI::QuickRelive 0x104ae7f0). The client lists the functions whose establishment has the player's nation (establishment +0x6c == character +0x30), nearest to the dead robot first. The server picks the first one the player may respawn at and answers like a pick on the death map: SelectRebornLoc (19,50330). A list longer than 64 is ignored. Func\_Transport::RequestTransport (0x102d64d0, CTransportUI) sends the same id with one u32 (`u32 | u32`); there is no transport here, so that is ignored.
+
+<a name="m-9-40311"></a>
+#### Robot Roof stock, several Types `(9,40311)`
+
+*C→S · from the code*
+
+```text
+u32 | u32 function id | list of u32
+```
+
+Func\_Receive::QueryStock(vector) (0x102cb220), a virtual with no direct caller found; the list is written by 0x1002fd60. Not handled; the Robot Roof uses (9,40312).
+
+<a name="m-9-40314"></a>
+#### cancel an order `(9,40314)`
+
+*C→S · from the code*
+
+```text
+u32 | u32 function id
+```
+
+Func\_Receive::CancelOrder (0x102cac80). Orders here are done at once, so there is nothing to cancel; the server takes it and does nothing.
+
+<a name="m-9-40333"></a>
+#### big map status `(9,40333)`
+
+*C→S · from the code*
+
+```text
+(empty)
+```
+
+BigMapState::Tick sends it every 15 s while the big map is open (constant at 0x107e1a88). The answer is not known; the server takes it and does nothing. Related: ReselectRebornLoc (19,50332) is empty and opens the death map in its pick mode (CRadarMapUI::ChangeMapState(2), observer 0x102e4580).
 
 <a name="m-9-40312"></a>
 #### Robot Roof stock `(9,40312)`

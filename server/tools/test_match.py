@@ -739,6 +739,14 @@ locs = got(A, 50331)
 ok &= check("the death map lists only your side's platform", locs and struct.unpack_from("<III", locs[-1]) == (1, 0, 1)
             and struct.unpack_from("<I", locs[-1], 12)[0] == own["fid"]
             and locs[-1].endswith(struct.pack("<ff", own["respawn"][0], own["respawn"][2])))
+n = len(got(A, 50330))
+msg(A, 40335, struct.pack("<II", 0, 1000))  # n far too big: ignored
+msg(A, 40335, struct.pack("<II", 0, 0))
+ok &= check("a broken quick relive is ignored", len(got(A, 50330)) == n and getattr(pa, "reborn", None) is None)
+msg(A, 40335, struct.pack("<IIIII", 0, 3, theirs["fid"], 12345, own["fid"]))
+sel = got(A, 50330)[n:]
+ok &= check("the death dialog's Respawn picks the first listed station you may use",
+            pa.reborn == own["fid"] and len(sel) == 1 and struct.unpack_from("<I", sel[0], 28)[0] == own["fid"])
 msg(A, 40331, struct.pack("<II", 0, own["fid"]))
 step(ls.RESPAWN_DELAY + 0.1)
 ok &= check("and you respawn at its produce point", not pa.player_dead and pa.pos == (

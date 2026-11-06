@@ -33,6 +33,9 @@ reply layout, and answer with real data.
       Real client 2026-11-06: E at the side's platform on B01 opens the Robot Roof; the base around it is the
       map's own scenery. Not tried in game: dying and picking it on the death map (same code as MW_PLATFORM,
       which works), and what the platforms of no side (nation 1) need (capture?).
+      Offline 2026-11-06: the death dialog's Respawn button (9,40335) lists the side's stations nearest first; the
+      server picks the first usable one like a death-map pick. Not tried in game. (9,40314) and (9,40333) are
+      taken and ignored; (9,40311) is not handled (no caller found).
       Offline 2026-11-06: Respawn sends (9,40310) (robot + weapons); the server answers ProduceRes (19,50312)
       and rebuilds the robot on the spot. Not tried in game: whether a different robot type looks right on the
       same object, and whether Relive on a living robot is fine. Death map, offline 2026-11-06: (9,40332) asks for
