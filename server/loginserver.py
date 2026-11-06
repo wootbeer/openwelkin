@@ -3219,8 +3219,10 @@ def show_player(server, viewer, other):
         relive_on(server, viewer, other.player_rid, other.cid, other.pos, other.facing, other.player_hp, PLAYER_HP)
 
 
-def spawn_point(m, slot):
-    x, y, z = m.bf["spawn"]
+def spawn_point(m, slot, nation=0):
+    """Where a player starts: their side's first map platform (MW_MAP_STATIONS), else the battlefield's spawn."""
+    home = next((st["respawn"] for st in m.stations if nation and st["nation"] == nation), None)
+    x, y, z = home or m.bf["spawn"]
     # drop in a little above the ground: a robot placed exactly at ground height starts inside the terrain, never
     # touches ground (pose stays "falling") and can't jump or stop cleanly
     return (x + SLOT_OFFSET * ((slot - 1) % 8), y + SPAWN_DROP, z)
@@ -3247,7 +3249,7 @@ def join_match(server, peer):
     peer.player_rid = PLAYER_RID_STEP * slot + 1
     peer.name = character_name(peer.cid)
     peer.detachment = 10 + slot  # every player on their own side: free for all
-    peer.pos, peer.facing = spawn_point(m, slot), SPAWN_FACING
+    peer.pos, peer.facing = spawn_point(m, slot, nation_of(peer.cid)), SPAWN_FACING
     placed(peer)
     peer.player_hp, peer.player_dead = float(PLAYER_HP), False
     peer.trigger, peer.kills, peer.deaths, peer.fire, peer.steer = 0, 0, 0, None, 0
@@ -3802,7 +3804,7 @@ def relive_player(server, peer):
         at = {fid: pos for fid, _, pos in reborn_locations(peer)}.get(getattr(peer, "reborn", None))
         peer.reborn = None
         at = at and (at[0], at[1] + SPAWN_DROP, at[2])  # drop in above the station, like on the spawn point
-        peer.pos, peer.facing, peer.steer = at or spawn_point(m, peer.slot), SPAWN_FACING, 0
+        peer.pos, peer.facing, peer.steer = at or spawn_point(m, peer.slot, nation_of(peer.cid)), SPAWN_FACING, 0
         placed(peer)
         m.trails.pop(peer.player_rid, None)  # where it was before it died does not count
         for p in list(m.peers):

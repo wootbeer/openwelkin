@@ -91,12 +91,13 @@ class Tcp:
 class Game(asyncio.DatagramProtocol):
     """Client side of an FDP game session."""
 
-    def __init__(self, observe, results):
-        self.observe, self.res = observe, results
+    def __init__(self, observe, results, cid=0):
+        self.observe, self.res, self.cid = observe, results, cid
         self.syn_ack = asyncio.get_running_loop().create_future()
         self.server_session, self.rel, self.unrel, self.order = 0, 1, 1, 1
         self.expected, self.need_ack = None, False
         self.rid = None
+        self.home = None  # (x, z) the server put this bot's robot at
 
     def connection_made(self, transport):
         self.t = transport
@@ -118,7 +119,12 @@ class Game(asyncio.DatagramProtocol):
             return
         now_ms = time.time() * 1000
         for raw, cat, typ in fdp.messages(pkt.payload):
-            if typ == 30100 and self.rid is None:
+            if typ == 30500 and self.home is None and struct.unpack_from("<I", raw, 16)[0] == self.cid:
+                # AddToDetachment: detachment | char | char | wstr name | vec3 start point
+                _, at = ls.read_wstr(raw, 24)
+                x, _, z = struct.unpack_from("<3f", raw, at)
+                self.home = (x, z)
+            elif typ == 30100 and self.rid is None:
                 self.rid = struct.unpack_from("<II", raw, 12)[1]  # header 4 + event envelope 8 | cid | robot
             elif typ == 50100 and self.observe:
                 rid, _, x, y, z = struct.unpack_from("<II3f", raw, 12)
@@ -174,7 +180,7 @@ async def run_bot(i, args, key, res, stop_at):
             raise RuntimeError(f"apply enter result {r.result}")
         _, _, port, ticket = struct.unpack_from("<IIHI", r.body)
         loop = asyncio.get_running_loop()
-        t, g = await loop.create_datagram_endpoint(lambda: Game(i % args.observe_every == 0, res),
+        t, g = await loop.create_datagram_endpoint(lambda: Game(i % args.observe_every == 0, res, cid),
                                                    remote_addr=(args.target, port))
         stream = struct.pack("<III", ticket, 9, ticket)
         for _ in range(3):  # SYN, resent like the client does
@@ -191,9 +197,14 @@ async def run_bot(i, args, key, res, stop_at):
         g.send(30050, bytes(4), reliable=True)
         res["joined"] += 1
         res["join_s"].append(time.time() - t0)
-        # walk a circle around a point near the others, turn, fire now and then, ping every second
+        # walk a circle around a point near where the server put the robot, turn, fire now and then, ping every second
+        for _ in range(20):
+            if g.home:
+                break
+            await asyncio.sleep(0.1)
+        hx, hz = g.home or (0.0, 0.0)
         ang = random.uniform(0, 6.283)
-        cx, cz = random.uniform(-args.spread, args.spread), random.uniform(-args.spread, args.spread)
+        cx, cz = hx + random.uniform(-args.spread, args.spread), hz + random.uniform(-args.spread, args.spread)
         n = 0
         while time.time() < stop_at:
             n += 1

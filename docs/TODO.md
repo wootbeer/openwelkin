@@ -28,9 +28,11 @@ reply layout, and answer with real data.
       the platform's model does not show. Offline 2026-11-06: the maps' .reb files hold the real platforms as
       editor placeholders (HookEstablishment Esb_Base_RobotPlatform with EsbID and EsbCurNation 1 / 0x10 / 0x20,
       HookEsbTake Func_RobotPlatform_Receive with its use area and EsbProducePos). The client does not create
-      them; setup_data.py now writes them to data/maps/<map>.stations (B01: 10, 2 per side + 6 cities) and
-      MW_MAP_STATIONS=1 shows them; each side uses its own. Not tried in game: does E work there, does the
-      model show, and what the cities (nation 1) need (capture?).
+      them; setup_data.py now writes them to data/maps/<map>.stations (B01: 10, 1 per side + 8 of no side) and
+      MW_MAP_STATIONS=1 shows them; each side uses its own, and players start at their side's first one.
+      Real client 2026-11-06: E at the side's platform on B01 opens the Robot Roof; the base around it is the
+      map's own scenery. Not tried in game: dying and picking it on the death map (same code as MW_PLATFORM,
+      which works), and what the platforms of no side (nation 1) need (capture?).
       Offline 2026-11-06: Respawn sends (9,40310) (robot + weapons); the server answers ProduceRes (19,50312)
       and rebuilds the robot on the spot. Not tried in game: whether a different robot type looks right on the
       same object, and whether Relive on a living robot is fine. Death map, offline 2026-11-06: (9,40332) asks for

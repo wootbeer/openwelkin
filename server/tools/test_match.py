@@ -714,6 +714,8 @@ ls.STATIONS["B01"] = ls.parse_stations([station(ls.FEDERAL, 100), station(ls.ALL
 ls.MATCHES.clear()
 pa = join_front(A, a_cid)
 own, theirs, city = pa.match.stations
+ok &= check("you start at your side's platform", pa.pos == (
+    own["respawn"][0] + ls.SLOT_OFFSET * ((pa.slot - 1) % 8), own["respawn"][1] + ls.SPAWN_DROP, own["respawn"][2]))
 shown = [struct.unpack_from("<I", b, 8)[0] for b in got(A, 50001) if struct.unpack_from("<I", b, 4)[0] == 403002]
 ok &= check("all of the map's platforms are shown on join",
             sorted(e for e in shown if e < ls.PLATFORM_ID) == [own["esb"], theirs["esb"], city["esb"]])
