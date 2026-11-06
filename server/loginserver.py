@@ -95,6 +95,10 @@ MUZZLE_REACH = 15.0     # a shot must start this close to where the server last 
 RANGE_MARGIN = 1.25     # weapon range is the data's WP1Range times this, for movement between position reports
 DEFAULT_RANGE = 300.0
 MIN_RANGE = 25.0        # melee weapons have WP1Range 2, but range is checked from robot center to robot center
+# Aim bot check: a "far shot" is a trigger pull aimed within AIM_CONE degrees of an enemy player more than AIM_FAR
+# away. After AIM_SHOTS far shots in one match, hitting AIM_WARN of them or more is logged (and shown by the aim
+# command). Nobody is kicked for it: a GM looks.
+AIM_FAR, AIM_CONE, AIM_SHOTS, AIM_WARN = 100.0, 10.0, 30, 0.9
 WEAPON_TIMING = (0.142, 0.015, 0.02, 0.0, 0.0, 0.0)  # Viper fire modes 0/1: flyweight +0x9d4, +0xa34, +0xa38
 TRAINING_ROOMS = [(1, "Training Ground 1")]  # (battlefield id, name)
 # Battlefield definitions served by MapInfo; "world" is the .reb under ..\Maps\<name>\ (field semantics mostly unknown).
@@ -960,7 +964,7 @@ MAX_SUITES = 10  # loadout presets per character
 MAX_SUITE_TEXT = 400  # characters in one preset (a name and a few dozen part ids)
 KICK_NOTICE = 1.5  # seconds a kicked player has to see why, before the connection closes
 CHAT_MAX, CHAT_EVERY, CHAT_QUEUE = 200, 0.5, 100  # characters in a line, seconds between a player's lines, lines waiting
-GM_COMMANDS = {"who", "matches", "kick", "ban", "unban", "bans", "goto", "tell", "mute", "unmute"}
+GM_COMMANDS = {"who", "matches", "aim", "kick", "ban", "unban", "bans", "goto", "tell", "mute", "unmute"}
 GOTO_LIMIT = 100000.0  # goto refuses positions farther out than this
 GM_LEVEL = {"player": 0, "gm": 101, "admin": 110}  # sent in CharacterOnline; 101..110 makes the client a GM
 ROLE_COMMANDS = {"player": set(), "gm": GM_COMMANDS, "admin": GM_COMMANDS | {"ipban", "unipban", "role", "backup", "notice"}}
@@ -2587,6 +2591,8 @@ def on_login_message(link, msg):
         return who_rows()
     if kind == "matches":
         return match_rows()
+    if kind == "aim":
+        return aim_rows()
     if kind == "backup":
         return backup_here()
     if kind == "notice":
@@ -2647,6 +2653,8 @@ def on_gate_request(link, msg):
         return local_where()
     elif kind == "matches":
         return local_match_rows()
+    elif kind == "aim":
+        return local_aim_rows()
     return None
 
 
@@ -3131,6 +3139,7 @@ def join_match(server, peer):
     peer.player_hp, peer.player_dead = float(PLAYER_HP), False
     peer.trigger, peer.kills, peer.deaths, peer.fire, peer.steer = 0, 0, 0, None, 0
     peer.player_kills = 0  # target robots do not count towards a round
+    peer.aim_shots, peer.aim_hits, peer.aim_warned = 0, 0, False
     peer.stats_clock = time.time()
     peer.moves = {}  # robot id -> newest move not yet sent to this player
     peer.sent = {}   # robot id -> the last move sent to this player, and its tick
@@ -3286,6 +3295,46 @@ def fire_tick(server, peer, trig, n):
         m.broadcast(19, 50122, lambda v: struct.pack("<III3f3fIfI", rid, part_base(v, rid) + 4, 0, *origin, *aim,
                                                       0, WEAPON_AMMO, 1), reliable=False, skip=peer)
         m.later(peer.fire_interval, fire_tick, server, peer, trig, n + 1)
+
+
+def aim_check(m, shooter, origin, aim, victim):
+    """Count far shots at players and how many hit (see AIM_FAR). Called once per trigger pull."""
+    d = [b - a for a, b in zip(origin, aim)]
+    length = math.hypot(*d)
+    if length < 1e-3:
+        return
+    side, cone = nation_of(shooter.cid), math.cos(math.radians(AIM_CONE))
+    for p in m.peers:
+        if p is shooter or p.player_dead or (side and nation_of(p.cid) == side):
+            continue
+        to = [c - o for c, o in zip((p.pos[0], p.pos[1] + HIT_HEIGHT, p.pos[2]), origin)]
+        far = math.hypot(*to)
+        if far > AIM_FAR and sum(x * y for x, y in zip(d, to)) >= cone * length * far:
+            break
+    else:
+        return
+    shooter.aim_shots += 1
+    shooter.aim_hits += victim is not None and not isinstance(victim, int)
+    if (not shooter.aim_warned and shooter.aim_shots >= AIM_SHOTS
+            and shooter.aim_hits >= AIM_WARN * shooter.aim_shots):
+        shooter.aim_warned = True
+        log(f"[aim] {shooter.name} hit {shooter.aim_hits} of {shooter.aim_shots} far shots in match {m.id}: "
+            f"look at this player")
+
+
+def local_aim_rows():
+    """Far shot numbers of everyone in this process's matches, best aim first."""
+    with GAME_LOCK:
+        rows = [(p.aim_hits / p.aim_shots, p, m) for m in MATCHES.values() for p in m.peers or [] if p.aim_shots]
+    rows.sort(key=lambda r: -r[0])
+    return [f"{p.name}: {p.aim_hits} of {p.aim_shots} far shots hit ({rate:.0%}) in {m.bf['name']} (match {m.id})"
+            + ("  <- too good" if p.aim_warned else "") for rate, p, m in rows]
+
+
+def aim_rows():
+    if ROLE == "gate":
+        return [r for g in list(LINKS) for r in ask(g, "aim", [])]
+    return local_aim_rows()
 
 
 def fire_range(weapon):
@@ -3620,6 +3669,7 @@ def on_game_message(server, peer, raw):
                         return
                     victim = pick_victim(m, peer, origin, aim)
                     peer.fire = (origin, aim, victim)
+                    aim_check(m, peer, origin, aim, victim)
                     if DEBUG:
                         log(f"[game] {peer.name} aim distance {math.dist(origin, aim):.1f}, range {peer.fire_range}")
                     if victim is not None:
@@ -3704,6 +3754,7 @@ ADMIN_KEY = os.path.join(STATE_DIR, "admin.key")
 ADMIN_HELP = """commands:
   who                                    who is online, and in which battle
   matches                                running matches and their players
+  aim                                    far shots at players and how many hit (aim bot check)
   kick <account>                         disconnect an account (hall and battle)
   goto <account> <x> <y> <z>             move a player's robot in battle (unstick someone)
   tell <character> <text>                a private line from Server to a player
@@ -3835,6 +3886,10 @@ def cmd_who(args, actor):
 
 def cmd_matches(args, actor):
     return "\n".join(gather("matches", match_rows)) or "no matches"
+
+
+def cmd_aim(args, actor):
+    return "\n".join(gather("aim", aim_rows)) or "no far shots at players yet"
 
 
 def cmd_kick(args, actor):
@@ -4019,7 +4074,7 @@ def cmd_role(args, actor):
     return "usage: role <account> [player|gm|admin]"
 
 
-ADMIN_COMMANDS = {"who": cmd_who, "matches": cmd_matches, "kick": cmd_kick, "ban": cmd_ban, "unban": cmd_unban,
+ADMIN_COMMANDS = {"who": cmd_who, "matches": cmd_matches, "aim": cmd_aim, "kick": cmd_kick, "ban": cmd_ban, "unban": cmd_unban,
                   "ipban": cmd_ipban, "unipban": cmd_unipban, "bans": cmd_bans, "role": cmd_role, "backup": cmd_backup, "notice": cmd_notice,
                   "goto": cmd_goto, "tell": cmd_tell, "mute": cmd_mute,
                   "unmute": cmd_unmute, "help": lambda args, actor: ADMIN_HELP}

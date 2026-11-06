@@ -257,6 +257,33 @@ shoot(aim=(14.0, 2.5, 0.0))
 ok &= check("but not after the trail runs out", pb.player_hp == hp)
 msg(B, 40130, struct.pack("<I3f", 0, 10.0, 0.0, 0.0))
 step(0.1)
+# aim bot check: far shots at a player are counted, and too many hits are flagged
+step(ls.TRAIL_SECONDS + 0.2)  # B's old places near A are out of the trail
+kept_hp = pb.player_hp
+pa.aim_shots = pa.aim_hits = 0
+pb.pos = (150.0, 0.0, 0.0)
+for _ in range(5):
+    shoot(aim=(150.0, 2.5, 60.0))  # 22 degrees off: not a shot at B
+ok &= check("shots far from any player are not counted", pa.aim_shots == 0)
+pb.pos = (50.0, 0.0, 0.0)
+shoot(aim=(50.0, 2.5, 0.0))
+ok &= check("shots at a near player are not counted", pa.aim_shots == 0)
+pb.pos = (150.0, 0.0, 0.0)
+for i in range(ls.AIM_SHOTS):
+    pb.player_hp, pb.player_dead = ls.PLAYER_HP, False
+    shoot(aim=(150.0, 2.5, 0.0) if i % 2 else (150.0, 2.5, 12.0))  # every other one misses by 12
+ok &= check(f"far shots counted: {pa.aim_hits} of {pa.aim_shots} hit, not flagged",
+            pa.aim_shots == ls.AIM_SHOTS and pa.aim_hits == ls.AIM_SHOTS // 2 and not pa.aim_warned)
+pa.aim_shots = pa.aim_hits = 0
+for _ in range(ls.AIM_SHOTS):
+    pb.player_hp, pb.player_dead = ls.PLAYER_HP, False
+    shoot(aim=(150.0, 2.5, 0.0))
+rows = ls.admin_command("aim", "test")
+ok &= check("every far shot hits: flagged, and the aim command shows it",
+            pa.aim_warned and "Alpha: 30 of 30 far shots hit (100%)" in rows and "too good" in rows)
+msg(A, 40125, b"\0" * 4)
+pb.pos, pb.player_hp = (10.0, 0.0, 0.0), kept_hp
+step(pa.fire_interval)
 ls.STORE.by_id(a_cid)["model"] = ls.STORE.by_id(b_cid)["model"] = ls.ALLIANCE  # the nation chosen at creation
 shoot()
 ok &= check("no damage to a player on your own side", pb.player_hp == hp)

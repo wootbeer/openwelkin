@@ -160,6 +160,7 @@ python server/tools/admin.py who
 |---------|------|
 | `who` | Who is online, and in which battle |
 | `matches` | Running matches and their players |
+| `aim` | Far shots at players and how many hit, best first. A player who hits nearly all of them is marked |
 | `kick <account> [reason]` | Disconnect an account (hall and battle). They see the reason in chat first |
 | `goto <account> <x> <y> <z>` | Move a player's robot in battle, for someone stuck. Not tried in game yet |
 | `tell <character> <text>` | A private line from Server to one player |
@@ -178,7 +179,7 @@ The hall's scrolling announcements are in `announcements.txt` next to the databa
 made on first start, and changes show the next time a player opens the hall.
 
 A player with the role `gm` or `admin` can also type commands in game chat, starting with `!`, like `!kick bob`. A `gm` can
-use `who`, `matches`, `kick`, `goto`, `tell`, `mute`, `unmute`, `ban`, `unban` and `bans`. An `admin` can also use `ipban`, `unipban`, `role`, `backup` and `notice`.
+use `who`, `matches`, `aim`, `kick`, `goto`, `tell`, `mute`, `unmute`, `ban`, `unban` and `bans`. An `admin` can also use `ipban`, `unipban`, `role`, `backup` and `notice`.
 The reply comes as a private message from Server, and the command goes in `admin.log`.
 
 The client also has its own GM commands starting with `/`, and the server turns them on for `gm` and `admin` characters
@@ -225,6 +226,9 @@ start a new line. Show replies as plain text, because they contain names and rea
   put back where it was. Shots must come from the robot and stay within the weapon's range.
 - A hill, building or rock between the shooter and the target stops the shot (the server reads each map's ground
   heights and the collision shapes of its models). Doors that open and close are not counted.
+- Aim bots are not stopped, only spotted: the server counts each player's trigger pulls aimed at an enemy more than
+  100 units away, and how many hit. After 30 of them in one match, 90% or more hits writes an `[aim]` line to the
+  log, and the `aim` command marks the player. A GM decides what to do.
 - The admin port only listens on 127.0.0.1 and wants the key from `admin.key` first.
 - The admin web page only listens on 127.0.0.1, wants the same key, locks after 5 wrong keys, and checks every field
   before it becomes a command. `tools/test_webadmin.py` attacks it.

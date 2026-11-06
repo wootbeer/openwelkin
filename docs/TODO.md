@@ -169,7 +169,10 @@ reply layout, and answer with real data.
       tested against the placements near its line: about 0.04 ms. Not counted: animated objects (doors), the map's
       own meshes (<map>.reb_<object>.240physx: the sea plane, the outer box), trees without a mesh. Not tried in
       game: is a fair shot past a corner ever stopped
-- [ ] Not stopped: aim bots
+- [x] Aim bots spotted, not stopped (2026-11-06, offline): a far shot is a trigger pull aimed within 10 degrees of
+      an enemy player more than 100 units away. After 30 in one match, 90% hits or more logs "[aim] ..." and the
+      aim command (GM) marks the player. Nothing is done to them. Not tried in game: how often a good player hits
+      far shots (if fair players get marked, raise AIM_WARN or AIM_FAR)
 - [ ] Speed check (2026-11-05, offline): position reports may cover 16 units a second with 40 saved up, falling is
       free; a faster move is not relayed and the robot is put back with GS_GMSetLocation (19,33000), at most every
       0.5 s. Reports in the 1.5 s after a spawn, respawn or goto are dropped quietly (they may be from before).
@@ -238,7 +241,7 @@ reply layout, and answer with real data.
 - [x] Roles per account (player / gm / admin, stored in accounts.json); nothing uses them yet
 - [x] A second login of the same account closes the first one
 - [x] GM commands in chat (2026-10-31, offline): a line starting with ! runs on the login server, where the roles are.
-      GM: who, matches, kick, ban, unban, bans. Admin also: ipban, unipban, role, backup. Replies come as private lines
+      GM: who, matches, aim, kick, ban, unban, bans. Admin also: ipban, unipban, role, backup. Replies come as private lines
 - [x] Chat, real client 2026-11-01: gate pushes show. The hall's Lobby tab sends (21,21513) and shows as [Broadcast]. The
       client allows one Lobby line or whisper about every 60 s, and shows no message when a line is held back. Hall whispers
       are (21,21051), not 21032. The battle box's Country tab is (21,21004): u16 5 | str, shown from (21,21204), and the

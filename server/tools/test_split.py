@@ -197,6 +197,8 @@ async def scenario():
     check("who sees both, on their game servers", "bob" in who and "carol" in who and "game port" in who, who)
     matches = await asyncio.to_thread(admin, "matches")
     check("matches lists both servers", matches.count("game port") == 2, matches)
+    aim = await asyncio.to_thread(admin, "aim")
+    check("aim works on split servers", aim.strip() == "no far shots at players yet", repr(aim))
     moved = await asyncio.to_thread(admin, "goto carol 10 20.5 -30")
     check("goto reaches a player on a game server", moved.startswith("moved carol"), moved)
     nobody = await asyncio.to_thread(admin, "goto nobody 1 2 3")
