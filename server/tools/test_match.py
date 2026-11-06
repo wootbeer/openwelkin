@@ -604,8 +604,38 @@ ok &= check("the platform is shown", len(attach) == 1 and struct.unpack_from("<I
 fid = ls.PLATFORM_ID + 1
 msg(A, 40301, struct.pack("<II", 0, fid))
 ok &= check("E at the platform: FunctionUse", got(A, 50301)[-1:] == [struct.pack("<I", fid)])
+
+
+def order(robot, *weapons, f=None):
+    ids = (robot,) + weapons
+    msg(A, 40310, struct.pack(f"<III{len(ids)}IB", 0, fid if f is None else f, len(ids), *ids, 1))
+    res = got(A, 50312)
+    return struct.unpack_from("<III", res[-1])[1] if res else None
+
+
+rebuilt = len(got(B, 50104))
+ok &= check("Respawn in the Robot Roof: OK, the robot is rebuilt for everyone",
+            order(ls.DEFAULT_ROBOT, 0, 0) == ls.ORDER_OK and len(got(B, 50104)) == rebuilt + 1
+            and ls.BATTLE_CHOICE.get(a_cid) == (ls.DEFAULT_ROBOT, ls.DEFAULT_WEAPON))
+ok &= check("not again right away", order(ls.DEFAULT_ROBOT, 0) == ls.ORDER_COOLDOWN)
+pa.ordered_at = 0.0
+heavy = next(r for r in ls.ROBOTS if ls.ROBOT_BODY.get(r, (1,))[0] == 2 and ls.usable_robot(r, True))
+ok &= check("not a robot the character did not learn", heavy not in ls.owned_robots(a_cid)
+            and order(heavy) == ls.ORDER_NO_RIGHT)
+unowned = next(w for w in sorted(ls.WEAPONS) if w > 0 and w != ls.DEFAULT_WEAPON
+               and ls.fits(w, ls.DEFAULT_ROBOT) and w not in {it["item"] for it in ls.STORE.items(a_cid)})
+ok &= check("not a weapon the character does not own", order(ls.DEFAULT_ROBOT, unowned) == ls.ORDER_NOT_SUIT)
+n_res = len(got(A, 50312))
+order(ls.DEFAULT_ROBOT, f=12345)
+msg(A, 40310, struct.pack("<IIII", 0, fid, 999, 1))
+msg(A, 40310, struct.pack("<II", 0, fid))
+ok &= check("no answer for another function or a broken order", len(got(A, 50312)) == n_res)
 msg(A, 40302, b"")
 ok &= check("leaving it: FunctionEndUse", got(A, 50302)[-1:] == [struct.pack("<I", fid)])
+pa.ordered_at = 0.0
+n_res = len(got(A, 50312))
+order(ls.DEFAULT_ROBOT)
+ok &= check("no order once you left the platform", len(got(A, 50312)) == n_res)
 n = len(got(A, 50301))
 pa.pos = (pa.platform[0] + 50.0, pa.platform[1], pa.platform[2])
 msg(A, 40301, struct.pack("<II", 0, fid))
@@ -615,6 +645,7 @@ ls.PLATFORM = False
 for addr in list(server.peers):
     server.close(server.peers[addr], "test over")
 step()
+ok &= check("leaving the battle forgets the robot picked", a_cid not in ls.BATTLE_CHOICE)
 
 # a session flooding messages is cut down, then closed
 pa = join_front(A, a_cid)

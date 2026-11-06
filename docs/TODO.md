@@ -25,8 +25,10 @@ reply layout, and answer with real data.
       And GS_Character_Set_BaseInfo (19,30040) copies a fresh character over your own, which emptied the list;
       it is no longer sent for your own character. Real client: with MW_PLATFORM=1 a Respawn Platform stands
       on the spawn point, E opens the Robot Roof and the Shortcut tab lists "Sniper" and "Rush". Still open:
-      the platform's model does not show; picking a preset or robot there and Respawn (requests not read);
-      real stations come from the maps, not from MW_PLATFORM
+      the platform's model does not show; real stations come from the maps, not from MW_PLATFORM.
+      Offline 2026-11-06: Respawn sends (9,40310) (robot + weapons); the server answers ProduceRes (19,50312)
+      and rebuilds the robot on the spot. Not tried in game: whether a different robot type looks right on the
+      same object, and whether Relive on a living robot is fine
 - [x] (14,14010) CG_Character_Get_Exploit
 - [ ] (14,14034) UpdateRankUpgrade
 - [x] (14,14040) CGS_GetAllMilitaryRank

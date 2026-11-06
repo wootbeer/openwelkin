@@ -273,8 +273,14 @@ HEAVY_ROBOTS = os.environ.get("MW_HEAVY_ROBOTS", "1") != "0"
 DEFAULT_ROBOT = 1311  # Walker_Basic (BattleRobot)
 
 
+BATTLE_CHOICE = {}  # character id -> (robot, weapon) picked at a Respawn Platform in the current battle
+
+
 def player_robot(cid):
-    """The robot type the character fights in: MW_ROBOT if set, else the last robot talent learned (Robot tab)."""
+    """The robot type the character fights in: the one picked at a Respawn Platform in this battle, else MW_ROBOT if
+    set, else the last robot talent learned (Robot tab)."""
+    if cid in BATTLE_CHOICE:
+        return BATTLE_CHOICE[cid][0]
     forced = os.environ.get("MW_ROBOT")
     if forced and forced.isdigit() and usable_robot(int(forced), True):
         return int(forced)
@@ -306,17 +312,38 @@ def body_weapons(rid):
 DEFAULT_WEAPON = 3101  # Viper
 
 
-def loadout_weapon(cid):
-    """The character's weapon for battle: of the weapons that fit its robot, the one in the lowest in-use slot
-    (Warehouse, 24007), else the newest activated, unexpired one, else the Viper (a heavy robot: the first weapon
-    made for its body)."""
+def owned_weapons(cid, robot):
+    """The character's activated, unexpired weapon items that fit this robot."""
     now = time.time()
+    return [it for it in STORE.items(cid) if it.get("active") and it["item"] in WEAPONS and fits(it["item"], robot)
+            and PRODUCTS.get(it["item"], {}).get("type") == 8 and (it["expires"] == 0 or it["expires"] > now)]
+
+
+def default_weapon(robot):
+    """The weapon everyone has: the Viper, or for a heavy robot the first weapon made for its body."""
+    return DEFAULT_WEAPON if fits(DEFAULT_WEAPON, robot) else (body_weapons(robot) or [DEFAULT_WEAPON])[0]
+
+
+def loadout_weapon(cid):
+    """The character's weapon for battle: the one picked at a Respawn Platform in this battle; else of the weapons
+    that fit its robot, the one in the lowest in-use slot (Warehouse, 24007), else the newest activated, unexpired
+    one, else the default weapon."""
+    if cid in BATTLE_CHOICE:
+        return BATTLE_CHOICE[cid][1]
     robot = player_robot(cid)
-    weapons = [it for it in STORE.items(cid) if it.get("active") and it["item"] in WEAPONS and fits(it["item"], robot)
-               and PRODUCTS.get(it["item"], {}).get("type") == 8 and (it["expires"] == 0 or it["expires"] > now)]
+    weapons = owned_weapons(cid, robot)
     used = sorted((it for it in weapons if in_use_slot(it)), key=lambda it: it["equipped"])
-    default = DEFAULT_WEAPON if fits(DEFAULT_WEAPON, robot) else (body_weapons(robot) or [DEFAULT_WEAPON])[0]
-    return (used or weapons[::-1] or [{"item": default}])[0]["item"]
+    return (used or weapons[::-1] or [{"item": default_weapon(robot)}])[0]["item"]
+
+
+def owned_robots(cid):
+    """The robots a character may pick: the default one, those of the robot talents learned, and MW_ROBOT."""
+    talents = (STORE.by_id(cid) or {}).get("talents", {})
+    robots = {DEFAULT_ROBOT} | {TALENTS[int(t)][0] for t in talents if t.isdigit() and int(t) in TALENTS}
+    forced = os.environ.get("MW_ROBOT")
+    if forced and forced.isdigit():
+        robots.add(int(forced))
+    return robots
 
 
 def in_use_slot(it):
@@ -3171,6 +3198,7 @@ def join_match(server, peer):
     m = find_match(server, peer.bfid)
     slot, m.next_slot = m.next_slot, m.next_slot + 1
     peer.match, peer.slot = m, slot
+    BATTLE_CHOICE.pop(peer.cid, None)  # a new battle starts with the character's own robot and weapon
     peer.player_rid = PLAYER_RID_STEP * slot + 1
     peer.name = character_name(peer.cid)
     peer.detachment = 10 + slot  # every player on their own side: free for all
@@ -3253,6 +3281,53 @@ def end_use_function(server, peer):
         send_game_event(server, peer, 19, 50302, struct.pack("<I", fid))
 
 
+# ProduceRes (19,50312) codes, Func_Receive::OnProduceResult (0x102cad20); the client shows RECEIVER_ERROR_* texts
+ORDER_OK, ORDER_NOT_SUIT, ORDER_TOO_FAR, ORDER_NO_RIGHT, ORDER_COOLDOWN = 19002, 19004, 19015, 19011, 19014
+ORDER_MAX_IDS = 16   # robot + weapons; a robot has at most a handful of slots
+ORDER_WAIT = 10.0    # seconds between two respawns at a platform: a free repair must not win fights
+
+
+def order_robot(server, peer, body):
+    """Respawn in the Robot Roof (CNewRobotRoofUI::SubmitProduce -> Func_Receive::SubmitOrder), (9,40310):
+    u32 | u32 function id | u32 n | n x u32 (the robot, FRobot +0x30, then its primary and secondary weapons, 0 for
+    an empty slot) | u8. Answered with ProduceRes (19,50312): u32 function id | u32 code | u32 product; the code
+    picks the message, 19002 is OK. On OK the client leaves the station (9,40302) and the roof closes. Here the
+    robot is rebuilt on the spot with the robot and the first weapon picked, at full armor. Nothing from the client
+    is trusted: the robot must be one the character learned, the weapon one it owns (or the default) and fits."""
+    if len(body) < 12:
+        return
+    fid, n = struct.unpack_from("<II", body, 4)
+    if not 1 <= n <= ORDER_MAX_IDS or len(body) < 12 + 4 * n:
+        return
+    robot, *wanted = struct.unpack_from(f"<{n}I", body, 12)
+    with GAME_LOCK:
+        m = getattr(peer, "match", None)
+        if fid != getattr(peer, "using", None) or not m or peer not in (m.peers or []) or peer.player_dead:
+            return
+        if math.dist(peer.platform, peer.pos) > PLATFORM_REACH:
+            code = ORDER_TOO_FAR
+        elif time.time() < getattr(peer, "ordered_at", 0.0) + ORDER_WAIT:
+            code = ORDER_COOLDOWN
+        elif robot not in owned_robots(peer.cid) or not usable_robot(robot):
+            code = ORDER_NO_RIGHT
+        else:
+            mine = {it["item"] for it in owned_weapons(peer.cid, robot)} | {default_weapon(robot)}
+            weapon = next((w for w in wanted if w), default_weapon(robot))
+            code = ORDER_OK if weapon in mine and fits(weapon, robot) else ORDER_NOT_SUIT
+        send_game_event(server, peer, 19, 50312, struct.pack("<III", fid, code, 0))
+        if code != ORDER_OK:
+            return
+        peer.ordered_at = time.time()
+        BATTLE_CHOICE[peer.cid] = (robot, weapon)
+        peer.fire_interval = weapon_stats(weapon)[1][0]
+        peer.fire_range = fire_range(weapon)
+        peer.player_hp = float(PLAYER_HP)
+        m.trails.pop(peer.player_rid, None)
+        for p in list(m.peers):
+            relive_on(server, p, peer.player_rid, peer.cid, peer.pos, peer.facing, PLAYER_HP, PLAYER_HP)
+    log(f"[game] {peer.name} respawned at a platform in robot {robot} with weapon {weapon}")
+
+
 def leave_match(peer):
     """Take a player out of their match: save the time played and remove their robot from the other clients."""
     m = getattr(peer, "match", None)
@@ -3260,6 +3335,7 @@ def leave_match(peer):
         return
     m.peers.remove(peer)
     peer.match = None
+    BATTLE_CHOICE.pop(peer.cid, None)
     tell_gate_match(peer, None)
     record_stats(peer)
     log(f"[game] {peer.name} left {m.bf['name']} (match {m.id}); {len(m.peers)} player(s)")
@@ -3738,6 +3814,8 @@ def on_game_message(server, peer, raw):
         use_function(server, peer, struct.unpack_from("<I", body, 4)[0])
     elif key == (9, 40302):
         end_use_function(server, peer)
+    elif key == (9, 40310):
+        order_robot(server, peer, body)
     elif key in ((9, 40122), (9, 40125)):
         # Trigger pulled (9,40122, Weapon::Use): u32 | u32 weapon id | u32 | vec3 muzzle | vec3 target | u32 | u32;
         # trigger released (9,40125). Automatic weapons keep firing client-side between the two (one shot per

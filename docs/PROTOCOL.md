@@ -87,6 +87,7 @@
   - [GS\_Character\_Set\_BaseInfo](#m-19-30040) `(19,30040)`
 - [Robots & combat](#robot-msgs)
   - [use a station](#m-9-40301) `(9,40301)`
+  - [Respawn in the Robot Roof](#m-9-40310) `(9,40310)`
   - [GS\_Object\_Detach\_Object](#m-19-50002) `(19,50002)`
   - [GS\_Character\_Delete\_Character](#m-19-30002) `(19,30002)`
   - [GS\_Robot\_Skill](#m-19-50132) `(19,50132)`
@@ -1125,7 +1126,18 @@ For a character that already exists the observer (0x1035fab0) copies a fresh cha
 u32 | u32 function id
 ```
 
-E at a station whose function is available (the Respawn Platform shows "RespawnPlatform, E Use, B Hack/Input"). The server answers FunctionUse (19,50301) `u32 function id`; the client then calls that function's Active (observer 0x102e3400, only if the robot stands at it). For a Respawn Platform that opens the Robot Roof ("Claim Weapon") in armor mode with the Shortcut tab's presets. Leaving sends (9,40302); FunctionEndUse (19,50302) `u32 function id` calls DeActive. Real client 2026-11-06 with MW\_PLATFORM=1. Not done yet: picking a robot or preset there, and the Respawn button.
+E at a station whose function is available (the Respawn Platform shows "RespawnPlatform, E Use, B Hack/Input"). The server answers FunctionUse (19,50301) `u32 function id`; the client then calls that function's Active (observer 0x102e3400, only if the robot stands at it). For a Respawn Platform that opens the Robot Roof ("Claim Weapon") in armor mode with the Shortcut tab's presets. Leaving sends (9,40302); FunctionEndUse (19,50302) `u32 function id` calls DeActive. Real client 2026-11-06 with MW\_PLATFORM=1. The Respawn button sends (9,40310).
+
+<a name="m-9-40310"></a>
+#### Respawn in the Robot Roof `(9,40310)`
+
+*C→S · from the code*
+
+```text
+u32 | u32 function id | u32 n | n × u32 | u8
+```
+
+CNewRobotRoofUI::SubmitProduce (0x105dd1c0) calls Func\_Receive::SubmitOrder (0x102cb2e0). The list is the robot (FRobot +0x30, e.g. 1311), then its primary and secondary weapons. The client shows ROBOTROOFUI\_SENDPRODUCE and waits for ProduceRes (19,50312) `u32 function id | u32 code | u32 product` (observer 0x102e3aa0 → OnProduceResult). Codes: 19002 OK (the client then sends (9,40302) and the roof closes), 19003 not enough of the product, 19004 not suitable, 19006 on a vehicle, 19011 / 19013 no right, 19014 in cooldown, 19015 too far, 19012 bound. The server checks the robot was learned and the weapon is owned and fits, then rebuilds the robot on the spot at full armor; at most once every 10 seconds. Related, not handled: (9,40311) and (9,40312) ask for stock, (9,40314) cancels an order. Not tried in game yet.
 
 ## Robots & combat
 
