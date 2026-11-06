@@ -1523,6 +1523,7 @@ Objects are sent as snapshots. The client functions that read them are named `Wr
 | Weapon | Equip \| u32 fire mode \| u32 state \| 6 x f32 timing \| i32 -1 \| i32 -1 | state 0 idle, 1 firing, 6 reloading. Timing = per mode (shot interval, …); zeros fire every frame. Viper = 3101: 120 rounds, 4 per shot, 0.142 s. |
 | Robot | WorldObject \| system part block \| i32 skill | flyweight 1311 |
 | Func\_Power | u8 \| f64 rate \| f64 energy \| f64 hyper \| f64 max \| 3 x f64 \| u8 \| u8 \| u8 | 512001 Func\_BasicCore\_Energy; reloading spends energy |
+| Func\_RobotReceive | u8 \| vec3 receive point \| f32 effect range \| f32 effect height \| u8 can respawn | 505002 Respawn Platform, 505004 Weapon Cabin. Read from Game.dll, not used yet. Using one opens the Robot Roof with it: can respawn 1 = armor mode, and only then are the Shortcut tab's presets loaded |
 
 ### System part block
 

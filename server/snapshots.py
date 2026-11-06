@@ -61,6 +61,16 @@ def func_power(energy=5000.0, hyper=100.0, change_rate=0.25, max_energy=5000.0, 
             + struct.pack("<BBB", can_generate, can_generate_hyper, 0))
 
 
+def func_robot_receive(loc=(0.0, 0.0, 0.0), effect_range=10.0, effect_height=4.0, can_respawn=True):
+    """Func_RobotReceive::WriteSnapshot (0x102ce070), e.g. Func_RobotPlatform_Receive (505002, the Respawn
+    Platform) or Func_WeaponCabin_Receive (505004): Function u8 (+0x14) | vec3 receive point (+0x7c) | f32 effect
+    range | f32 effect height | u8 can respawn (+0x90, Func_RobotReceive::CanRespawn). Offsets are of the whole
+    object; the reader runs on its DataObject part at +0x10. Using the station (Active) opens the Robot Roof with
+    this function; CanRespawn 1 shows it in armor mode and loads the Shortcut tab's presets (LoadQuickSuite), 0 in
+    change-weapon mode. Not used yet: it needs an establishment to carry it."""
+    return struct.pack("<B3fffB", 0, *loc, effect_range, effect_height, can_respawn)
+
+
 def armor_info(hp=1000, cur=None):
     """DamageUnit armor list (DamageUnit::WriteArmorInfo 0x102102b0): u32 count | count x 32-byte ArmorInfo
     (i32 type (8 = skipped) | i32 max hp | f32 current hp | 4 x f32 | i32 -1). Robot::UpdateHUD shows

@@ -466,6 +466,7 @@ sequenceDiagram
     <tr><td>Weapon</td><td>Equip | u32 fire mode | u32 state | 6 x f32 timing | i32 -1 | i32 -1</td><td>state 0 idle, 1 firing, 6 reloading. Timing = per mode (shot interval, …); zeros fire every frame. Viper = 3101: 120 rounds, 4 per shot, 0.142 s.</td></tr>
     <tr><td>Robot</td><td>WorldObject | system part block | i32 skill</td><td>flyweight 1311</td></tr>
     <tr><td>Func_Power</td><td>u8 | f64 rate | f64 energy | f64 hyper | f64 max | 3 x f64 | u8 | u8 | u8</td><td>512001 Func_BasicCore_Energy; reloading spends energy</td></tr>
+    <tr><td>Func_RobotReceive</td><td>u8 | vec3 receive point | f32 effect range | f32 effect height | u8 can respawn</td><td>505002 Respawn Platform, 505004 Weapon Cabin. Read from Game.dll, not used yet. Using one opens the Robot Roof with it: can respawn 1 = armor mode, and only then are the Shortcut tab's presets loaded</td></tr>
   </table></div>
   <h3>System part block</h3>
 <pre class="fmt">u32 part count | count x ( u32 flyweight | u32 object id | part snapshot )   -- or i32 -1 for an empty slot

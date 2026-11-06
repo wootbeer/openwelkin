@@ -19,9 +19,13 @@ reply layout, and answer with real data.
       slots, so the battle side gets them some other way (not read yet). Saving one in game needs a robot in the
       left slot, which needs robot items in the warehouse (see Equipping below). 2026-11-05, offline: the battle
       screen's LoadQuickSuite (0x105dd7f0) reads the same list (local character +0xd8), and the client asks 14004
-      only from the CharacterOnline reply (0x10402510), so once per hall login. So in battle the list was emptied,
-      or the local character is a new object. Next client session: compare the local character's address in the
-      hall and in battle
+      only from the CharacterOnline reply (0x10402510), so once per hall login. 2026-11-06, offline: the list is
+      not emptied (GS_Character_New_Character does nothing for a character that exists), it is never loaded:
+      the Robot Roof calls LoadQuickSuite only when it opens through a station function (+0x1420) whose
+      CanRespawn byte is set, i.e. using a Respawn Platform (Func_RobotPlatform_Receive 505002, snapshot in
+      snapshots.func_robot_receive). The respawn screen after death has no function, so it shows 10 default
+      slots. To get the presets in battle: put a Respawn Platform establishment in the match (not built: an
+      establishment snapshot is not read yet)
 - [x] (14,14010) CG_Character_Get_Exploit
 - [ ] (14,14034) UpdateRankUpgrade
 - [x] (14,14040) CGS_GetAllMilitaryRank
