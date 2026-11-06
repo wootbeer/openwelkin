@@ -641,6 +641,24 @@ pa.pos = (pa.platform[0] + 50.0, pa.platform[1], pa.platform[2])
 msg(A, 40301, struct.pack("<II", 0, fid))
 msg(A, 40301, struct.pack("<II", 0, 12345))
 ok &= check("not from far away, not another function", len(got(A, 50301)) == n)
+msg(A, 40331, struct.pack("<II", 0, fid))
+ok &= check("no respawn point pick while alive", not got(A, 50330))
+pa.platform = spawned_at = (pa.platform[0] + 30.0, pa.platform[1], pa.platform[2] + 20.0)  # away from the spawn point
+kill(pb, pa)
+msg(A, 40332, b"")
+locs = got(A, 50331)
+ok &= check("the death map lists the platform", len(locs) == 1 and locs[0][:12] == struct.pack("<III", 1, 0, 1)
+            and struct.unpack_from("<I", locs[0], 12)[0] == fid
+            and locs[0].endswith(struct.pack("<ff", spawned_at[0], spawned_at[2])))
+msg(A, 40331, struct.pack("<II", 0, 777))
+ok &= check("not a respawn point that is not there", not got(A, 50330))
+msg(A, 40331, struct.pack("<II", 0, fid))
+sel = got(A, 50330)
+ok &= check("picking it: SelectRebornLoc with the platform's function",
+            len(sel) == 1 and struct.unpack_from("<3f", sel[0]) == tuple(ls.struct.unpack("<3f", ls.struct.pack("<3f", *spawned_at)))
+            and struct.unpack_from("<I", sel[0], 28)[0] == fid)
+step(ls.RESPAWN_DELAY + 0.1)
+ok &= check("and the player respawns there", not pa.player_dead and pa.pos == spawned_at and pa.reborn is None)
 ls.PLATFORM = False
 for addr in list(server.peers):
     server.close(server.peers[addr], "test over")

@@ -28,7 +28,9 @@ reply layout, and answer with real data.
       the platform's model does not show; real stations come from the maps, not from MW_PLATFORM.
       Offline 2026-11-06: Respawn sends (9,40310) (robot + weapons); the server answers ProduceRes (19,50312)
       and rebuilds the robot on the spot. Not tried in game: whether a different robot type looks right on the
-      same object, and whether Relive on a living robot is fine
+      same object, and whether Relive on a living robot is fine. Death map, offline 2026-11-06: (9,40332) asks for
+      respawn points, answered with (19,50331); clicking one sends (9,40331), answered with SelectRebornLoc
+      (19,50330); the player respawns there (MW_PLATFORM only, not tried in game)
 - [x] (14,14010) CG_Character_Get_Exploit
 - [ ] (14,14034) UpdateRankUpgrade
 - [x] (14,14040) CGS_GetAllMilitaryRank

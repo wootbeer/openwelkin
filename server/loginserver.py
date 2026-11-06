@@ -3281,6 +3281,41 @@ def end_use_function(server, peer):
         send_game_event(server, peer, 19, 50302, struct.pack("<I", fid))
 
 
+def reborn_locations(peer):
+    """[(function id, name, pos)] the player may respawn at: their Respawn Platform (MW_PLATFORM)."""
+    where = getattr(peer, "platform", None)
+    return [(PLATFORM_ID + 1, "Respawn Platform", where)] if PLATFORM and where else []
+
+
+def send_reborn_locations(server, peer):
+    """The death map's respawn points. While it is open the client asks every few seconds (9,40332, empty;
+    BigMapState::Tick 0x105be280). Answer: (19,50331) to BigMapEventObserver::OnUpdateRebornLoc (0x105ba2b0):
+    u32 n groups | n x (u32 | u32 m | m x (u32 id | str | u32 | f32 x | f32 z)) -> CRadarMapUI::AddRebornLoc, a
+    MachineCabin icon at world x, z. What the group's u32 and the u32 after the name mean is not known (sent 0)."""
+    locs = reborn_locations(peer)
+    if not locs:
+        return
+    body = struct.pack("<III", 1, 0, len(locs))
+    for fid, name, (x, _, z) in locs:
+        body += struct.pack("<I", fid) + wstr(name) + struct.pack("<Iff", 0, x, z)
+    send_game_event(server, peer, 19, 50331, body)
+
+
+def select_reborn(server, peer, loc):
+    """Clicking a respawn point on the death map (9,40331): u32 id (CRadarMapUI +0xf7c). Answered with
+    SelectRebornLoc (19,50330): vec3 pos | quat x, y, z, w | u32 function id | u8 open the map; only for a dead
+    local robot: it moves the robot there, sets the function the robot is at (+0x3f8) and turns the camera to the
+    station (Robot::SetRebornFunction). The respawn then happens there instead of on the spawn point."""
+    with GAME_LOCK:
+        if not peer.player_dead:
+            return
+        for fid, _, pos in reborn_locations(peer):
+            if fid == loc:
+                peer.reborn = fid
+                send_game_event(server, peer, 19, 50330, struct.pack("<3f4fIB", *pos, 0.0, 0.0, 0.0, 1.0, fid, 0))
+                return
+
+
 # ProduceRes (19,50312) codes, Func_Receive::OnProduceResult (0x102cad20); the client shows RECEIVER_ERROR_* texts
 ORDER_OK, ORDER_NOT_SUIT, ORDER_TOO_FAR, ORDER_NO_RIGHT, ORDER_COOLDOWN = 19002, 19004, 19015, 19011, 19014
 ORDER_MAX_IDS = 16   # robot + weapons; a robot has at most a handful of slots
@@ -3637,7 +3672,9 @@ def relive_player(server, peer):
             return
         peer.player_hp, peer.player_dead = float(PLAYER_HP), False
         peer.protected_until = time.time() + SPAWN_PROTECTION
-        peer.pos, peer.facing, peer.steer = spawn_point(m, peer.slot), SPAWN_FACING, 0
+        at = {fid: pos for fid, _, pos in reborn_locations(peer)}.get(getattr(peer, "reborn", None))
+        peer.reborn = None
+        peer.pos, peer.facing, peer.steer = at or spawn_point(m, peer.slot), SPAWN_FACING, 0
         placed(peer)
         m.trails.pop(peer.player_rid, None)  # where it was before it died does not count
         for p in list(m.peers):
@@ -3816,6 +3853,10 @@ def on_game_message(server, peer, raw):
         end_use_function(server, peer)
     elif key == (9, 40310):
         order_robot(server, peer, body)
+    elif key == (9, 40332):
+        send_reborn_locations(server, peer)
+    elif key == (9, 40331) and len(body) >= 8:
+        select_reborn(server, peer, struct.unpack_from("<I", body, 4)[0])
     elif key in ((9, 40122), (9, 40125)):
         # Trigger pulled (9,40122, Weapon::Use): u32 | u32 weapon id | u32 | vec3 muzzle | vec3 target | u32 | u32;
         # trigger released (9,40125). Automatic weapons keep firing client-side between the two (one shot per

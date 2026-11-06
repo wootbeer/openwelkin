@@ -87,6 +87,8 @@
   - [GS\_Character\_Set\_BaseInfo](#m-19-30040) `(19,30040)`
 - [Robots & combat](#robot-msgs)
   - [use a station](#m-9-40301) `(9,40301)`
+  - [ask for respawn points](#m-9-40332) `(9,40332)`
+  - [pick a respawn point](#m-9-40331) `(9,40331)`
   - [Respawn in the Robot Roof](#m-9-40310) `(9,40310)`
   - [GS\_Object\_Detach\_Object](#m-19-50002) `(19,50002)`
   - [GS\_Character\_Delete\_Character](#m-19-30002) `(19,30002)`
@@ -1127,6 +1129,28 @@ u32 | u32 function id
 ```
 
 E at a station whose function is available (the Respawn Platform shows "RespawnPlatform, E Use, B Hack/Input"). The server answers FunctionUse (19,50301) `u32 function id`; the client then calls that function's Active (observer 0x102e3400, only if the robot stands at it). For a Respawn Platform that opens the Robot Roof ("Claim Weapon") in armor mode with the Shortcut tab's presets. Leaving sends (9,40302); FunctionEndUse (19,50302) `u32 function id` calls DeActive. Real client 2026-11-06 with MW\_PLATFORM=1. The Respawn button sends (9,40310).
+
+<a name="m-9-40332"></a>
+#### ask for respawn points `(9,40332)`
+
+*C→S · from the code*
+
+```text
+(empty)
+```
+
+Sent every few seconds while the death map is open (BigMapState::Tick, 0x105be280). Answer: (19,50331) `u32 n groups | n × (u32 | u32 m | m × (u32 id | str name | u32 | f32 x | f32 z))` to BigMapEventObserver::OnUpdateRebornLoc (0x105ba2b0); each point is a MachineCabin icon at world x, z (CRadarMapUI::AddRebornLoc). The group's u32 and the u32 after the name are not known; the server sends 0. With MW\_PLATFORM the list holds the player's Respawn Platform. Not tried in game yet.
+
+<a name="m-9-40331"></a>
+#### pick a respawn point `(9,40331)`
+
+*C→S · from the code*
+
+```text
+u32 | u32 respawn point id
+```
+
+Clicking a point on the death map (CRadarMapUI +0xf7c). The server answers SelectRebornLoc (19,50330) `vec3 pos | f32 quat x, y, z, w | u32 function id | u8 open the map`; the client only takes it for its own dead robot (+0x194 = 2 after Robot::Dead): it moves the robot there, sets the function it is at (+0x3f8, also the character's +0x27c) and turns the camera to the station (Robot::SetRebornFunction). The player then respawns there. Related, not handled: (9,40333) every few seconds while dead, (9,40335) quick relive (CAvatarDeadUI), (19,50332) ReselectRebornLoc. Not tried in game yet.
 
 <a name="m-9-40310"></a>
 #### Respawn in the Robot Roof `(9,40310)`

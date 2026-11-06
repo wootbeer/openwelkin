@@ -45,7 +45,7 @@ def main():
     server = fdp.Server(FakeSock(), lambda *a: None, ls.hexdump)
     server.on_message = ls.on_game_message
     failures = {}
-    types = [30050, 40130, 40105, 40122, 40125, 40301, 40302, 40310, 40851, 9001, 10006, rng.randint(0, 65535)]
+    types = [30050, 40130, 40105, 40122, 40125, 40301, 40302, 40310, 40331, 40332, 40851, 9001, 10006, rng.randint(0, 65535)]
 
     def run(what, fn, *args):
         try:
