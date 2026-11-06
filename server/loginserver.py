@@ -66,7 +66,11 @@ LOGIN_LINK = os.environ.get("MW_LOGIN_LINK", "127.0.0.1")  # where a gate finds 
 GATE_LINK = os.environ.get("MW_GATE_LINK", "127.0.0.1")    # where a game server finds its gate
 SPAWN_FACING = (0.953, 0.0, -0.304)  # facing used when (re)spawning the player (per-battlefield spawn points: BATTLEFIELDS)
 WEAPON_AMMO = 120.0  # Viper (3101): flyweight magazine +0x160 (fire mode 0 costs 4, +0x9d8)
-DUMMY_HP, WEAPON_DAMAGE, RESPAWN_DELAY = 1000, 40.0, 5.0  # target dummy armor, Viper damage per shot, seconds
+DUMMY_HP, WEAPON_DAMAGE = 1000, 40.0  # target dummy armor, Viper damage per shot
+try:  # seconds dead before the respawn (dev: longer to try the death map)
+    RESPAWN_DELAY = min(max(float(os.environ.get("MW_RESPAWN_DELAY") or 5.0), 1.0), 60.0)
+except ValueError:
+    RESPAWN_DELAY = 5.0
 PLAYER_HP = 1000  # player robot armor
 KILL_HONOR, KILL_PAY = 10, 5  # Honor and Bonus awarded per destroyed dummy
 # dummy AI: patrol back and forth, engage the player inside AI_RANGE with bursts of AI_BURST shots
@@ -3251,7 +3255,8 @@ PLATFORM_ID = 4_200_000_001  # object ids past the robots' (slot * 1,000,000 + 1
 def show_platform(server, peer):
     """A Respawn Platform (Esb_Base_RobotPlatform 403002 with Func_RobotPlatform_Receive 505002) of the player's
     nation, on the spawn point. Using it (E) opens the Robot Roof in armor mode with the loadout presets."""
-    pos = peer.pos  # on the spawn point, like a base's platform
+    x, y, z = peer.pos  # on the spawn point, like a base's platform, but on the ground: its use area is a physics
+    pos = (x, y - SPAWN_DROP, z)  # trigger (Interactable::CreateTriger) the dropped-in robot would fall out of
     peer.platform = pos
     func = (505002, PLATFORM_ID + 1, snapshots.func_robot_receive())
     send_game_event(server, peer, 19, 50001, struct.pack("<III", 0, 403002, PLATFORM_ID)
@@ -3324,7 +3329,7 @@ ORDER_WAIT = 10.0    # seconds between two respawns at a platform: a free repair
 
 def order_robot(server, peer, body):
     """Respawn in the Robot Roof (CNewRobotRoofUI::SubmitProduce -> Func_Receive::SubmitOrder), (9,40310):
-    u32 | u32 function id | u32 n | n x u32 (the robot, FRobot +0x30, then its primary and secondary weapons, 0 for
+    u32 | u32 function id | u32 n | n x u32 (the robot, FRobot +0x30, then its primary and secondary weapons, -1 for
     an empty slot) | u8. Answered with ProduceRes (19,50312): u32 function id | u32 code | u32 product; the code
     picks the message, 19002 is OK. On OK the client leaves the station (9,40302) and the roof closes. Here the
     robot is rebuilt on the spot with the robot and the first weapon picked, at full armor. Nothing from the client
@@ -3347,7 +3352,7 @@ def order_robot(server, peer, body):
             code = ORDER_NO_RIGHT
         else:
             mine = {it["item"] for it in owned_weapons(peer.cid, robot)} | {default_weapon(robot)}
-            weapon = next((w for w in wanted if w), default_weapon(robot))
+            weapon = next((w for w in wanted if w not in (0, 0xFFFFFFFF)), default_weapon(robot))  # -1 = empty slot
             code = ORDER_OK if weapon in mine and fits(weapon, robot) else ORDER_NOT_SUIT
         send_game_event(server, peer, 19, 50312, struct.pack("<III", fid, code, 0))
         if code != ORDER_OK:
@@ -3361,6 +3366,38 @@ def order_robot(server, peer, body):
         for p in list(m.peers):
             relive_on(server, p, peer.player_rid, peer.cid, peer.pos, peer.facing, PLAYER_HP, PLAYER_HP)
     log(f"[game] {peer.name} respawned at a platform in robot {robot} with weapon {weapon}")
+
+
+STOCK_PARTS, STOCK_WEAPON = (1, 2, 4), 8  # product Types: 1 body, 2 armor, 4 core, 8 weapon, 16 equipment
+
+
+def send_stock(server, peer, body):
+    """The Robot Roof's warehouse lists (9,40312, Func_Receive::QueryStock, every few seconds while it is open):
+    u32 | u32 function id | u32 product Type | i32 (-1). Answered with UpdateStock (19,50311,
+    UpdateStockObserver 0x102de1e0): u32 function id | u32 n | n x (u32 product id | i32 count) into the station's
+    stock map (Func_Receive +0x2c). CNewRobotRoofUI::UpdateStockData (0x105dff80) sorts the stock by product Type
+    and lists a robot for each body x armor x core in stock that makes one (GetFRobot; the order then carries the
+    FRobot id). So robots go out as their parts (ROBOTS: FIDRobotBody/Armor/Core, which are also the parts'
+    product ids) for the robots the character may pick (owned_robots); weapons: the default ones and the weapon
+    items it owns. order_robot checks the pick again, so a weapon that does not fit only gets "not suitable"."""
+    if len(body) < 12:
+        return
+    fid, kind = struct.unpack_from("<II", body, 4)
+    with GAME_LOCK:
+        if fid != getattr(peer, "using", None) or not getattr(peer, "match", None):
+            return
+        robots = sorted(r for r in owned_robots(peer.cid) if usable_robot(r))
+    if kind in STOCK_PARTS:
+        ids = sorted({ROBOTS[r][STOCK_PARTS.index(kind)] for r in robots if r in ROBOTS})
+    elif kind == STOCK_WEAPON:
+        now = time.time()
+        ids = sorted({default_weapon(r) for r in robots} | {
+            it["item"] for it in STORE.items(peer.cid) if it.get("active") and it["item"] in WEAPONS
+            and PRODUCTS.get(it["item"], {}).get("type") == 8 and (it["expires"] == 0 or it["expires"] > now)})
+    else:
+        ids = []
+    send_game_event(server, peer, 19, 50311, struct.pack("<II", fid, len(ids))
+                    + b"".join(struct.pack("<Ii", pid, 1) for pid in ids))
 
 
 def leave_match(peer):
@@ -3674,6 +3711,7 @@ def relive_player(server, peer):
         peer.protected_until = time.time() + SPAWN_PROTECTION
         at = {fid: pos for fid, _, pos in reborn_locations(peer)}.get(getattr(peer, "reborn", None))
         peer.reborn = None
+        at = at and (at[0], at[1] + SPAWN_DROP, at[2])  # drop in above the station, like on the spawn point
         peer.pos, peer.facing, peer.steer = at or spawn_point(m, peer.slot), SPAWN_FACING, 0
         placed(peer)
         m.trails.pop(peer.player_rid, None)  # where it was before it died does not count
@@ -3853,6 +3891,8 @@ def on_game_message(server, peer, raw):
         end_use_function(server, peer)
     elif key == (9, 40310):
         order_robot(server, peer, body)
+    elif key == (9, 40312):
+        send_stock(server, peer, body)
     elif key == (9, 40332):
         send_reborn_locations(server, peer)
     elif key == (9, 40331) and len(body) >= 8:

@@ -30,7 +30,15 @@ reply layout, and answer with real data.
       and rebuilds the robot on the spot. Not tried in game: whether a different robot type looks right on the
       same object, and whether Relive on a living robot is fine. Death map, offline 2026-11-06: (9,40332) asks for
       respawn points, answered with (19,50331); clicking one sends (9,40331), answered with SelectRebornLoc
-      (19,50330); the player respawns there (MW_PLATFORM only, not tried in game)
+      (19,50330); the player respawns there (MW_PLATFORM only).
+      Real client 2026-11-06: E only worked once the platform stood on the ground: its use area is a physics
+      trigger, and at the drop-in height the robot fell out of it. The roof's warehouse asks (9,40312) for each
+      product Type (1 body, 2 armor, 4 core, 8 weapon), answered with UpdateStock (19,50311); the roof builds
+      each robot from body + armor + core, so robots go out as their parts. The list only redraws on a tab
+      switch. Dragging a robot and a weapon into the slots and pressing Respawn works: the roof closes and the
+      robot comes back with the weapon picked at full armor. Empty weapon slots come as -1. Death map: the
+      client sends (9,40332) at death and the server answers; Select calls ChangeMapState(2), but no respawn
+      point icon showed on Training Ground 1 (its map shows no picture either). Not done yet
 - [x] (14,14010) CG_Character_Get_Exploit
 - [ ] (14,14034) UpdateRankUpgrade
 - [x] (14,14040) CGS_GetAllMilitaryRank

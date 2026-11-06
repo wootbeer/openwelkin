@@ -90,6 +90,7 @@
   - [ask for respawn points](#m-9-40332) `(9,40332)`
   - [pick a respawn point](#m-9-40331) `(9,40331)`
   - [Respawn in the Robot Roof](#m-9-40310) `(9,40310)`
+  - [Robot Roof stock](#m-9-40312) `(9,40312)`
   - [GS\_Object\_Detach\_Object](#m-19-50002) `(19,50002)`
   - [GS\_Character\_Delete\_Character](#m-19-30002) `(19,30002)`
   - [GS\_Robot\_Skill](#m-19-50132) `(19,50132)`
@@ -1161,7 +1162,18 @@ Clicking a point on the death map (CRadarMapUI +0xf7c). The server answers Selec
 u32 | u32 function id | u32 n | n × u32 | u8
 ```
 
-CNewRobotRoofUI::SubmitProduce (0x105dd1c0) calls Func\_Receive::SubmitOrder (0x102cb2e0). The list is the robot (FRobot +0x30, e.g. 1311), then its primary and secondary weapons. The client shows ROBOTROOFUI\_SENDPRODUCE and waits for ProduceRes (19,50312) `u32 function id | u32 code | u32 product` (observer 0x102e3aa0 → OnProduceResult). Codes: 19002 OK (the client then sends (9,40302) and the roof closes), 19003 not enough of the product, 19004 not suitable, 19006 on a vehicle, 19011 / 19013 no right, 19014 in cooldown, 19015 too far, 19012 bound. The server checks the robot was learned and the weapon is owned and fits, then rebuilds the robot on the spot at full armor; at most once every 10 seconds. Related, not handled: (9,40311) and (9,40312) ask for stock, (9,40314) cancels an order. Not tried in game yet.
+CNewRobotRoofUI::SubmitProduce (0x105dd1c0) calls Func\_Receive::SubmitOrder (0x102cb2e0). The list is the robot (FRobot +0x30, e.g. 1311), then its primary and secondary weapons. The client shows ROBOTROOFUI\_SENDPRODUCE and waits for ProduceRes (19,50312) `u32 function id | u32 code | u32 product` (observer 0x102e3aa0 → OnProduceResult). Codes: 19002 OK (the client then sends (9,40302) and the roof closes), 19003 not enough of the product, 19004 not suitable, 19006 on a vehicle, 19011 / 19013 no right, 19014 in cooldown, 19015 too far, 19012 bound. The server checks the robot was learned and the weapon is owned and fits, then rebuilds the robot on the spot at full armor; at most once every 10 seconds. Empty weapon slots are -1. Not handled: (9,40311) asks for all stock, (9,40314) cancels an order. Real client 2026-11-06: works; the roof closes and the robot comes back with the robot and weapon picked.
+
+<a name="m-9-40312"></a>
+#### Robot Roof stock `(9,40312)`
+
+*C→S · verified*
+
+```text
+u32 | u32 function id | u32 product Type | i32 (-1)
+```
+
+Func\_Receive::QueryStock, every few seconds while the Robot Roof is open, once per Type: 1 body, 2 armor, 4 core (and 8 weapon). Answer: UpdateStock (19,50311) `u32 function id | u32 n | n × (u32 product id | i32 count)` (UpdateStockObserver 0x102de1e0), which fills the station's stock map (Func\_Receive +0x2c). CNewRobotRoofUI::UpdateStockData (0x105dff80) lists a robot for each body × armor × core in stock that makes one (GetFRobot), so a robot goes out as its parts (FRobot FIDRobotBody/Armor/Core, also the parts' product ids). The server lists the robots the character may pick and the weapons it owns. The list redraws on a tab switch.
 
 ## Robots & combat
 

@@ -600,10 +600,33 @@ pb = join(B, b_cid)
 infos = [struct.unpack_from("<I", b)[0] for a, c, t, b in sent[before:] if a == A and t == 30040]
 ok &= check("no base info for your own character, but for the others", a_cid not in infos and b_cid in infos)
 attach = [b for a, c, t, b in sent[before:] if a == A and t == 50001 and struct.unpack_from("<I", b, 4)[0] == 403002]
+ok &= check("the platform stands on the ground below the drop-in point",
+            pa.platform[1] == ls.spawn_point(pa.match, pa.slot)[1] - ls.SPAWN_DROP)
 ok &= check("the platform is shown", len(attach) == 1 and struct.unpack_from("<I", attach[0], 8)[0] == ls.PLATFORM_ID)
 fid = ls.PLATFORM_ID + 1
 msg(A, 40301, struct.pack("<II", 0, fid))
 ok &= check("E at the platform: FunctionUse", got(A, 50301)[-1:] == [struct.pack("<I", fid)])
+
+
+def stock(kind, f=None):
+    msg(A, 40312, struct.pack("<IIIi", 0, fid if f is None else f, kind, -1))
+    res = got(A, 50311)
+    if not res:
+        return None
+    f2, n = struct.unpack_from("<II", res[-1])
+    return f2, [struct.unpack_from("<Ii", res[-1], 8 + 8 * i) for i in range(n)]
+
+
+mine = [r for r in ls.owned_robots(a_cid) if ls.usable_robot(r)]
+ok &= check("the roof's robots go out as their bodies, armors and cores",
+            all(stock(k) == (fid, [(p, 1) for p in sorted({ls.ROBOTS[r][i] for r in mine})]) for i, k in enumerate((1, 2, 4)))
+            and stock(2)[1] and ls.ROBOTS[ls.DEFAULT_ROBOT][1] in [p for p, _ in stock(2)[1]])
+ok &= check("the roof's weapon list holds the default weapon", (ls.DEFAULT_WEAPON, 1) in stock(8)[1])
+ok &= check("other lists are empty", stock(16) == (fid, []))
+n_stock = len(got(A, 50311))
+stock(1, f=fid + 1)
+msg(A, 40312, bytes(7))
+ok &= check("no list for another station or a broken body", len(got(A, 50311)) == n_stock)
 
 
 def order(robot, *weapons, f=None):
@@ -615,7 +638,7 @@ def order(robot, *weapons, f=None):
 
 rebuilt = len(got(B, 50104))
 ok &= check("Respawn in the Robot Roof: OK, the robot is rebuilt for everyone",
-            order(ls.DEFAULT_ROBOT, 0, 0) == ls.ORDER_OK and len(got(B, 50104)) == rebuilt + 1
+            order(ls.DEFAULT_ROBOT, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF) == ls.ORDER_OK  # empty slots: -1 and len(got(B, 50104)) == rebuilt + 1
             and ls.BATTLE_CHOICE.get(a_cid) == (ls.DEFAULT_ROBOT, ls.DEFAULT_WEAPON))
 ok &= check("not again right away", order(ls.DEFAULT_ROBOT, 0) == ls.ORDER_COOLDOWN)
 pa.ordered_at = 0.0
@@ -658,7 +681,8 @@ ok &= check("picking it: SelectRebornLoc with the platform's function",
             len(sel) == 1 and struct.unpack_from("<3f", sel[0]) == tuple(ls.struct.unpack("<3f", ls.struct.pack("<3f", *spawned_at)))
             and struct.unpack_from("<I", sel[0], 28)[0] == fid)
 step(ls.RESPAWN_DELAY + 0.1)
-ok &= check("and the player respawns there", not pa.player_dead and pa.pos == spawned_at and pa.reborn is None)
+ok &= check("and the player respawns there, dropped in above it", not pa.player_dead and pa.reborn is None
+            and pa.pos == (spawned_at[0], spawned_at[1] + ls.SPAWN_DROP, spawned_at[2]))
 ls.PLATFORM = False
 for addr in list(server.peers):
     server.close(server.peers[addr], "test over")
