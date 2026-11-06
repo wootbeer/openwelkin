@@ -263,6 +263,40 @@ ok &= check("no damage to a player on your own side", pb.player_hp == hp)
 ls.STORE.by_id(b_cid)["model"] = ls.FEDERAL
 shoot()
 ok &= check("but the other side's players are hit", pb.player_hp < hp)
+
+# terrain: a flat map at height 0 with a ridge 20 high across x = 20..30
+hmd = os.path.join(tmpdir.make("mw-hmd-"), "ridge.hmd")
+heights = [20.0 if c in (12, 13) else 0.0 for r in range(21) for c in range(21)]
+with open(hmd, "wb") as f:
+    f.write(struct.pack("<II", 21, 21) + struct.pack(f"<{len(heights)}f", *heights))
+ridge = ls.Terrain(hmd)
+ok &= check("terrain: heights from the file, 10 apart, centered",
+            ridge.height(0.0, 0.0) == 0.0 and ridge.height(20.0, 5.0) == 20.0 and ridge.height(500.0, 0.0) is None)
+ok &= check("terrain: between two samples, the lower way of cutting the cell",
+            ridge.height(15.0, 5.0) <= 10.0 and ridge.height(15.0, 0.0) == 10.0)
+ok &= check("terrain: over the ridge is clear, through it is not",
+            ridge.clear((0.0, 25.0, 0.0), (50.0, 25.0, 0.0)) and not ridge.clear((0.0, 2.5, 0.0), (50.0, 2.5, 0.0)))
+ok &= check("terrain: a shot from under the ground (a tunnel) is not checked",
+            ridge.clear((0.0, -10.0, 0.0), (50.0, 2.5, 0.0)))
+saved_terrain, m.terrain = m.terrain, ridge
+pb.pos = (60.0, 0.0, 0.0)
+hp = pb.player_hp
+shoot(aim=(60.0, 2.5, 0.0))
+ok &= check("a shot through a hill does nothing", pb.player_hp == hp)
+pa.pos = (0.0, 50.0, 0.0)
+shoot(origin=(0.0, 52.5, 0.0), aim=(60.0, 2.5, 0.0))
+ok &= check("the same robot shot from above the hill is hit", pb.player_hp < hp)
+pa.pos = (0.0, 0.0, 0.0)
+pb.pos = (10.0, 0.0, 0.0)
+m.terrain = saved_terrain
+real = ls.terrain("Atrain01.reb")
+if real:  # only after setup_data.py
+    bf = ls.BATTLEFIELDS[1]
+    sp = bf["spawn"]
+    ok &= check("Training Ground: spawn stands on the ground, the dummies are in sight",
+                abs(real.height(sp[0], sp[2]) + 1 - sp[1]) < 0.5
+                and all(real.clear((sp[0], sp[1] + 4, sp[2]), (x, y + 2.5, z)) for x, y, z in bf["dummies"]))
+
 ls.STORE.by_id(a_cid)["model"] = ls.STORE.by_id(b_cid)["model"] = 1
 ls.WEAPONS[1] = (100.0, 0.5, 2.0)
 ok &= check("a melee weapon can reach a robot", ls.fire_range(1) > ls.HIT_RADIUS + ls.MUZZLE_REACH)

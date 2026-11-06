@@ -199,6 +199,82 @@ def load_weapons():
 WEAPONS = load_weapons()
 
 
+class Terrain:
+    """A map's ground heights, for line of sight. Maps/<map>/Terrain01.hmd (copied to data/maps/<map>.hmd by
+    setup_data.py) is u32 columns | u32 rows | rows x columns f32 heights in map units, one sample every
+    TERRAIN_STEP along x (columns) and z (rows), centered on 0,0. Found 2026-11-06 offline: the client's own
+    terrain mesh tiles are these heights with no flip, and the training ground floor reads -70 where robots
+    stand at -69. Buildings, rocks and bridges are separate models and are not in it."""
+
+    def __init__(self, path):
+        import array
+        with open(path, "rb") as f:
+            self.cols, self.rows = struct.unpack("<II", f.read(8))
+            if not (2 <= self.cols <= 4097 and 2 <= self.rows <= 4097):
+                raise ValueError("bad terrain size")
+            self.h = array.array("f")
+            self.h.fromfile(f, self.cols * self.rows)
+        if sys.byteorder != "little":
+            self.h.byteswap()
+        self.x0 = -(self.cols - 1) * TERRAIN_STEP / 2
+        self.z0 = -(self.rows - 1) * TERRAIN_STEP / 2
+
+    def height(self, x, z):
+        """Ground height at x,z, or None off the map. Of the two ways a grid cell can be cut into triangles, the
+        lower one: the server never puts the ground higher than the client draws it."""
+        fx, fz = (x - self.x0) / TERRAIN_STEP, (z - self.z0) / TERRAIN_STEP
+        c, r = int(fx), int(fz)
+        if not (0 <= fx and 0 <= fz and c < self.cols - 1 and r < self.rows - 1):
+            return None
+        tx, tz = fx - c, fz - r
+        i, h = r * self.cols + c, self.h
+        a, b, d, e = h[i], h[i + 1], h[i + self.cols], h[i + self.cols + 1]  # (c,r) (c+1,r) (c,r+1) (c+1,r+1)
+        # cut along a-e: one triangle is a,b,e, the other a,d,e
+        one = a + (b - a) * tx + (e - b) * tz if tx >= tz else a + (d - a) * tz + (e - d) * tx
+        # cut along b-d: one triangle is a,b,d, the other b,d,e
+        two = a + (b - a) * tx + (d - a) * tz if tx + tz <= 1 else e + (d - e) * (1 - tx) + (b - e) * (1 - tz)
+        return min(one, two)
+
+    def clear(self, a, b):
+        """Is nothing of the ground in the way from a to b? Ends below the ground (in a tunnel or a building
+        cut into a hill) are not checked, nor the first and last TERRAIN_END units."""
+        for x, y, z in (a, b):
+            g = self.height(x, z)
+            if g is None or y < g - TERRAIN_MARGIN:
+                return True
+        n = math.dist(a, b)
+        steps = int(n / (TERRAIN_STEP / 2))
+        for k in range(1, steps):
+            s = k / steps
+            if not TERRAIN_END < s * n < n - TERRAIN_END:
+                continue
+            x, y, z = (p + (q - p) * s for p, q in zip(a, b))
+            g = self.height(x, z)
+            if g is not None and g > y + TERRAIN_MARGIN:
+                return False
+        return True
+
+
+TERRAIN_STEP = 10.0    # map units between two height samples
+TERRAIN_MARGIN = 2.0   # the ground must be this far above a shot's line to stop it
+TERRAIN_END = 4.0      # units at each end of a shot that are not checked (the muzzle, the robot's feet)
+TERRAINS = {}          # map folder -> Terrain or None
+
+
+def terrain(world):
+    """The Terrain of a battlefield's world ("B01.reb" -> data/maps/B01.hmd), or None if it was not set up."""
+    name = os.path.splitext(world)[0]
+    if name not in TERRAINS:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "maps", name + ".hmd")
+        try:
+            TERRAINS[name] = Terrain(path)
+        except (OSError, ValueError, EOFError):
+            TERRAINS[name] = None
+            log(f"no terrain for {world} (data/maps/{name}.hmd): shots through hills are not stopped."
+                " Run: python setup_data.py <your MarsWar install folder>")
+    return TERRAINS[name]
+
+
 def load_robots():
     """Robot flyweight id -> (body fw, armor fw, core fw, primary slots, secondary slots), from
     data/flyweights/Robot: C_Logic_MA_* name the parts (FIDRobotBody/Armor/Core), the armor sets the slot counts."""
@@ -2833,6 +2909,7 @@ class Match:
         self.round_ends = 0.0
         self.targets = {}
         self.trails = {}  # robot id -> deque of (time, position), the last TRAIL_SECONDS of its moves
+        self.terrain = terrain(self.bf["world"])
         for i, dpos in enumerate(self.bf["dummies"]):
             self.targets[100_000 * (i + 1) + 1] = {
                 "home": dpos, "pos": dpos, "name": f"Target {i + 1}", "cid": DUMMY_CID_BASE + i + 1,
@@ -2863,6 +2940,10 @@ class Match:
             trail.append((self.now, pos))
         while trail and trail[0][0] < self.now - TRAIL_SECONDS:
             trail.popleft()
+
+    def sees(self, a, b):
+        """Is a hill in the way from a to b? Always true when the map's terrain was not set up."""
+        return self.terrain is None or self.terrain.clear(a, b)
 
     def recent(self, rid, pos):
         """Where a robot is now and where it was over the last TRAIL_SECONDS."""
@@ -3241,13 +3322,15 @@ def fire_tick(server, peer, trig, n):
         origin, aim, victim = peer.fire
         if isinstance(victim, int):
             t = m.targets.get(victim)
-            if t and not t["dead"] and in_range(peer, t["pos"]):
-                aim = (t["pos"][0], t["pos"][1] + HIT_HEIGHT, t["pos"][2])
+            at = t and (t["pos"][0], t["pos"][1] + HIT_HEIGHT, t["pos"][2])
+            if t and not t["dead"] and in_range(peer, t["pos"]) and m.sees(origin, at):
+                aim = at
                 if hit_dummy(server, m, peer, victim):
                     peer.fire = (origin, aim, None)
         elif victim is not None:
-            if victim in m.peers and not victim.player_dead and in_range(peer, victim.pos):
-                aim = (victim.pos[0], victim.pos[1] + HIT_HEIGHT, victim.pos[2])
+            at = (victim.pos[0], victim.pos[1] + HIT_HEIGHT, victim.pos[2])
+            if victim in m.peers and not victim.player_dead and in_range(peer, victim.pos) and m.sees(origin, at):
+                aim = at
                 if hit_player(server, m, victim, WEAPON_DAMAGE, peer.name, peer):
                     peer.fire = (origin, aim, None)
         rid = peer.player_rid
@@ -3272,8 +3355,9 @@ def pick_victim(m, shooter, origin, aim):
     if landed < reach / RANGE_MARGIN - 1.0:
         reach = min(reach, landed + HIT_RADIUS)
 
-    def hit(rid, pos):
-        return any(ray_hits_robot(origin, aim, p, reach) for p in m.recent(rid, pos))
+    def hit(rid, pos):  # a hill between the muzzle and the robot stops the shot (aim bots, shots through hills)
+        return any(ray_hits_robot(origin, aim, p, reach) and m.sees(origin, (p[0], p[1] + HIT_HEIGHT, p[2]))
+                   for p in m.recent(rid, pos))
     if DEBUG:
         for name, pos in [(t["name"], t["pos"]) for t in m.targets.values()] + [(p.name, p.pos) for p in m.peers
                                                                                 if p is not shooter]:
@@ -3419,7 +3503,8 @@ def ai_step(m, now):
                 continue
             ddx, ddz = p.pos[0] - t["pos"][0], p.pos[2] - t["pos"][2]
             d = math.hypot(ddx, ddz)
-            if d < dist:
+            if d < dist and m.sees((t["pos"][0], t["pos"][1] + 4.0, t["pos"][2]),
+                                   (p.pos[0], p.pos[1] + HIT_HEIGHT, p.pos[2])):
                 best, dist, dx, dz = p, d, ddx, ddz
         if best:  # stand and face the player
             face, flags = ((dx / dist, 0.0, dz / dist) if dist else (0.0, 0.0, 1.0)), 0

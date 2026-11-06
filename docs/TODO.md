@@ -155,7 +155,13 @@ reply layout, and answer with real data.
       target within the weapon's range (WP1Range + 25%), and pulling the trigger again cannot beat the fire rate.
       Real client, 2026-10-31: kills count, no false "shot from". WP1Range is in map units: a Viper shot at open sky
       aims exactly 200.0 away. Melee weapons have WP1Range 2, so MIN_RANGE keeps them able to hit (no melee weapon tried)
-- [ ] Not stopped: aim bots, shots through walls (needs the terrain on the server)
+- [x] Shots through hills (2026-11-06, offline): Maps/<map>/Terrain01.hmd is u32 columns | u32 rows | f32 heights,
+      one every 10 map units, centered on 0,0, rows along z (the client's terrain mesh tiles are the same heights,
+      no flip; the training ground floor is -70 where robots stand at -69). setup_data.py copies them to data/maps.
+      A shot (and a dummy picking a player) needs the line from the muzzle to the robot's middle to stay above the
+      ground (2 units of slack, the lower of the two ways to cut each grid cell, 4 units at each end not checked,
+      ends under the ground not checked). Not tried in game: does a fair shot over a hilltop ever get stopped
+- [ ] Not stopped: aim bots, shots through walls and buildings (the models' collision shapes, *.240physx, are not read)
 - [ ] Speed check (2026-11-05, offline): position reports may cover 16 units a second with 40 saved up, falling is
       free; a faster move is not relayed and the robot is put back with GS_GMSetLocation (19,33000), at most every
       0.5 s. Reports in the 1.5 s after a spawn, respawn or goto are dropped quietly (they may be from before).

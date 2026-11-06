@@ -85,6 +85,7 @@ client then needs the moved login port).
 | `admin.log` | Every admin command, who ran it and the result. |
 | `loginserver.log` | Server log. Contains no passwords or keys. With `MW_DEBUG=1` it grows fast. |
 | `data/flyweights/` | Item, weapon and robot data unpacked from your client by `setup_data.py`. |
+| `data/maps/` | Each map's ground heights, copied from your client by `setup_data.py`. Without them shots through hills are not stopped. |
 
 To back up while the server runs, use the admin command `backup`. It saves pending stats and writes dated copies into
 `backups/` next to each database, on each server's own disk. Copy those somewhere safe. Do not copy `accounts.db` or
@@ -222,6 +223,8 @@ start a new line. Show replies as plain text, because they contain names and rea
 - Speed check: position reports may cover 16 units a second (twice the walking speed), with up to 40 units saved up
   for reports that arrive bunched after lag. Falling does not count. A faster move is not passed on, and the robot is
   put back where it was. Shots must come from the robot and stay within the weapon's range.
+- A hill between the shooter and the target stops the shot (the server reads each map's ground heights). Buildings
+  and rocks are not on the server yet, so shots through walls are still not stopped.
 - The admin port only listens on 127.0.0.1 and wants the key from `admin.key` first.
 - The admin web page only listens on 127.0.0.1, wants the same key, locks after 5 wrong keys, and checks every field
   before it becomes a command. `tools/test_webadmin.py` attacks it.

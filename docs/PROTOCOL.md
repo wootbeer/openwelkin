@@ -1021,7 +1021,7 @@ f32 time | u32 key | vec3 position | vec3 facing
 
 Sent now and then; the facing is used for the relayed moves.
 
-Shots: on a trigger pull (9,40122) the server plays the burst on the other clients with the remote-shot event (19,50122), one shot per fire interval until the release (9,40125). Hits on players use the same server-side hit test as the dummies; the armor update (19,50005), death (19,50107) and kill report (19,50151) go to everyone.
+Shots: on a trigger pull (9,40122) the server plays the burst on the other clients with the remote-shot event (19,50122), one shot per fire interval until the release (9,40125). Hits on players use the same server-side hit test as the dummies; the armor update (19,50005), death (19,50107) and kill report (19,50151) go to everyone. A hill between the muzzle and the robot stops a shot: the server reads each map's ground heights from `Maps/<map>/Terrain01.hmd`, `u32 columns | u32 rows | rows x columns f32`, one height every 10 map units along x (columns) and z (rows), centered on 0,0 (the client's terrain mesh tiles hold the same heights). Buildings and rocks are separate models and are not in it.
 
 <a name="m-19-31000"></a>
 #### GS\_GMCommando `(19,31000)`
