@@ -86,6 +86,7 @@
   - [GS\_Object\_Attach\_Object](#m-19-50001) `(19,50001)`
   - [GS\_Character\_Set\_BaseInfo](#m-19-30040) `(19,30040)`
 - [Robots & combat](#robot-msgs)
+  - [use a station](#m-9-40301) `(9,40301)`
   - [GS\_Object\_Detach\_Object](#m-19-50002) `(19,50002)`
   - [GS\_Character\_Delete\_Character](#m-19-30002) `(19,30002)`
   - [GS\_Robot\_Skill](#m-19-50132) `(19,50132)`
@@ -1111,7 +1112,20 @@ Walker\_Basic robot = flyweight 1311. See [Snapshots](#snapshots).
 | list | u32 n + n x (u16 \| u8) |  |
 | robot id | u32 | controlled robot |
 
+For a character that already exists the observer (0x1035fab0) copies a fresh character over it, so everything else is reset too, e.g. the loadout presets (+0xd8) the hall loaded with (14,14004). The emulator sends it only for other players' characters, never for your own (real client 2026-11-06: then the battle Robot Roof lists the presets).
+
 <a name="robot-msgs"></a>
+
+<a name="m-9-40301"></a>
+#### use a station `(9,40301)`
+
+*C→S · verified*
+
+```text
+u32 | u32 function id
+```
+
+E at a station whose function is available (the Respawn Platform shows "RespawnPlatform, E Use, B Hack/Input"). The server answers FunctionUse (19,50301) `u32 function id`; the client then calls that function's Active (observer 0x102e3400, only if the robot stands at it). For a Respawn Platform that opens the Robot Roof ("Claim Weapon") in armor mode with the Shortcut tab's presets. Leaving sends (9,40302); FunctionEndUse (19,50302) `u32 function id` calls DeActive. Real client 2026-11-06 with MW\_PLATFORM=1. Not done yet: picking a robot or preset there, and the Respawn button.
 
 ## Robots & combat
 
@@ -1523,7 +1537,8 @@ Objects are sent as snapshots. The client functions that read them are named `Wr
 | Weapon | Equip \| u32 fire mode \| u32 state \| 6 x f32 timing \| i32 -1 \| i32 -1 | state 0 idle, 1 firing, 6 reloading. Timing = per mode (shot interval, …); zeros fire every frame. Viper = 3101: 120 rounds, 4 per shot, 0.142 s. |
 | Robot | WorldObject \| system part block \| i32 skill | flyweight 1311 |
 | Func\_Power | u8 \| f64 rate \| f64 energy \| f64 hyper \| f64 max \| 3 x f64 \| u8 \| u8 \| u8 | 512001 Func\_BasicCore\_Energy; reloading spends energy |
-| Func\_RobotReceive | u8 \| vec3 receive point \| f32 effect range \| f32 effect height \| u8 can respawn | 505002 Respawn Platform, 505004 Weapon Cabin. Read from Game.dll, not used yet. Using one opens the Robot Roof with it: can respawn 1 = armor mode, and only then are the Shortcut tab's presets loaded |
+| Func\_RobotReceive | u8 \| vec3 receive point \| f32 effect range \| f32 effect height \| u8 can respawn | 505002 Respawn Platform, 505004 Weapon Cabin. The first u8 (Function +0x14, object +0x24) is "available": with 0 the station can not be used (Function::CanBeActived). Can respawn 1 = the Robot Roof opens in armor mode, and only then are the Shortcut tab's presets loaded |
+| NonControlledEstab | WorldObject (target type 2) \| armor info \| str \| u8 flag [vec3 \| f32 \| f32] \| u8 state \| u32 \| u32 n seats + seats \| u32 n functions + n x (u32 fw \| u32 id \| function) \| u8 \| u8 | a station, e.g. 403002 Esb\_Base\_RobotPlatform with one Func\_RobotPlatform\_Receive. State 1 normal (as the constructor sets), 2 worn, 3 damaged. Real client 2026-11-06: created and usable, but its model does not show |
 
 ### System part block
 

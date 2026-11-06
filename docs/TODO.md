@@ -19,13 +19,14 @@ reply layout, and answer with real data.
       slots, so the battle side gets them some other way (not read yet). Saving one in game needs a robot in the
       left slot, which needs robot items in the warehouse (see Equipping below). 2026-11-05, offline: the battle
       screen's LoadQuickSuite (0x105dd7f0) reads the same list (local character +0xd8), and the client asks 14004
-      only from the CharacterOnline reply (0x10402510), so once per hall login. 2026-11-06, offline: the list is
-      not emptied (GS_Character_New_Character does nothing for a character that exists), it is never loaded:
-      the Robot Roof calls LoadQuickSuite only when it opens through a station function (+0x1420) whose
-      CanRespawn byte is set, i.e. using a Respawn Platform (Func_RobotPlatform_Receive 505002, snapshot in
-      snapshots.func_robot_receive). The respawn screen after death has no function, so it shows 10 default
-      slots. To get the presets in battle: put a Respawn Platform establishment in the match (not built: an
-      establishment snapshot is not read yet)
+      only from the CharacterOnline reply (0x10402510), so once per hall login. 2026-11-06: two causes. The Robot
+      Roof calls LoadQuickSuite only when it opens through a station function (+0x1420) whose CanRespawn byte is
+      set, i.e. using a Respawn Platform; the respawn screen after death has none, so it shows 10 default slots.
+      And GS_Character_Set_BaseInfo (19,30040) copies a fresh character over your own, which emptied the list;
+      it is no longer sent for your own character. Real client: with MW_PLATFORM=1 a Respawn Platform stands
+      on the spawn point, E opens the Robot Roof and the Shortcut tab lists "Sniper" and "Rush". Still open:
+      the platform's model does not show; picking a preset or robot there and Respawn (requests not read);
+      real stations come from the maps, not from MW_PLATFORM
 - [x] (14,14010) CG_Character_Get_Exploit
 - [ ] (14,14034) UpdateRankUpgrade
 - [x] (14,14040) CGS_GetAllMilitaryRank
@@ -271,7 +272,8 @@ reply layout, and answer with real data.
       only change the GM's own client; bf does nothing. Real client 2026-11-05: / commands only work in the battle
       chat box (the hall's Lobby box sends a normal Broadcast line); battle base info (19,30040) must carry the GM
       byte too, or it is cleared on entering a battle; /announce 0 Battle hello showed "Battle" as a notice: the client
-      reads the text with >>, so only its first word is sent. Not tried: /kick, /banchat, /moveto. Without the GM byte the letter after / picks a squad ("Detachment") action: /a N apply to join,
+      reads the text with >>, so only its first word is sent. Since 2026-11-06 your own character gets no 30040, so
+      the GM byte stays as CharacterOnline set it: try / commands in battle again. Not tried: /kick, /banchat, /moveto. Without the GM byte the letter after / picks a squad ("Detachment") action: /a N apply to join,
       /e N enter, /L leave, /l apply to be leader, /t N set the target zone (requests not read yet), /h hides the
       screen's windows and HUD (client only). Squads need teams first
 - [x] goto <account> <x> <y> <z> (GM), 2026-11-05 offline: GS_GMSetLocation (19,33000) vec3 moves the player's own

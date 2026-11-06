@@ -394,10 +394,11 @@ sequenceDiagram
     <tr><td>deaths</td><td>u32</td><td>D in K/D</td></tr>
     <tr><td>list</td><td>u32 n + n x (u16 | u8)</td><td></td></tr>
     <tr><td>robot id</td><td>u32</td><td>controlled robot</td></tr>
-  </table></div></div></div>
+  </table></div><p>For a character that already exists the observer (0x1035fab0) copies a fresh character over it, so everything else is reset too, e.g. the loadout presets (+0xd8) the hall loaded with (14,14004). The emulator sends it only for other players' characters, never for your own (real client 2026-11-06: then the battle Robot Roof lists the presets).</p></div></div>
 </section>
 
 <section id="robot-msgs">
+  <div class="msg" id="m-9-40301"><header><h3>use a station</h3><span class="id">(9,40301)</span><span class="dir cs">C→S</span><span class="status">verified</span></header><div class="body"><pre class="fmt">u32 | u32 function id</pre><p>E at a station whose function is available (the Respawn Platform shows "RespawnPlatform, E Use, B Hack/Input"). The server answers FunctionUse (19,50301) <code>u32 function id</code>; the client then calls that function's Active (observer 0x102e3400, only if the robot stands at it). For a Respawn Platform that opens the Robot Roof ("Claim Weapon") in armor mode with the Shortcut tab's presets. Leaving sends (9,40302); FunctionEndUse (19,50302) <code>u32 function id</code> calls DeActive. Real client 2026-11-06 with MW_PLATFORM=1. Not done yet: picking a robot or preset there, and the Respawn button.</p></div></div>
   <h2>Robots &amp; combat</h2>
   <div class="msg" id="m-19-50002"><header><h3>GS_Object_Detach_Object</h3><span class="id">(19,50002)</span><span class="dir sc">S→C</span><span class="status">verified</span></header><div class="body"><pre class="fmt">u32 object id</pre><p>Drops a reference and deletes the object at zero. Used to remove a robot when its player leaves.</p></div></div>
   <div class="msg" id="m-19-30002"><header><h3>GS_Character_Delete_Character</h3><span class="id">(19,30002)</span><span class="dir sc">S→C</span><span class="status">verified</span></header><div class="body"><pre class="fmt">u32 character id</pre><p>Removes the character, so it can join again later.</p></div></div>
@@ -466,7 +467,8 @@ sequenceDiagram
     <tr><td>Weapon</td><td>Equip | u32 fire mode | u32 state | 6 x f32 timing | i32 -1 | i32 -1</td><td>state 0 idle, 1 firing, 6 reloading. Timing = per mode (shot interval, …); zeros fire every frame. Viper = 3101: 120 rounds, 4 per shot, 0.142 s.</td></tr>
     <tr><td>Robot</td><td>WorldObject | system part block | i32 skill</td><td>flyweight 1311</td></tr>
     <tr><td>Func_Power</td><td>u8 | f64 rate | f64 energy | f64 hyper | f64 max | 3 x f64 | u8 | u8 | u8</td><td>512001 Func_BasicCore_Energy; reloading spends energy</td></tr>
-    <tr><td>Func_RobotReceive</td><td>u8 | vec3 receive point | f32 effect range | f32 effect height | u8 can respawn</td><td>505002 Respawn Platform, 505004 Weapon Cabin. Read from Game.dll, not used yet. Using one opens the Robot Roof with it: can respawn 1 = armor mode, and only then are the Shortcut tab's presets loaded</td></tr>
+    <tr><td>Func_RobotReceive</td><td>u8 | vec3 receive point | f32 effect range | f32 effect height | u8 can respawn</td><td>505002 Respawn Platform, 505004 Weapon Cabin. The first u8 (Function +0x14, object +0x24) is "available": with 0 the station can not be used (Function::CanBeActived). Can respawn 1 = the Robot Roof opens in armor mode, and only then are the Shortcut tab's presets loaded</td></tr>
+    <tr><td>NonControlledEstab</td><td>WorldObject (target type 2) | armor info | str | u8 flag [vec3 | f32 | f32] | u8 state | u32 | u32 n seats + seats | u32 n functions + n x (u32 fw | u32 id | function) | u8 | u8</td><td>a station, e.g. 403002 Esb_Base_RobotPlatform with one Func_RobotPlatform_Receive. State 1 normal (as the constructor sets), 2 worn, 3 damaged. Real client 2026-11-06: created and usable, but its model does not show</td></tr>
   </table></div>
   <h3>System part block</h3>
 <pre class="fmt">u32 part count | count x ( u32 flyweight | u32 object id | part snapshot )   -- or i32 -1 for an empty slot

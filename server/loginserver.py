@@ -3190,8 +3190,10 @@ def join_match(server, peer):
     peer.next_shot = 0.0
     rid = peer.player_rid
     spawn_robot(server, peer, peer.cid, rid, peer.pos, peer.detachment, peer.name, local=True)
-    send_base_info(server, peer, peer.cid, peer.name, rid, rank=rank_for(STORE.stats(peer.cid).get("honor", 0)),
-                   nation=nation_of(peer.cid), gm=getattr(peer, "gm_level", 0) > 0)
+    # No GS_Character_Set_BaseInfo (19,30040) for the player's own character: it already exists from the hall, and
+    # the observer (0x1035fab0) copies a fresh character over an existing one, which empties the loadout presets
+    # (+0xd8, filled only by the hall's 14004) and the GM byte. Real client 2026-11-06: without it the battle Robot
+    # Roof lists the presets. Other players' characters are new on each client, so they still get it.
     # take up the weapon (the client ignores the hotkeys for the first seconds after spawning), then Revived:
     # first-person view (robot +0x308), the only view the weapons fire in
     send_game_event(server, peer, 19, 50105, struct.pack("<Iii", rid, 1, -1))
@@ -3199,6 +3201,8 @@ def join_match(server, peer):
     send_speed(server, peer, rid)
     for drid, t in m.targets.items():
         show_dummy(server, peer, drid, t)
+    if PLATFORM:
+        show_platform(server, peer)
     for other in m.peers:
         show_player(server, peer, other)
         show_player(server, other, peer)
@@ -3210,6 +3214,43 @@ def join_match(server, peer):
     tell_gate_match(peer, m.id)
     log(f"[game] {peer.name} (cid {peer.cid}) joined {m.bf['name']} (match {m.id}) as slot {slot}; "
         f"{len(m.peers)} player(s)")
+
+
+PLATFORM = os.environ.get("MW_PLATFORM") == "1"  # test: a Respawn Platform next to each player's spawn
+PLATFORM_ID = 4_200_000_001  # object ids past the robots' (slot * 1,000,000 + 1, slots < 4000)
+
+
+def show_platform(server, peer):
+    """A Respawn Platform (Esb_Base_RobotPlatform 403002 with Func_RobotPlatform_Receive 505002) of the player's
+    nation, on the spawn point. Using it (E) opens the Robot Roof in armor mode with the loadout presets."""
+    pos = peer.pos  # on the spawn point, like a base's platform
+    peer.platform = pos
+    func = (505002, PLATFORM_ID + 1, snapshots.func_robot_receive())
+    send_game_event(server, peer, 19, 50001, struct.pack("<III", 0, 403002, PLATFORM_ID)
+                    + snapshots.establishment([func], pos=pos, nation=nation_of(peer.cid)) + b"\x00")
+
+
+PLATFORM_REACH = 15.0  # the platform's EffectRange is 10; position reports lag a little
+
+
+def use_function(server, peer, fid):
+    """E at a station (9,40301): u32 | u32 function id. Answered with FunctionUse (19,50301): u32 function id; the
+    client then calls that function's Active (observer 0x102e3400; it needs the robot to stand at it, robot +0x3f8).
+    For the Respawn Platform that opens the Robot Roof with the loadout presets."""
+    where = getattr(peer, "platform", None)
+    with GAME_LOCK:
+        near = where and math.dist(where, peer.pos) <= PLATFORM_REACH
+    if fid == PLATFORM_ID + 1 and near and not peer.player_dead:
+        peer.using = fid
+        send_game_event(server, peer, 19, 50301, struct.pack("<I", fid))
+
+
+def end_use_function(server, peer):
+    """Leaving a station (9,40302): FunctionEndUse (19,50302) u32 function id -> the client calls DeActive."""
+    fid = getattr(peer, "using", None)
+    if fid is not None:
+        peer.using = None
+        send_game_event(server, peer, 19, 50302, struct.pack("<I", fid))
 
 
 def leave_match(peer):
@@ -3693,6 +3734,10 @@ def on_game_message(server, peer, raw):
         send_game_event(server, peer, 19, 50105, struct.pack("<Iii", peer.player_rid, slot, -1))
     elif key == (9, 11000) and len(body) >= 4:
         gm_game_command(server, peer, body)
+    elif key == (9, 40301) and len(body) >= 8:
+        use_function(server, peer, struct.unpack_from("<I", body, 4)[0])
+    elif key == (9, 40302):
+        end_use_function(server, peer)
     elif key in ((9, 40122), (9, 40125)):
         # Trigger pulled (9,40122, Weapon::Use): u32 | u32 weapon id | u32 | vec3 muzzle | vec3 target | u32 | u32;
         # trigger released (9,40125). Automatic weapons keep firing client-side between the two (one shot per

@@ -61,14 +61,28 @@ def func_power(energy=5000.0, hyper=100.0, change_rate=0.25, max_energy=5000.0, 
             + struct.pack("<BBB", can_generate, can_generate_hyper, 0))
 
 
-def func_robot_receive(loc=(0.0, 0.0, 0.0), effect_range=10.0, effect_height=4.0, can_respawn=True):
+def func_robot_receive(loc=(0.0, 0.0, 0.0), effect_range=10.0, effect_height=4.0, can_respawn=True, available=True):
     """Func_RobotReceive::WriteSnapshot (0x102ce070), e.g. Func_RobotPlatform_Receive (505002, the Respawn
     Platform) or Func_WeaponCabin_Receive (505004): Function u8 (+0x14) | vec3 receive point (+0x7c) | f32 effect
     range | f32 effect height | u8 can respawn (+0x90, Func_RobotReceive::CanRespawn). Offsets are of the whole
     object; the reader runs on its DataObject part at +0x10. Using the station (Active) opens the Robot Roof with
     this function; CanRespawn 1 shows it in armor mode and loads the Shortcut tab's presets (LoadQuickSuite), 0 in
     change-weapon mode. Not used yet: it needs an establishment to carry it."""
-    return struct.pack("<B3fffB", 0, *loc, effect_range, effect_height, can_respawn)
+    return struct.pack("<B3fffB", available, *loc, effect_range, effect_height, can_respawn)
+
+
+def establishment(functions, pos=(0.0, 0.0, 0.0), rot=IDENTITY, nation=0, hp=2500, state=1):
+    """NonControlledEstab::WriteSnapshot (0x102a4c10) = Establishment::WriteSnapshot (0x10293710) | u8 (+0x238)
+    | u8 (+0x248). Establishment: WorldObject (target type 2) | DamageUnit armor info (+0xb0) | str (+0x1bc,
+    varint length) | u8 (+0x16c) [vec3 | f32 | f32 when it is not 0] | u8 state (+0x19c: 1 normal, as the constructor sets; 2 worn, 3 damaged) | u32 (+0x218)
+    | u32 n seats, n x (u32 fw | u32 id | seat snapshot) | u32 n functions, n x (u32 fw | u32 id | function
+    snapshot), e.g. a Respawn Platform: Esb_Base_RobotPlatform 403002 with Func_RobotPlatform_Receive 505002.
+    functions: list of (flyweight id, object id, snapshot bytes)"""
+    out = world_object(pos=pos, rot=rot, b=nation, c=2) + armor_info(hp) + b"\x00" + struct.pack("<BBI", 0, state, 0)
+    out += struct.pack("<I", 0) + struct.pack("<I", len(functions))
+    for fw, oid, snap in functions:
+        out += struct.pack("<II", fw, oid) + snap
+    return out + b"\x00\x00"
 
 
 def armor_info(hp=1000, cur=None):

@@ -592,6 +592,30 @@ for addr in list(server.peers):
 ls.KILL_MODE = False
 step()
 
+# own character: no base info (it would empty the loadout presets); a Respawn Platform (MW_PLATFORM) can be used
+ls.PLATFORM = True
+before = len(sent)
+pa = join(A, a_cid)
+pb = join(B, b_cid)
+infos = [struct.unpack_from("<I", b)[0] for a, c, t, b in sent[before:] if a == A and t == 30040]
+ok &= check("no base info for your own character, but for the others", a_cid not in infos and b_cid in infos)
+attach = [b for a, c, t, b in sent[before:] if a == A and t == 50001 and struct.unpack_from("<I", b, 4)[0] == 403002]
+ok &= check("the platform is shown", len(attach) == 1 and struct.unpack_from("<I", attach[0], 8)[0] == ls.PLATFORM_ID)
+fid = ls.PLATFORM_ID + 1
+msg(A, 40301, struct.pack("<II", 0, fid))
+ok &= check("E at the platform: FunctionUse", got(A, 50301)[-1:] == [struct.pack("<I", fid)])
+msg(A, 40302, b"")
+ok &= check("leaving it: FunctionEndUse", got(A, 50302)[-1:] == [struct.pack("<I", fid)])
+n = len(got(A, 50301))
+pa.pos = (pa.platform[0] + 50.0, pa.platform[1], pa.platform[2])
+msg(A, 40301, struct.pack("<II", 0, fid))
+msg(A, 40301, struct.pack("<II", 0, 12345))
+ok &= check("not from far away, not another function", len(got(A, 50301)) == n)
+ls.PLATFORM = False
+for addr in list(server.peers):
+    server.close(server.peers[addr], "test over")
+step()
+
 # a session flooding messages is cut down, then closed
 pa = join_front(A, a_cid)
 flood = b"".join(struct.pack("<H", 4) + bytes([0x80, 9]) + struct.pack("<H", 1) for _ in range(250))
