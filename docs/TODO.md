@@ -161,7 +161,15 @@ reply layout, and answer with real data.
       A shot (and a dummy picking a player) needs the line from the muzzle to the robot's middle to stay above the
       ground (2 units of slack, the lower of the two ways to cut each grid cell, 4 units at each end not checked,
       ends under the ground not checked). Not tried in game: does a fair shot over a hilltop ever get stopped
-- [ ] Not stopped: aim bots, shots through walls and buildings (the models' collision shapes, *.240physx, are not read)
+- [x] Shots through walls (2026-11-06, offline): the map's .reb lists its objects (name, world matrix, class,
+      typed properties); PrefabInstance objects with CollidesRays on and GhostObject off are solid, and each one's
+      ModelFilename has a PhysX cooked mesh (<model>.reb.240physx, found by file name: some maps name an older
+      folder). setup_data.py builds data/maps/<map>.walls (each model's triangles once, a box tree per model, the
+      placements); 594 placements on Mars Front, all 480 checked land inside their saved bounding boxes. A shot is
+      tested against the placements near its line: about 0.04 ms. Not counted: animated objects (doors), the map's
+      own meshes (<map>.reb_<object>.240physx: the sea plane, the outer box), trees without a mesh. Not tried in
+      game: is a fair shot past a corner ever stopped
+- [ ] Not stopped: aim bots
 - [ ] Speed check (2026-11-05, offline): position reports may cover 16 units a second with 40 saved up, falling is
       free; a faster move is not relayed and the robot is put back with GS_GMSetLocation (19,33000), at most every
       0.5 s. Reports in the 1.5 s after a spawn, respawn or goto are dropped quietly (they may be from before).

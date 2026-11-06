@@ -269,7 +269,7 @@ hmd = os.path.join(tmpdir.make("mw-hmd-"), "ridge.hmd")
 heights = [20.0 if c in (12, 13) else 0.0 for r in range(21) for c in range(21)]
 with open(hmd, "wb") as f:
     f.write(struct.pack("<II", 21, 21) + struct.pack(f"<{len(heights)}f", *heights))
-ridge = ls.Terrain(hmd)
+ridge = ls.mapdata.Terrain(hmd)
 ok &= check("terrain: heights from the file, 10 apart, centered",
             ridge.height(0.0, 0.0) == 0.0 and ridge.height(20.0, 5.0) == 20.0 and ridge.height(500.0, 0.0) is None)
 ok &= check("terrain: between two samples, the lower way of cutting the cell",
@@ -287,15 +287,44 @@ pa.pos = (0.0, 50.0, 0.0)
 shoot(origin=(0.0, 52.5, 0.0), aim=(60.0, 2.5, 0.0))
 ok &= check("the same robot shot from above the hill is hit", pb.player_hp < hp)
 pa.pos = (0.0, 0.0, 0.0)
-pb.pos = (10.0, 0.0, 0.0)
 m.terrain = saved_terrain
-real = ls.terrain("Atrain01.reb")
-if real:  # only after setup_data.py
+
+# walls: one model, a 10 x 10 square in its own x-y plane, placed twice: at x = 20 turned to face along x, and
+# at x = 500 as it is
+md = ls.mapdata
+quad = [(0.0, -5.0, -5.0), (0.0, 5.0, -5.0), (0.0, 5.0, 5.0), (0.0, -5.0, 5.0)]
+flat = [(x, y, z) for z, y, x in quad]  # the same square lying in the x-y plane
+turn = [0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0]  # swaps x and z
+walls_file = os.path.join(tmpdir.make("mw-walls-"), "w.walls")
+with open(walls_file, "wb") as f:
+    f.write(md.pack_walls([md.build_tree(flat, [0, 1, 2, 0, 2, 3])],
+                          [(0, turn + [20.0, 2.5, 0.0]), (0, [1, 0, 0, 0, 1, 0, 0, 0, 1, 500.0, 0.0, 0.0])]))
+wall = md.Walls(walls_file)
+ok &= check("walls: a shot through the wall is stopped, past its edge or over it is not",
+            not wall.clear((0.0, 2.5, 0.0), (40.0, 2.5, 0.0)) and wall.clear((0.0, 2.5, 8.0), (40.0, 2.5, 8.0))
+            and wall.clear((0.0, 9.0, 0.0), (40.0, 9.0, 0.0)))
+ok &= check("walls: a robot right at the wall still hits (the ends are not checked)",
+            wall.clear((0.0, 2.5, 0.0), (21.0, 2.5, 0.0)))
+ok &= check("walls: the placement moves and turns the model",
+            not wall.clear((500.0, 0.0, -10.0), (500.0, 0.0, 10.0)) and wall.clear((0.0, 2.5, -10.0), (0.0, 2.5, 10.0)))
+saved_walls, m.walls = m.walls, wall
+pb.pos = (40.0, 0.0, 0.0)
+hp = pb.player_hp
+shoot(aim=(40.0, 2.5, 0.0))
+ok &= check("a shot through a wall does nothing", pb.player_hp == hp)
+pb.pos = (40.0, 0.0, 24.0)
+shoot(aim=(40.0, 2.5, 24.0))
+ok &= check("the same robot next to the wall is hit", pb.player_hp < hp)
+m.walls = saved_walls
+pb.pos = (10.0, 0.0, 0.0)
+real, solid = ls.terrain("Atrain01.reb"), ls.map_sight("Atrain01.reb", "walls")
+if real and solid:  # only after setup_data.py
     bf = ls.BATTLEFIELDS[1]
     sp = bf["spawn"]
     ok &= check("Training Ground: spawn stands on the ground, the dummies are in sight",
                 abs(real.height(sp[0], sp[2]) + 1 - sp[1]) < 0.5
-                and all(real.clear((sp[0], sp[1] + 4, sp[2]), (x, y + 2.5, z)) for x, y, z in bf["dummies"]))
+                and all(real.clear((sp[0], sp[1] + 4, sp[2]), (x, y + 2.5, z))
+                        and solid.clear((sp[0], sp[1] + 4, sp[2]), (x, y + 2.5, z)) for x, y, z in bf["dummies"]))
 
 ls.STORE.by_id(a_cid)["model"] = ls.STORE.by_id(b_cid)["model"] = 1
 ls.WEAPONS[1] = (100.0, 0.5, 2.0)
