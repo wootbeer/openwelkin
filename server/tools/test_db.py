@@ -148,7 +148,8 @@ def characters():
         check("a heavy robot gets its body's slot", ls.ROBOTS[1301][3:] == (1, 0) and ls.ROBOTS[1311][3:] == (2, 2))
         with ls.STORE.lock:
             ls.STORE.by_id(cid)["robot"] = 1301
-        check("heavies stay off unless switched on", ls.player_robot(cid) == ls.DEFAULT_ROBOT)
+        ls.HEAVY_ROBOTS = False
+        check("heavies can be switched off", ls.player_robot(cid) == ls.DEFAULT_ROBOT)
         ls.HEAVY_ROBOTS = True
         check("switched on: a heavy gets a heavy weapon, not the walker's in use",
               ls.player_robot(cid) == 1301 and ls.loadout_weapon(cid) == 3302)

@@ -55,11 +55,12 @@ reply layout, and answer with real data.
       can be learned again. 14043 ends with u32 wait in MINUTES | u32 price (the confirm box shows the price, a second try
       shows "Last forget talent time is ..., you need to wait 23Hour58Mins")
 - [x] Spawn as the last robot talent learned (parts from data/flyweights/Robot; verified Scout 1313 in game; MW_ROBOT=<fw> forces one)
-- [ ] Heavy robots (1301 Intercessor, 1201 RockStone, 1401/1402 Jaguar) crashed the client. 2026-11-06, offline:
-      their slot is on the body, not the armor (Robot::init adds both counts), so the server sent no slot at all.
-      Now they get one, with a weapon made for the body (RobotTypeCanUse 2 and MatchBodyName, e.g. BearPaw 3302
-      for the Intercessor). Not tried in game, so behind MW_HEAVY_ROBOTS=1 (or MW_ROBOT=1301); off, they still
-      fall back to 1311. Try: MW_ROBOT=1301, spawn, fire, die and respawn
+- [x] Heavy robots (1301 Intercessor, 1201 RockStone, 1401/1402 Jaguar) crashed the client. 2026-11-06: their slot
+      is on the body, not the armor (Robot::init adds both counts), so the server sent no slot at all. Now they get
+      one, with a weapon made for the body (RobotTypeCanUse 2 and MatchBodyName, e.g. BearPaw 3302 for the
+      Intercessor). Real client 2026-11-06: all three spawn and their shots reach the server (range 250, the
+      heavy weapons'); the RockStone shows its two arm guns; the Intercessor died to a dummy and respawned.
+      On by default (MW_HEAVY_ROBOTS=0 turns them off). Not tried: 1402, damage done by heavy weapons
 
 ## Corps / teams
 - [ ] (15,15022) UpdateCorpInfo
@@ -110,7 +111,8 @@ reply layout, and answer with real data.
       hall Warehouse (slot 0 = dropped back on the list). The slot is saved with the item and 24006 sends it back.
       Not tried in game. 2026-11-06, offline: there are 10 slots (the Warehouse's 10 "Equipped PlugIn" cells, controls 17..26;
       CWareHouseUI::RefreshItemInUse puts slot i on control 16 + i); items saved past slot 10 count as not in
-      use. Still open: whether the battle Robot Roof's
+      use. Real client 2026-11-06: the Warehouse's PlugIn tab shows 10 cells; Viper dropped in cell 3 and Thunder
+      in cell 10 were saved and came back after reopening it. Still open: whether the battle Robot Roof's
       warehouse lists in-use items. In battle the weapon in the lowest in-use slot is used (else the newest
       activated one)
 

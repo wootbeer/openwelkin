@@ -65,7 +65,7 @@ client then needs the moved login port).
 | `MW_PORT_OFFSET` | `0` | Added to every port (see Ports). |
 | `MW_STATS_EVERY` | `60` | Seconds between `[stats]` lines in the log (players, tick time, CPU, traffic). `0` = off. |
 | `MW_ROBOT` | (empty) | Dev only: force the player's robot type, e.g. `1313` (Walker Scout) or `1301` (Intercessor, a heavy). |
-| `MW_HEAVY_ROBOTS` | `0` | `1` lets players fight in the heavy robots they learned (Intercessor, RockStone, Jaguar), each with a weapon made for it. Not tried in game yet, so off: they get the Walker instead. |
+| `MW_HEAVY_ROBOTS` | `1` | Players fight in the heavy robots they learned (Intercessor, RockStone, Jaguar), each with a weapon made for it. `0` gives them the Walker instead. |
 | `MW_KILL_MODE` | `0` | `1` makes battlefields with rounds nation against nation: the client's own team arena, with each side's kills on screen. The side that reaches `MW_ROUND_KILLS` wins, and the Record window lists the winner and both sides' kills. Seen in game with one player; the scores counting up are not tried yet. |
 | `MW_MOVE_CHECK` | `1` | `0` turns off the speed check: a robot that moves faster than twice the walking speed is put back where it was. Not tried in game yet. |
 | `MW_PASSIVE_DUMMIES` | `0` | Dev only: `1` stops the target dummies from shooting (PvP tests). |

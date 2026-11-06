@@ -266,9 +266,10 @@ def load_robots():
 
 ROBOT_BODY = {}
 ROBOTS = load_robots()
-# Heavy robots (RobotArmorType 2 bodies) are built with their body slot and a weapon made for that body, but are not
-# tried in game yet (before, with no slot at all, the client crashed). Off unless MW_HEAVY_ROBOTS=1 or MW_ROBOT names one.
-HEAVY_ROBOTS = os.environ.get("MW_HEAVY_ROBOTS") == "1"
+# Heavy robots (RobotArmorType 2 bodies) are built with their body slot and a weapon made for that body (before, with
+# no slot at all, the client crashed). Real client 2026-11-06: Intercessor, RockStone and Jaguar spawn and fire; the
+# Intercessor died and respawned. MW_HEAVY_ROBOTS=0 gives players who learned one the Walker instead.
+HEAVY_ROBOTS = os.environ.get("MW_HEAVY_ROBOTS", "1") != "0"
 DEFAULT_ROBOT = 1311  # Walker_Basic (BattleRobot)
 
 
