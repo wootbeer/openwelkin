@@ -37,8 +37,11 @@ reply layout, and answer with real data.
       each robot from body + armor + core, so robots go out as their parts. The list only redraws on a tab
       switch. Dragging a robot and a weapon into the slots and pressing Respawn works: the roof closes and the
       robot comes back with the weapon picked at full armor. Empty weapon slots come as -1. Death map: the
-      client sends (9,40332) at death and the server answers; Select calls ChangeMapState(2), but no respawn
-      point icon showed on Training Ground 1 (its map shows no picture either). Not done yet
+      client asks (9,40332) only once a minute; Select calls ChangeMapState(2). The icon did not show because
+      MapInfo sent the big map's picture size as 0 x 0; with 512 x 512 / 1024 x 1024 the map (M) opens and the
+      platform shows. The server now sends the points every 2 s while the player is dead. Clicking the icon
+      marks it "Respawn Here"; the map's Respawn button sends (9,40331) and the respawn happens at the platform
+      (button fired through Frida: the death dialog covered it in our window)
 - [x] (14,14010) CG_Character_Get_Exploit
 - [ ] (14,14034) UpdateRankUpgrade
 - [x] (14,14040) CGS_GetAllMilitaryRank

@@ -109,9 +109,11 @@ TRAINING_ROOMS = [(1, "Training Ground 1")]  # (battlefield id, name)
 BATTLEFIELDS = {
     # spawn: player spawn point; dummies: target robot positions (Y is up). The client ships no spawn data, so
     # these are found by hand (a robot dropped from above falls to the ground; GetLocation shows the height).
-    1: {"name": "Training Ground 1", "world": "Atrain01.reb",
+    # u4: the big map's picture width and height (Maps\<name>\<name>.bmp) and two unknown values; with 0 x 0 the
+    # map has no picture and its icons (respawn points) all sit in one corner
+    1: {"name": "Training Ground 1", "world": "Atrain01.reb", "u4": (512, 512, 0, 0),
         "spawn": (10.0, -69.0, -50.0), "dummies": [(24.3, -69.0, -54.6), (10.0, -69.0, -65.0)]},
-    2: {"name": "Mars Front", "world": "B01.reb", "rounds": True,
+    2: {"name": "Mars Front", "world": "B01.reb", "rounds": True, "u4": (1024, 1024, 0, 0),
         "spawn": (30.0, 83.0, -60.0), "dummies": [(45.0, 81.0, -54.6), (40.0, 81.0, -65.0)]},
 }
 # Grand Battle Field list: (campaign id, campaign name, battlefront id, battlefront name, battlefield id)
@@ -1343,6 +1345,7 @@ class Session:
         # MapInfo (17,17008), request: u32 battlefield id. Reply read by MapInfoObserver (Game.dll 0x1041c910) into a
         # BATTLE_FIELD_INFO passed to BattleFieldManager::AddBattleFieldIntro:
         #   u32 id | str name | str desc | u8 x4 | u8 type | u32 x4 | astr world file | f32 x3 | astr
+        # The first two u32 are the big map's picture size (BATTLE_FIELD_INFO +0x64/+0x68, CRadarMapUI::ChangeMap).
         bfid = struct.unpack_from("<I", msg.body)[0] if len(msg.body) >= 4 else 0
         bf = BATTLEFIELDS.get(bfid)
         if not bf:
@@ -3292,11 +3295,27 @@ def reborn_locations(peer):
     return [(PLATFORM_ID + 1, "Respawn Platform", where)] if PLATFORM and where else []
 
 
+REBORN_EVERY = 2.0  # seconds between respawn point lists to a dead player
+
+
+def reborn_while_dead(server, peer, death):
+    """Keep sending the respawn points while the player is dead. The death map only takes them while it is open
+    (Select on the death screen) and asks by itself (9,40332) just once a minute (BigMapState::Tick), which is
+    usually after the respawn."""
+    m = getattr(peer, "match", None)
+    if not m or not peer.player_dead or peer.deaths != death or not reborn_locations(peer):
+        return
+    send_reborn_locations(server, peer)
+    m.later(REBORN_EVERY, reborn_while_dead, server, peer, death)
+
+
 def send_reborn_locations(server, peer):
-    """The death map's respawn points. While it is open the client asks every few seconds (9,40332, empty;
-    BigMapState::Tick 0x105be280). Answer: (19,50331) to BigMapEventObserver::OnUpdateRebornLoc (0x105ba2b0):
-    u32 n groups | n x (u32 | u32 m | m x (u32 id | str | u32 | f32 x | f32 z)) -> CRadarMapUI::AddRebornLoc, a
-    MachineCabin icon at world x, z. What the group's u32 and the u32 after the name mean is not known (sent 0)."""
+    """The death map's respawn points, sent while dead (reborn_while_dead) and when the client asks (9,40332,
+    empty; BigMapState::Tick 0x105be280, at most once a minute). (19,50331) to BigMapEventObserver::OnUpdateRebornLoc
+    (0x105ba2b0): u32 n groups | n x (u32 | u32 m | m x (u32 id | str | u32 | f32 x | f32 z)) ->
+    CRadarMapUI::AddRebornLoc, an icon at world x, z on the big map's picture (needs the picture size from MapInfo).
+    The group's u32 and the u32 after the name are not used there (sent 0). Clicking the icon selects it ("Respawn
+    Here"); the map's Respawn button (control 100) then sends (9,40331)."""
     locs = reborn_locations(peer)
     if not locs:
         return
@@ -3489,6 +3508,7 @@ def hit_player(server, m, victim, damage, killer_name, killer=None):
         if side_won or (m.bf.get("rounds") and ROUND_KILLS and not m.kill_mode and killer.player_kills >= ROUND_KILLS):
             end_round(m)
     if not m.over:
+        reborn_while_dead(server, victim, victim.deaths)
         m.later(RESPAWN_DELAY, relive_player, server, victim)
     return True
 

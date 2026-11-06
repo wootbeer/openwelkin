@@ -668,11 +668,15 @@ msg(A, 40331, struct.pack("<II", 0, fid))
 ok &= check("no respawn point pick while alive", not got(A, 50330))
 pa.platform = spawned_at = (pa.platform[0] + 30.0, pa.platform[1], pa.platform[2] + 20.0)  # away from the spawn point
 kill(pb, pa)
+step()
+ok &= check("the respawn points go out at death", len(got(A, 50331)) == 1)
+step(ls.REBORN_EVERY + 0.1)
+ok &= check("and again while dead", len(got(A, 50331)) == 2)
 msg(A, 40332, b"")
 locs = got(A, 50331)
-ok &= check("the death map lists the platform", len(locs) == 1 and locs[0][:12] == struct.pack("<III", 1, 0, 1)
-            and struct.unpack_from("<I", locs[0], 12)[0] == fid
-            and locs[0].endswith(struct.pack("<ff", spawned_at[0], spawned_at[2])))
+ok &= check("the death map lists the platform", len(locs) == 3 and locs[0] == locs[2]
+            and locs[2][:12] == struct.pack("<III", 1, 0, 1) and struct.unpack_from("<I", locs[2], 12)[0] == fid
+            and locs[2].endswith(struct.pack("<ff", spawned_at[0], spawned_at[2])))
 msg(A, 40331, struct.pack("<II", 0, 777))
 ok &= check("not a respawn point that is not there", not got(A, 50330))
 msg(A, 40331, struct.pack("<II", 0, fid))
@@ -683,6 +687,9 @@ ok &= check("picking it: SelectRebornLoc with the platform's function",
 step(ls.RESPAWN_DELAY + 0.1)
 ok &= check("and the player respawns there, dropped in above it", not pa.player_dead and pa.reborn is None
             and pa.pos == (spawned_at[0], spawned_at[1] + ls.SPAWN_DROP, spawned_at[2]))
+n_locs = len(got(A, 50331))
+step(ls.REBORN_EVERY + 0.1)
+ok &= check("no more respawn point lists once alive", len(got(A, 50331)) == n_locs)
 ls.PLATFORM = False
 for addr in list(server.peers):
     server.close(server.peers[addr], "test over")
@@ -698,5 +705,16 @@ ok &= check("a message flood is dropped past the burst", pa.dropped > 0 and A in
 for _ in range(fdp.MSG_DROP_CLOSE // 250 + 1):
     server.handle(fdp.Packet(0x01, 1, pa.server_session, 12 + len(flood), 0, 0, 0, flood).pack(), A)
 ok &= check("a session that keeps flooding is closed", A not in server.peers)
+
+# MapInfo (17,17008) carries the big map's picture size; without it the death map's icons all sit in a corner
+class FakeHall:
+    def reply(self, m, body=b"", result=None):
+        self.body = body
+
+
+hall = FakeHall()
+ls.Session.on_map_info(hall, type("M", (), {"body": struct.pack("<I", 2)})())
+ok &= check("MapInfo for Mars Front carries its 1024 x 1024 map picture", struct.pack("<IIII", 1024, 1024, 0, 0) in hall.body
+            and hall.body.index(struct.pack("<IIII", 1024, 1024, 0, 0)) + 16 < hall.body.index(b"B01.reb"))
 print("all ok" if ok else "FAILURES")
 sys.exit(0 if ok else 1)

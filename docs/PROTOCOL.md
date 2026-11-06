@@ -417,6 +417,8 @@ The Training Ground list, polled every 10 s. For each id the client also request
 u32 id | str name | str desc | 4 x u8 | u8 type | 4 x u32 | str world file ("Atrain01.reb") | 3 x f32 | str
 ```
 
+The first two u32 are the big map's picture size (BATTLE\_FIELD\_INFO +0x64 / +0x68, used by CRadarMapUI::ChangeMap): the size of Maps\&lt;name>\&lt;name>.bmp, 512 × 512 for Atrain01 and 1024 × 1024 for B01. With 0 × 0 the big map (M) does not open and the death map's icons all sit in one corner. Real client 2026-11-06.
+
 <a name="m-18-18021"></a>
 #### MapStatus `(18,18021)`
 
@@ -1134,24 +1136,24 @@ E at a station whose function is available (the Respawn Platform shows "RespawnP
 <a name="m-9-40332"></a>
 #### ask for respawn points `(9,40332)`
 
-*C→S · from the code*
+*C→S · verified*
 
 ```text
 (empty)
 ```
 
-Sent every few seconds while the death map is open (BigMapState::Tick, 0x105be280). Answer: (19,50331) `u32 n groups | n × (u32 | u32 m | m × (u32 id | str name | u32 | f32 x | f32 z))` to BigMapEventObserver::OnUpdateRebornLoc (0x105ba2b0); each point is a MachineCabin icon at world x, z (CRadarMapUI::AddRebornLoc). The group's u32 and the u32 after the name are not known; the server sends 0. With MW\_PLATFORM the list holds the player's Respawn Platform. Not tried in game yet.
+Sent at most once a minute while the death map is open (BigMapState::Tick, 0x105be280), so usually only after a 5 s respawn; the server also sends the answer every 2 s while the player is dead. The map only takes it while it is open (Select on the death screen). Answer: (19,50331) `u32 n groups | n × (u32 | u32 m | m × (u32 id | str name | u32 | f32 x | f32 z))` to BigMapEventObserver::OnUpdateRebornLoc (0x105ba2b0); each point is a MachineCabin icon at world x, z (CRadarMapUI::AddRebornLoc). The group's u32 and the u32 after the name are not used there; the server sends 0. With MW\_PLATFORM the list holds the player's Respawn Platform. Real client 2026-11-06: the icon shows; clicking it marks it "Respawn Here" (CRadarMapUI::SetCurRebornLoc).
 
 <a name="m-9-40331"></a>
 #### pick a respawn point `(9,40331)`
 
-*C→S · from the code*
+*C→S · verified*
 
 ```text
 u32 | u32 respawn point id
 ```
 
-Clicking a point on the death map (CRadarMapUI +0xf7c). The server answers SelectRebornLoc (19,50330) `vec3 pos | f32 quat x, y, z, w | u32 function id | u8 open the map`; the client only takes it for its own dead robot (+0x194 = 2 after Robot::Dead): it moves the robot there, sets the function it is at (+0x3f8, also the character's +0x27c) and turns the camera to the station (Robot::SetRebornFunction). The player then respawns there. Related, not handled: (9,40333) every few seconds while dead, (9,40335) quick relive (CAvatarDeadUI), (19,50332) ReselectRebornLoc. Not tried in game yet.
+The death map's Respawn button (control 100 in CRadarMapUI::RadarMapUIEvent) sends the point picked by clicking it (CRadarMapUI +0xf7c). The server answers SelectRebornLoc (19,50330) `vec3 pos | f32 quat x, y, z, w | u32 function id | u8 open the map`; the client only takes it for its own dead robot (+0x194 = 2 after Robot::Dead): it moves the robot there, sets the function it is at (+0x3f8, also the character's +0x27c) and turns the camera to the station (Robot::SetRebornFunction). The player then respawns there. Related, not handled: (9,40333) every few seconds while dead, (9,40335) quick relive (CAvatarDeadUI), (19,50332) ReselectRebornLoc. Real client 2026-11-06: SelectRebornLoc moves the camera to the platform, and the respawn happens there. In our window the death dialog covered the map's Respawn button, so it was fired through Frida.
 
 <a name="m-9-40310"></a>
 #### Respawn in the Robot Roof `(9,40310)`
