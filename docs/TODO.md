@@ -100,7 +100,9 @@ reply layout, and answer with real data.
 - [ ] Equipping bought items (24006 in-use list, loadout). 2026-11-05, offline: (24,24007) GS_SetItemInUse read
       from Game.dll and answered: u32 character id | u32 item id | u32 slot, sent when an item is dropped in the
       hall Warehouse (slot 0 = dropped back on the list). The slot is saved with the item and 24006 sends it back.
-      Not tried in game. Still open: how many slots there really are (32 sent), whether the battle Robot Roof's
+      Not tried in game. 2026-11-06, offline: there are 10 slots (the Warehouse's 10 "Equipped PlugIn" cells, controls 17..26;
+      CWareHouseUI::RefreshItemInUse puts slot i on control 16 + i); items saved past slot 10 count as not in
+      use. Still open: whether the battle Robot Roof's
       warehouse lists in-use items. In battle the weapon in the lowest in-use slot is used (else the newest
       activated one)
 

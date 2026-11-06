@@ -283,8 +283,14 @@ def loadout_weapon(cid):
     now = time.time()
     weapons = [it for it in STORE.items(cid) if it.get("active") and it["item"] in WEAPONS
                and PRODUCTS.get(it["item"], {}).get("type") == 8 and (it["expires"] == 0 or it["expires"] > now)]
-    used = sorted((it for it in weapons if it.get("equipped")), key=lambda it: it["equipped"])
+    used = sorted((it for it in weapons if in_use_slot(it)), key=lambda it: it["equipped"])
     return (used or weapons[::-1] or [{"item": DEFAULT_WEAPON}])[0]["item"]
+
+
+def in_use_slot(it):
+    """The item's in-use slot, or 0. Slots past IN_USE_SLOTS (saved when 32 were sent) count as not in use."""
+    slot = it.get("equipped", 0)
+    return slot if 1 <= slot <= IN_USE_SLOTS else 0
 
 
 def package(pkg_id):
@@ -959,7 +965,9 @@ ACCOUNTS = Accounts()
 BANS = Bans()
 ONLINE = {}  # account -> its gate Session; one per account, a second login closes the first
 MAX_CONTACTS = 100  # entries on a friend or block list
-IN_USE_SLOTS = 32  # in-use slots sent with 24006 (the old fixed value; the real count is not known)
+# in-use slots sent with 24006: the hall Warehouse (dialog 109) has 10 "Equipped PlugIn" cells, controls 17..26;
+# CWareHouseUI::RefreshItemInUse puts slot i on control 16 + i, so a higher slot would land on other controls
+IN_USE_SLOTS = 10
 MAX_SUITES = 10  # loadout presets per character
 MAX_SUITE_TEXT = 400  # characters in one preset (a name and a few dozen part ids)
 KICK_NOTICE = 1.5  # seconds a kicked player has to see why, before the connection closes
@@ -2008,7 +2016,7 @@ class Session:
         # | str). Slots is how many in-use slots the character has (vector at character +0x3e4, 0x58 each).
         # Items listed here count as equipped: the warehouse hides them.
         cid = struct.unpack_from("<I", msg.body)[0] if len(msg.body) >= 4 else 0
-        items = [it for it in STORE.items(cid) if it.get("equipped")] if self.own_character(cid) else []
+        items = [it for it in STORE.items(cid) if in_use_slot(it)] if self.own_character(cid) else []
         now = int(time.time())
         items = [it for it in items if it.get("active") and (it["expires"] == 0 or it["expires"] > now)]
         body = struct.pack("<II", IN_USE_SLOTS, len(items))

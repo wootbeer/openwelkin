@@ -264,6 +264,10 @@ async def scenario():
     r = await amy.request(24, 24007, struct.pack("<III", amy_id, item, 5))
     check("it can move to another slot", r.result == 0 and
           in_use(await amy.request(24, 24006, struct.pack("<I", amy_id))) == [(5, item)])
+    check("the Warehouse has 10 in-use slots", struct.unpack_from("<I", (await amy.request(
+        24, 24006, struct.pack("<I", amy_id))).body)[0] == 10)
+    check("an item saved in a slot past 10 (when 32 were sent) counts as not in use",
+          ls.in_use_slot({"equipped": 20}) == 0 and ls.in_use_slot({"equipped": 10}) == 10)
     for bad, why in ((struct.pack("<III", amy_id, item, ls.IN_USE_SLOTS + 1), "a slot past the last"),
                      (struct.pack("<III", amy_id, 999999, 1), "an item not owned"),
                      (struct.pack("<II", amy_id, item), "a short request")):

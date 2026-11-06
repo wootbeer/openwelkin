@@ -751,7 +751,7 @@ Applied goods. The client cuts the date at the first `:`, so send just the date.
 u32 slots | u32 count | count x ( u32 slot | u32 item id | u8 | u32 minutes left | str )
 ```
 
-Items listed here count as equipped and are hidden from the warehouse. Slots is the number of in-use slots (the emulator sends 32); slot is 1-based.
+Items listed here count as equipped and are hidden from the warehouse. Slots is the number of in-use slots; slot is 1-based. The client keeps a list of that many entries (character +0x3e4) and puts slot i's picture on Warehouse control 16 + i. The hall Warehouse (dialog 109) has 10 cells under "Equipped PlugIn", controls 17 to 26, so the emulator sends 10: a higher slot would land on the controls after them.
 
 > The emulator gives the player the weapon in the lowest in-use slot in battle, else the newest applied weapon. The weapon flyweight id is the item id.
 
