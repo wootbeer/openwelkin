@@ -193,14 +193,17 @@ def load_weapons():
                     key = el.get("DataName")
                 elif key and key not in vals:
                     vals[key] = el.get("data", "")
-            out[int(vals["ProductID"])] = (float(vals.get("MaxCapacitance") or 120),
-                                           float(vals.get("WP1DaltaShootTime") or 0.142) or 0.142,
-                                           float(vals.get("WP1Range") or 0) or DEFAULT_RANGE)
+            pid = int(vals["ProductID"])
+            out[pid] = (float(vals.get("MaxCapacitance") or 120),
+                        float(vals.get("WP1DaltaShootTime") or 0.142) or 0.142,
+                        float(vals.get("WP1Range") or 0) or DEFAULT_RANGE)
+            WEAPON_FIT[pid] = (int(vals.get("RobotTypeCanUse") or 1), vals.get("MatchBodyName") or "")
         except (ET.ParseError, ValueError, KeyError, AttributeError):
             continue
     return out
 
 
+WEAPON_FIT = {}  # weapon -> (RobotTypeCanUse, MatchBodyName): 1 = walkers, 2 = heavies; a heavy weapon names its body
 WEAPONS = load_weapons()
 
 
@@ -228,7 +231,9 @@ def terrain(world):
 
 def load_robots():
     """Robot flyweight id -> (body fw, armor fw, core fw, primary slots, secondary slots), from
-    data/flyweights/Robot: C_Logic_MA_* name the parts (FIDRobotBody/Armor/Core), the armor sets the slot counts."""
+    data/flyweights/Robot: C_Logic_MA_* name the parts (FIDRobotBody/Armor/Core). Robot::init (Game.dll 0x102425b0)
+    adds the body's and the armor's slot counts: walkers have them on the armor, heavies (Intercessor, RockStone,
+    Jaguar) one primary slot on the body. Also fills ROBOT_BODY: robot -> (body RobotArmorType, body name)."""
     import xml.etree.ElementTree as ET
     root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "flyweights", "Robot")
     vals = {}
@@ -236,7 +241,7 @@ def load_robots():
         try:
             d = ET.parse(os.path.join(root, f)).getroot()
             oid = int(d.find("FileInfo/Info").get("ObjectID"))
-            v, key = {}, None
+            v, key = {"": d.find("FileInfo/Info").get("ObjectName") or ""}, None
             for el in d.find("FileData"):
                 if el.tag == "DataInfo":
                     key = el.get("DataName")
@@ -249,42 +254,68 @@ def load_robots():
     for oid, v in vals.items():
         try:
             body, armor, core = int(v["FIDRobotBody"]), int(v["FIDRobotArmor"]), int(v["FIDRobotCore"])
-            a = vals[armor]
-            out[oid] = (body, armor, core, int(a.get("PrimarySlotCount") or 0), int(a.get("SecondarySlotCount") or 0))
+            a, b = vals[armor], vals[body]
+            out[oid] = (body, armor, core,
+                        sum(int(x.get("PrimarySlotCount") or 0) for x in (a, b)),
+                        sum(int(x.get("SecondarySlotCount") or 0) for x in (a, b)))
+            ROBOT_BODY[oid] = (int(b.get("RobotArmorType") or 1), b[""])
         except (KeyError, ValueError):
             continue
     return out
 
 
+ROBOT_BODY = {}
 ROBOTS = load_robots()
+# Heavy robots (RobotArmorType 2 bodies) are built with their body slot and a weapon made for that body, but are not
+# tried in game yet (before, with no slot at all, the client crashed). Off unless MW_HEAVY_ROBOTS=1 or MW_ROBOT names one.
+HEAVY_ROBOTS = os.environ.get("MW_HEAVY_ROBOTS") == "1"
 DEFAULT_ROBOT = 1311  # Walker_Basic (BattleRobot)
 
 
 def player_robot(cid):
     """The robot type the character fights in: MW_ROBOT if set, else the last robot talent learned (Robot tab)."""
     forced = os.environ.get("MW_ROBOT")
-    if forced and forced.isdigit() and usable_robot(int(forced)):
+    if forced and forced.isdigit() and usable_robot(int(forced), True):
         return int(forced)
     rid = ((STORE.by_id(cid) or {}).get("robot")) or DEFAULT_ROBOT
     return rid if usable_robot(rid) else DEFAULT_ROBOT
 
 
-def usable_robot(rid):
-    """Heavy armors (no equipment slots, e.g. 1301 ArmorRobot) carry their weapons as armor parts we don't build
-    yet; spawning one crashes the client, so they fall back to the default robot for now."""
+def usable_robot(rid, heavy=None):
+    """A robot we can build: known parts, at least one equipment slot and a weapon that fits it. Heavies only with
+    HEAVY_ROBOTS (or heavy=True)."""
     r = ROBOTS.get(rid)
-    return bool(r and r[3] + r[4] > 0)
+    if not r or r[3] + r[4] <= 0 or not body_weapons(rid):
+        return False
+    return ROBOT_BODY.get(rid, (1, ""))[0] == 1 or (HEAVY_ROBOTS if heavy is None else heavy)
+
+
+def fits(wid, rid):
+    """Can this robot hold this weapon: the weapon's RobotTypeCanUse is the body's type, and a weapon that names a
+    body (MatchBodyName, the heavies' weapons) names this one. Unknown weapons or robots fit."""
+    if wid not in WEAPON_FIT or rid not in ROBOT_BODY:
+        return True
+    (use, match), (kind, name) = WEAPON_FIT[wid], ROBOT_BODY[rid]
+    return use == kind and match in ("", name)
+
+
+def body_weapons(rid):
+    """The weapons that fit a robot, lowest id first."""
+    return sorted(w for w in WEAPONS if w > 0 and fits(w, rid)) or ([DEFAULT_WEAPON] if rid not in ROBOT_BODY else [])
 DEFAULT_WEAPON = 3101  # Viper
 
 
 def loadout_weapon(cid):
-    """The character's weapon for battle: the weapon in the lowest in-use slot (Warehouse, 24007), else the newest
-    activated, unexpired weapon item, else the Viper."""
+    """The character's weapon for battle: of the weapons that fit its robot, the one in the lowest in-use slot
+    (Warehouse, 24007), else the newest activated, unexpired one, else the Viper (a heavy robot: the first weapon
+    made for its body)."""
     now = time.time()
-    weapons = [it for it in STORE.items(cid) if it.get("active") and it["item"] in WEAPONS
+    robot = player_robot(cid)
+    weapons = [it for it in STORE.items(cid) if it.get("active") and it["item"] in WEAPONS and fits(it["item"], robot)
                and PRODUCTS.get(it["item"], {}).get("type") == 8 and (it["expires"] == 0 or it["expires"] > now)]
     used = sorted((it for it in weapons if in_use_slot(it)), key=lambda it: it["equipped"])
-    return (used or weapons[::-1] or [{"item": DEFAULT_WEAPON}])[0]["item"]
+    default = DEFAULT_WEAPON if fits(DEFAULT_WEAPON, robot) else (body_weapons(robot) or [DEFAULT_WEAPON])[0]
+    return (used or weapons[::-1] or [{"item": default}])[0]["item"]
 
 
 def in_use_slot(it):

@@ -144,6 +144,19 @@ def characters():
     check("unless another is in use", ls.STORE.set_in_use(cid, 3101, 2) and ls.loadout_weapon(cid) == 3101)
     check("the lowest slot wins", ls.STORE.set_in_use(cid, 3104, 1) and ls.loadout_weapon(cid) == 3104)
     ls.STORE.set_in_use(cid, 3104, 0)
+    if 1301 in ls.ROBOTS:  # needs the client's data (setup_data.py)
+        check("a heavy robot gets its body's slot", ls.ROBOTS[1301][3:] == (1, 0) and ls.ROBOTS[1311][3:] == (2, 2))
+        with ls.STORE.lock:
+            ls.STORE.by_id(cid)["robot"] = 1301
+        check("heavies stay off unless switched on", ls.player_robot(cid) == ls.DEFAULT_ROBOT)
+        ls.HEAVY_ROBOTS = True
+        check("switched on: a heavy gets a heavy weapon, not the walker's in use",
+              ls.player_robot(cid) == 1301 and ls.loadout_weapon(cid) == 3302)
+        parts = ls.robot_parts(cid, 5000001, (0.0, 0.0, 0.0))
+        check("and one slot with that weapon", len(parts) == 4 and parts[3][0] == 3302)
+        ls.HEAVY_ROBOTS = False
+        with ls.STORE.lock:
+            ls.STORE.by_id(cid)["robot"] = ls.DEFAULT_ROBOT
     check("an expired item is listed", 3102 in ls.STORE.expired(cid) and 3101 not in ls.STORE.expired(cid))
     check("and cannot go in use", not ls.STORE.set_in_use(cid, 3102, 1))
     ls.STORE.save_suite(cid, 7, "Fast 1311 0 0 0 2 3101 3102 0")

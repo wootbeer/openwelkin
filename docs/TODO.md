@@ -51,7 +51,11 @@ reply layout, and answer with real data.
       can be learned again. 14043 ends with u32 wait in MINUTES | u32 price (the confirm box shows the price, a second try
       shows "Last forget talent time is ..., you need to wait 23Hour58Mins")
 - [x] Spawn as the last robot talent learned (parts from data/flyweights/Robot; verified Scout 1313 in game; MW_ROBOT=<fw> forces one)
-- [ ] Heavy robots (1301 ArmorRobot, 0 equipment slots) crash the client -- weapons are armor parts; falls back to 1311 for now
+- [ ] Heavy robots (1301 Intercessor, 1201 RockStone, 1401/1402 Jaguar) crashed the client. 2026-11-06, offline:
+      their slot is on the body, not the armor (Robot::init adds both counts), so the server sent no slot at all.
+      Now they get one, with a weapon made for the body (RobotTypeCanUse 2 and MatchBodyName, e.g. BearPaw 3302
+      for the Intercessor). Not tried in game, so behind MW_HEAVY_ROBOTS=1 (or MW_ROBOT=1301); off, they still
+      fall back to 1311. Try: MW_ROBOT=1301, spawn, fire, die and respawn
 
 ## Corps / teams
 - [ ] (15,15022) UpdateCorpInfo

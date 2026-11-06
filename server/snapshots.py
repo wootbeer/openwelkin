@@ -81,7 +81,7 @@ def system_parts(parts, pos=(0.0, 0.0, 0.0), power=None, hp=1000, speed=8.0, jum
     """Robot::WriteSystemPartSnapshot (0x1024dc90), also the body of GS_Robot_SystemPart (19,50104) after
     u32 robot id | u8 full (reads the function/skill/state fields below) | u8 avatar:
         u32 part count | count x (u32 fw | u32 object id | part snapshot)   -- index 0 body, 1 armor, 2 core,
-            then one entry per equipment slot (armor PrimarySlotCount + SecondarySlotCount; u32 -1 = empty slot).
+            then one entry per equipment slot (body + armor PrimarySlotCount, then body + armor SecondarySlotCount, Robot::init 0x102425b0; u32 -1 = empty slot).
             Robot::AddSystemPart indexes parts[3 + slot] and aborts (CRT invalid parameter) if entries are missing.
         u32 function fw (-1 = none) [u32 object id | function snapshot, see func_power] | u32 skill fw (-1) | u32 skill fw (-1)
         u32 (+0xfc) | f32 speed (+0x174) | f32 jump (+0x168) | f32 (+0x178) | u32 pose (+0x18c) | 9 x u32 | vec3 (+0x30) | vec3 | i32 establishment id (+0x13c, -1 = none) | u32 (+0x140)

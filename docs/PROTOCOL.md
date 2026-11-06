@@ -1528,7 +1528,9 @@ Objects are sent as snapshots. The client functions that read them are named `Wr
 
 ```text
 u32 part count | count x ( u32 flyweight | u32 object id | part snapshot )   -- or i32 -1 for an empty slot
-                  order: body, armor, core, then one entry per armor slot
+                  order: body, armor, core, then one entry per equipment slot, primary first. Robot::init adds the
+                  body's and the armor's PrimarySlotCount (and SecondarySlotCount): walkers have them on
+                  the armor, heavy bodies (Intercessor, RockStone, Jaguar) one primary slot of their own
 u32 function flyweight (-1 = none) [u32 object id | function snapshot]
 i32 skill (-1) | i32 skill (-1)
 u32 | 3 x f32 | 10 x u32 | vec3 | vec3 | i32 establishment (-1 = none) | u32
