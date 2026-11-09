@@ -748,6 +748,8 @@ sel = got(A, 50330)[n:]
 ok &= check("the death dialog's Respawn picks the first listed station you may use",
             pa.reborn == own["fid"] and len(sel) == 1 and struct.unpack_from("<I", sel[0], 28)[0] == own["fid"])
 msg(A, 40331, struct.pack("<II", 0, own["fid"]))
+ok &= check("a pick restarts the speed check at the station (the client moves its dead robot there)",
+            pa.pos == tuple(own["respawn"]) and ls.move_allowed(server, pa, tuple(own["respawn"])))
 step(ls.RESPAWN_DELAY + 0.1)
 ok &= check("and you respawn at its produce point", not pa.player_dead and pa.pos == (
     own["respawn"][0], own["respawn"][1] + ls.SPAWN_DROP, own["respawn"][2]))

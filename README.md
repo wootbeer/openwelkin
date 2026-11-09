@@ -166,7 +166,7 @@ python server/tools/admin.py who
 | `matches` | Running matches and their players |
 | `aim` | Far shots at players and how many hit, best first. A player who hits nearly all of them is marked |
 | `kick <account> [reason]` | Disconnect an account (hall and battle). They see the reason in chat first |
-| `goto <account> <x> <y> <z>` | Move a player's robot in battle, for someone stuck. Not tried in game yet |
+| `goto <account> <x> <y> <z>` | Move a player's robot in battle, for someone stuck |
 | `tell <character> <text>` | A private line from Server to one player |
 | `mute <character> <time>` | No chat for a while; time like `30m`, `12h`, `7d`. `!` commands still work |
 | `unmute <character>` | |

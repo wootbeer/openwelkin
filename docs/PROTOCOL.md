@@ -1173,13 +1173,13 @@ CNewRobotRoofUI::SubmitProduce (0x105dd1c0) calls Func\_Receive::SubmitOrder (0x
 <a name="m-9-40335"></a>
 #### quick respawn from the death dialog `(9,40335)`
 
-*C→S · from the code*
+*C→S · verified*
 
 ```text
-u32 | u32 n | n × u32 function id
+u32 | u32 n | n × u32 revive locator id
 ```
 
-The death dialog's Respawn button (control 6, CAvatarDeadUI::QuickRelive 0x104ae7f0). The client lists the functions whose establishment has the player's nation (establishment +0x6c == character +0x30), nearest to the dead robot first. The server picks the first one the player may respawn at and answers like a pick on the death map: SelectRebornLoc (19,50330). A list longer than 64 is ignored. Func\_Transport::RequestTransport (0x102d64d0, CTransportUI) sends the same id with one u32 (`u32 | u32`); there is no transport here, so that is ignored.
+The death dialog's Respawn button (control 6, CAvatarDeadUI::QuickRelive 0x104ae7f0). The client lists the Revive Locators of the player's nation (FuncManager::GetReviveLocators, a set filled by the ReviveLocator constructor; locator +0x6c == character +0x30), nearest to the dead robot first. A Revive Locator is its own object type (FReviveLocator, a DamageUnit and Item), not a station: stations are never in the list. The server makes no Revive Locators, so the real client sends n = 0 (seen 2026-11-09) and the player respawns after the normal delay. The server still takes a listed id that is one of the player's respawn points, like a pick on the death map (SelectRebornLoc (19,50330)). A list longer than 64 is ignored. Func\_Transport::RequestTransport (0x102d64d0, CTransportUI) sends the same id with one u32 (`u32 | u32`); there is no transport here, so that is ignored.
 
 <a name="m-9-40311"></a>
 #### Robot Roof stock, several Types `(9,40311)`

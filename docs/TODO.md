@@ -31,10 +31,12 @@ reply layout, and answer with real data.
       them; setup_data.py now writes them to data/maps/<map>.stations (B01: 10, 1 per side + 8 of no side) and
       MW_MAP_STATIONS=1 shows them; each side uses its own, and players start at their side's first one.
       Real client 2026-11-06: E at the side's platform on B01 opens the Robot Roof; the base around it is the
-      map's own scenery. Not tried in game: dying and picking it on the death map (same code as MW_PLATFORM,
-      which works), and what the platforms of no side (nation 1) need (capture?).
-      Offline 2026-11-06: the death dialog's Respawn button (9,40335) lists the side's stations nearest first; the
-      server picks the first usable one like a death-map pick. Not tried in game. (9,40314) and (9,40333) are
+      map's own scenery. In game 2026-11-09: dying, picking it on the death map and pressing the map's Respawn
+      button respawns you inside the base at the platform; the client moves the dead robot there at once, so the
+      pick now restarts the speed check. Not tried: what the platforms of no side (nation 1) need (capture?).
+      In game 2026-11-09: the death dialog's Respawn button (9,40335) lists the side's Revive Locators (their own
+      object type, FReviveLocator), not stations. We make none, so it sends an empty list and the player respawns
+      after the delay. To do: find what places a Revive Locator (an item?) and add it. (9,40314) and (9,40333) are
       taken and ignored; (9,40311) is not handled (no caller found).
       Offline 2026-11-06: Respawn sends (9,40310) (robot + weapons); the server answers ProduceRes (19,50312)
       and rebuilds the robot on the spot. Not tried in game: whether a different robot type looks right on the

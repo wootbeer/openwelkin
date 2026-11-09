@@ -216,7 +216,7 @@ WEAPONS = load_weapons()
 TERRAINS = {}          # (map folder, kind) -> mapdata.Terrain / mapdata.Walls, or None
 
 
-MAP_STATIONS = os.environ.get("MW_MAP_STATIONS") == "1"  # the maps' own Respawn Platforms (not tried in game yet)
+MAP_STATIONS = os.environ.get("MW_MAP_STATIONS") == "1"  # the maps' own Respawn Platforms
 STATION_ID = 4_100_000_000  # map station i: establishment STATION_ID + 2i, its function + 1 (past robot ids)
 STATIONS = {}  # map folder -> [station]
 
@@ -3402,21 +3402,26 @@ def select_reborn(server, peer, loc):
     with GAME_LOCK:
         if not peer.player_dead:
             return
-        for fid, _, pos in reborn_locations(peer):
+        for fid, name, pos in reborn_locations(peer):
             if fid == loc:
                 peer.reborn = fid
+                log(f"[game] {peer.name} will respawn at {name}")
+                peer.pos = tuple(pos)  # the client moves its dead robot there: not a speed cheat
+                placed(peer)
                 send_game_event(server, peer, 19, 50330, struct.pack("<3f4fIB", *pos, 0.0, 0.0, 0.0, 1.0, fid, 0))
                 return
 
 
-RELIVE_MAX_IDS = 64  # a quick relive lists the player's side's stations; a map has a handful
+RELIVE_MAX_IDS = 64  # a quick relive lists the player's side's revive locators
 
 
 def quick_relive(server, peer, body):
     """The death dialog's Respawn button (control 6, CAvatarDeadUI::QuickRelive 0x104ae7f0), (9,40335):
-    u32 | u32 n | n x u32 function id. The client lists the functions whose establishment has the player's nation
-    (FuncManager, establishment +0x6c == character +0x30), nearest to the dead robot first. The first one the player
-    may respawn at is picked, as if clicked on the death map (select_reborn). Func_Transport::RequestTransport sends
+    u32 | u32 n | n x u32 id. The client lists the Revive Locators of the player's nation (FuncManager::
+    GetReviveLocators, filled by the ReviveLocator constructor; locator +0x6c == character +0x30), nearest first.
+    They are their own object type (FReviveLocator), not stations. The server makes none, so the real client sends
+    n = 0 (seen 2026-11-09) and the player respawns after the delay. A listed id that is one of the player's respawn
+    points is still taken, as if clicked on the death map (select_reborn). Func_Transport::RequestTransport sends
     the same id with a single u32 (8 bytes); there is no transport here, so that is ignored."""
     if len(body) < 12:
         return
@@ -3429,6 +3434,8 @@ def quick_relive(server, peer, body):
     fid = next((f for f in wanted if f in mine), None)
     if fid is not None:
         select_reborn(server, peer, fid)
+    elif mine:
+        log(f"[game] {peer.name} quick relive: none of {list(wanted)[:8]} is a respawn point")
 
 
 # ProduceRes (19,50312) codes, Func_Receive::OnProduceResult (0x102cad20); the client shows RECEIVER_ERROR_* texts
