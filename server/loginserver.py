@@ -3585,9 +3585,10 @@ def hit_dummy(server, m, shooter, rid):
     return True
 
 
-def hit_player(server, m, victim, damage, killer_name, killer=None):
-    """Damage a player's robot (armor update to everyone); at zero it dies, the kill is reported and it respawns."""
-    if victim.player_dead or time.time() < victim.protected_until:
+def hit_player(server, m, victim, damage, killer_name, killer=None, suicide=False):
+    """Damage a player's robot (armor update to everyone); at zero it dies, the kill is reported and it respawns.
+    A suicide ignores spawn protection and reports no killer (see suicide)."""
+    if victim.player_dead or (time.time() < victim.protected_until and not suicide):
         return False
     victim.player_hp = max(0.0, victim.player_hp - damage)
     m.broadcast(19, 50005, struct.pack("<I", victim.player_rid) + snapshots.armor_info(PLAYER_HP, victim.player_hp)
@@ -3600,8 +3601,11 @@ def hit_player(server, m, victim, damage, killer_name, killer=None):
     STORE.add_log(victim.cid, f"Destroyed by {killer_name}")
     log(f"[game] {victim.name} destroyed by {killer_name}")
     m.broadcast(19, 50107, struct.pack("<Iff", victim.player_rid, 0.0, 0.0))
-    kill_report(m, victim.name, killer_name, loadout_weapon(killer.cid) if killer else DEFAULT_WEAPON,
-                nation_of(victim.cid), nation_of(killer.cid) if killer else DUMMY_NATION)
+    if suicide:  # no killer name: a client whose own name is the killer counts a kill streak; weapon 0 = no feed line
+        kill_report(m, victim.name, "", 0, nation_of(victim.cid), nation_of(victim.cid))
+    else:
+        kill_report(m, victim.name, killer_name, loadout_weapon(killer.cid) if killer else DEFAULT_WEAPON,
+                    nation_of(victim.cid), nation_of(killer.cid) if killer else DUMMY_NATION)
     if killer:
         credit_kill(server, killer, victim.name)
         killer.player_kills += 1
@@ -3612,6 +3616,18 @@ def hit_player(server, m, victim, damage, killer_name, killer=None):
         reborn_while_dead(server, victim, victim.deaths)
         m.later(RESPAWN_DELAY, relive_player, server, victim)
     return True
+
+
+def suicide(server, peer):
+    """F12 in battle ("suicide" in InputConfig_Default.ini), Yes on "You sure to Suicide?" (Robot::Suicide
+    0x1023d900, RobotSuicideConfirmCallback): (9,40110), empty. The player's robot is destroyed: a death, no kill
+    for anyone, respawn as usual. In the original game it also banned the guns for a while unless the robot had the
+    Suicide plugin; not done here."""
+    with GAME_LOCK:
+        m = getattr(peer, "match", None)
+        if not m or m.over or peer not in (m.peers or ()) or not peer.player_rid or peer.player_dead:
+            return
+        hit_player(server, m, peer, peer.player_hp, "self-destruct", suicide=True)
 
 
 def fire_tick(server, peer, trig, n):
@@ -4020,6 +4036,8 @@ def on_game_message(server, peer, raw):
         select_reborn(server, peer, struct.unpack_from("<I", body, 4)[0])
     elif key == (9, 40335):
         quick_relive(server, peer, body)
+    elif key == (9, 40110):
+        suicide(server, peer)
     elif key in ((9, 40314), (9, 40333)):
         pass  # cancel an order (orders here are done at once) / big map status every 15 s (answer not known)
     elif key in ((9, 40122), (9, 40125)):

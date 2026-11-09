@@ -118,6 +118,7 @@
   - [position](#m-9-40130) `(9,40130)`
   - [position + facing](#m-9-40133) `(9,40133)`
   - [robot action](#m-9-40101) `(9,40101)`
+  - [suicide](#m-9-40110) `(9,40110)`
   - [clock](#m-9-20001) `(9,20001)`
   - [ping](#m-9-9001) `(9,9001)`
 - [Rounds](#rounds)
@@ -1466,6 +1467,17 @@ f32 | f32 | f32 | f32
 ```
 
 Sent about once a second.
+
+<a name="m-9-40110"></a>
+#### suicide `(9,40110)`
+
+*C→S · from the code*
+
+```text
+(empty)
+```
+
+F12 in battle (`suicide = F12` in InputConfig\_Default.ini) asks "You sure to Suicide?"; Yes (RobotSuicideConfirmCallback) calls Robot::Suicide (0x1023d900), which sends this for the local robot. The server destroys the robot even during spawn protection: a death, no kill for anyone. The kill feed (19,50151) then carries an empty killer name and weapon 0, since a client whose own name is the killer counts a kill streak. In the original game a suicide without the Suicide plugin also banned the guns for a while (help text "Why Gun Forbidden?"); not done here.
 
 <a name="m-9-20001"></a>
 #### clock `(9,20001)`

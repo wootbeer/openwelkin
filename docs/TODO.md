@@ -36,7 +36,16 @@ reply layout, and answer with real data.
       pick now restarts the speed check. Not tried: what the platforms of no side (nation 1) need (capture?).
       In game 2026-11-09: the death dialog's Respawn button (9,40335) lists the side's Revive Locators (their own
       object type, FReviveLocator), not stations. We make none, so it sends an empty list and the player respawns
-      after the delay. To do: find what places a Revive Locator (an item?) and add it. (9,40314) and (9,40333) are
+      after the delay. It is the "Respawn Set" (product 3216, item Logic_ReviveLocater 3216, Engineer robots
+      only, one per robot): placed on the ground by its skill Skill_ReviveLocater 903216 (OnGround; the client's
+      skill messages are (9,40010..40012) from Skill::Leading/Update), it becomes an FReviveLocator object
+      (Logic_ReviveLocator_DEItem 10321601). Its text: friends may quick respawn beside it when a spawn truck
+      is nearby. To add it we need: the skill messages, the FReviveLocator snapshot, and the answer to a quick
+      relive that names one.
+      Offline 2026-11-09: F12 suicide (9,40110) destroys the robot (a death, no kill). Not tried in game. The
+      original's gun ban for a suicide without the Suicide plugin is not done. tools/msgids.py lists every
+      catalog 9 message the client sends; many of 40109..40181 (revive by others, equipment, booty) and
+      40320..40327 (seats, vehicles) are not handled yet. (9,40314) and (9,40333) are
       taken and ignored; (9,40311) is not handled (no caller found).
       Offline 2026-11-06: Respawn sends (9,40310) (robot + weapons); the server answers ProduceRes (19,50312)
       and rebuilds the robot on the spot. Not tried in game: whether a different robot type looks right on the

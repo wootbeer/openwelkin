@@ -191,6 +191,19 @@ ok &= check("stats saved per character", ls.STORE.stats(a_cid).get("kills") == 1
 ok &= check("and kills per weapon, today too", ls.STORE.stats(a_cid).get(f"weapon{ls.DEFAULT_WEAPON}") == 1
             and ls.STORE.stats(a_cid).get(f"weapon{ls.DEFAULT_WEAPON}_day") == 1)
 
+# F12 suicide: B just respawned (spawn protection is on) and destroys itself
+ok &= check("B is spawn protected", pb.protected_until > ls.time.time())
+n_feed = len(got(A, 50151))
+msg(B, 40110, b"")
+feed = got(A, 50151)[n_feed:]
+ok &= check("F12 suicide destroys you, even spawn protected", pb.player_dead and pb.deaths == 2)
+ok &= check("and gives nobody a kill", pa.kills == 1 and pb.kills == 0 and len(feed) == 1
+            and feed[0].endswith(ls.wstr("") + struct.pack("<II", ls.nation_of(b_cid), 0)))
+msg(B, 40110, b"")
+ok &= check("a dead robot cannot suicide again", pb.deaths == 2)
+step(ls.RESPAWN_DELAY + 0.1)
+ok &= check("you respawn after a suicide", not pb.player_dead)
+
 # cheating shots
 def pull(origin=(0.0, 2.5, 0.0), aim=(10.0, 2.5, 0.0)):
     msg(A, 40122, struct.pack("<III3f3fII", 0, 0, 0, *origin, *aim, 0, 0))
