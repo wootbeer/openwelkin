@@ -1281,7 +1281,7 @@ Calls `Robot::Move(flags)` then `Robot::MoveTo(position)`. MoveTo puts the robot
 <a name="m-19-50102"></a>
 #### GS\_Robot\_Action (jump) `(19,50102)`
 
-*S→C · from the code*
+*S→C · verified*
 
 ```text
 u32 robot | u32 steer flags | vec3 position | vec3 facing
@@ -1434,7 +1434,7 @@ Bonus. Shows "earned N crystal".
 i32 | i32 slot
 ```
 
-Hotkeys 1-9, 0 and Q. Ignored by the client for a few seconds after spawning. The emulator's robots hold one weapon, in slot 1, so it takes only slot 1 and 0 (put away) and ignores the rest. While the weapon is put away the server ignores trigger pulls.
+Hotkeys 1-9, 0 and Q. Ignored by the client for a few seconds after spawning. The emulator's robots hold one weapon, in slot 1, so it takes only slot 1 and 0 (put away) and ignores the rest. While the weapon is put away the server ignores trigger pulls. The client only sends this when it may switch (Robot::UpdateInput near 0x1024d1fd): the slot is not the current one and not past the slot count; slot 0 only while the current slot is below the slot count; another slot only if it holds a weapon; and the weapon in hand must allow it. Real client 2026-11-10: with the one weapon our robots hold, 0, Q and the other hotkeys send nothing, so the put-away relay is not seen in game.
 
 <a name="m-9-40122"></a>
 #### trigger pulled `(9,40122)`
@@ -1468,13 +1468,13 @@ f32 | u32 steer flags | vec3 position | vec3 facing
 <a name="m-9-40102"></a>
 #### jump `(9,40102)`
 
-*C→S · from the code*
+*C→S · verified*
 
 ```text
 f32 time | u32 steer flags | vec3 position | vec3 facing
 ```
 
-Sent by Robot::Jump (0x10241e70) for the local robot, same layout as (9,40100). The server runs the speed check on the position and shows the jump to the players near (the ones that get the robot's moves every tick or every few ticks) with [(19,50102)](#m-19-50102). Jumps less than 0.4 s apart are not shown. Not tried in game.
+Sent by Robot::Jump (0x10241e70) for the local robot, same layout as (9,40100). The server runs the speed check on the position and shows the jump to the players near (the ones that get the robot's moves every tick or every few ticks) with [(19,50102)](#m-19-50102). Jumps less than 0.4 s apart are not shown. Real client 2026-11-10: a bot's jumps made the watching client call Robot::Jump on the bot's robot each time.
 
 <a name="m-9-40130"></a>
 #### position `(9,40130)`
@@ -1516,18 +1516,18 @@ Sent about once a second.
 f32 time | u32 object id
 ```
 
-Robot::ReportPoint (0x10246b20) casts a ray from the camera and sends this when it hits an object of another side. The server checks the enemy is alive, within 1500 and not behind a hill or a building, then puts it on the radar of the player and of the players on the same side with [(19,50176)](#m-19-50176) for 10 s. One report a second per player. Not tried in game.
+Robot::ReportPoint (0x10246b20) casts a ray from the camera and sends this when it hits an object of another side. The server checks the enemy is alive, within 1500 and not behind a hill or a building, then puts it on the radar of the player and of the players on the same side with [(19,50176)](#m-19-50176) for 10 s. One report a second per player. Nothing in this client calls Robot::ReportPoint (no call or pointer to it), so it never sends this; handled in case another client build does.
 
 <a name="m-9-40110"></a>
 #### suicide `(9,40110)`
 
-*C→S · from the code*
+*C→S · verified*
 
 ```text
 (empty)
 ```
 
-F12 in battle (`suicide = F12` in InputConfig\_Default.ini) asks "You sure to Suicide?"; Yes (RobotSuicideConfirmCallback) calls Robot::Suicide (0x1023d900), which sends this for the local robot. The server destroys the robot even during spawn protection: a death, no kill for anyone. The kill feed (19,50151) then carries an empty killer name and weapon 0, since a client whose own name is the killer counts a kill streak. In the original game a suicide without the Suicide plugin also banned the guns for a while (help text "Why Gun Forbidden?"); not done here.
+F12 in battle (`suicide = F12` in InputConfig\_Default.ini) asks "You sure to Suicide?"; Yes (RobotSuicideConfirmCallback) calls Robot::Suicide (0x1023d900), which sends this for the local robot. The server destroys the robot even during spawn protection: a death, no kill for anyone. The kill feed (19,50151) then carries an empty killer name and weapon 0, since a client whose own name is the killer counts a kill streak. Real client 2026-11-10: F12, Ok: the robot is destroyed, the death dialog opens, K/D counts the death, no feed line, and Respawn works. In the original game a suicide without the Suicide plugin also banned the guns for a while (help text "Why Gun Forbidden?"); not done here.
 
 <a name="m-9-20001"></a>
 #### clock `(9,20001)`

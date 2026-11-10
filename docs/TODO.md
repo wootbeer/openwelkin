@@ -42,14 +42,16 @@ reply layout, and answer with real data.
       (Logic_ReviveLocator_DEItem 10321601). Its text: friends may quick respawn beside it when a spawn truck
       is nearby. To add it we need: the skill messages, the FReviveLocator snapshot, and the answer to a quick
       relive that names one.
-      Offline 2026-11-09: F12 suicide (9,40110) destroys the robot (a death, no kill). Not tried in game. The
-      original's gun ban for a suicide without the Suicide plugin is not done. tools/msgids.py lists every
-      catalog 9 message the client sends. Jumps (9,40102) are now shown to players near with (19,50102); not
-      tried in game. Weapon put away / taken up (9,40105) is shown to the others with (19,50105), and a robot
-      with its weapon put away can not fire; not tried in game. Enemy reports (9,40137) go on the radar of the
-      player's side with (19,50176); not tried in game, and the key that sends it is not known yet (check
-      InputConfig_Default.ini). Note: msgids.py also lists some local client events, e.g. (9,40106) in
-      Robot::Asphyxia goes through EventAttemper::AddEvent, not the network. (9,40133) is a hard landing (fall speed), maybe fall damage; ignored. Many of 40109..40181 (revive by others, equipment, booty) and
+      Real client 2026-11-10: F12 suicide (9,40110) works (robot destroyed, a death, no kill, Respawn fine).
+      Jumps (9,40102) shown to players near with (19,50102) work: a watching client called Robot::Jump on a
+      bot's robot for each jump. Weapon put away / taken up (9,40105) is shown to the others with (19,50105) and
+      a robot with its weapon put away can not fire, but with one weapon the client never sends a switch, so
+      this is only seen once robots carry more weapons. Enemy reports (9,40137) go on the radar of the player's
+      side with (19,50176), but nothing in this client calls Robot::ReportPoint, so it never sends one. Not
+      done: the original's gun ban for a suicide without the Suicide plugin. tools/msgids.py lists every
+      catalog 9 message the client builds; some are local client events, e.g. (9,40106) in Robot::Asphyxia
+      goes through EventAttemper::AddEvent, not the network. (9,40133) is a hard landing (fall speed), maybe
+      fall damage; ignored. Many of 40109..40181 (revive by others, equipment, booty) and
       40320..40327 (seats, vehicles) are not handled yet. (9,40314) and (9,40333) are
       taken and ignored; (9,40311) is not handled (no caller found).
       Offline 2026-11-06: Respawn sends (9,40310) (robot + weapons); the server answers ProduceRes (19,50312)
