@@ -192,7 +192,8 @@ reply layout, and answer with real data.
 - [x] "Waiting to enter arena." popup = GAMEENGINE_DATAUNNORMAL (bad reply data); gone once shop replies were real
 - [ ] Glyph before nameplate names in battle: a small bracket before "Target 1" in red or white. The hall's star before
       your name became the nation emblem once CharacterOnline sent the nation, so this may be the same thing
-- [ ] Untested: dummy misses aimed at the ground, fixed spawn point, no damage after death, random single-use gate session keys (login path!)
+- [ ] Untested: dummy misses aimed at the ground, fixed spawn point. (No damage to or from a dead robot: tools/test_match.py.
+      Single-use, signed gate session keys: tools/test_split.py)
 
 ## Security / robustness (2026-10-20, offline)
 - [x] tools/fuzz_handlers.py: every gate handler survives random bodies (0 failures)

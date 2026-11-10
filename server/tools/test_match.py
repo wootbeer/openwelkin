@@ -264,6 +264,13 @@ while not pb.player_dead and shots < 200:
     step(pa.fire_interval)
     shots += 1
 ok &= check(f"B destroyed by A ({shots} bursts)", pb.player_dead and pb.deaths == 1)
+hp_a, hp_b = pa.player_hp, pb.player_hp
+for _ in range(5):
+    msg(A, 40122, struct.pack("<III3f3fII", 0, 0, 0, 0.0, 2.5, 0.0, 10.0, 2.5, 0.0, 0, 0))
+    msg(B, 40122, struct.pack("<III3f3fII", 0, 0, 0, 10.0, 2.5, 0.0, 0.0, 2.5, 0.0, 0, 0))
+    step(pa.fire_interval)
+ok &= check("shots at a dead robot do nothing", pb.player_hp == hp_b and pb.deaths == 1 and pa.kills == 1)
+ok &= check("a dead robot's shots do no damage", pa.player_hp == hp_a)
 step(ls.RESPAWN_DELAY + 0.1)
 ok &= check("B respawned after the delay", not pb.player_dead)
 ok &= check("A credited a kill", pa.kills == 1)
