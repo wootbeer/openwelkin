@@ -218,6 +218,41 @@ msg(A, 40105, struct.pack("<ii", 0, 1))
 ok &= check("taking it up again is shown to B", got(B, 50105) == [struct.pack("<Iii", a_rid, 1, -1)]
             and pa.equip_slot == 1)
 
+# enemy report (9,40137): on the radar (19,50176) of the player and their side, at most once per REPORT_GAP
+models = ls.STORE.by_id(a_cid)["model"], ls.STORE.by_id(b_cid)["model"]
+ls.STORE.by_id(a_cid)["model"], ls.STORE.by_id(b_cid)["model"] = ls.ALLIANCE, ls.FEDERAL
+pa.pos, pb.pos = (0.0, 0.0, 0.0), (40.0, 0.0, 0.0)
+d_rid, dummy = next(iter(m.targets.items()))
+dummy_at = dummy["pos"], dummy["home"]
+dummy["pos"] = dummy["home"] = (0.0, 0.0, 30.0)
+
+
+def report(rid, dt=ls.REPORT_GAP):
+    step(dt)
+    sent.clear()
+    msg(A, 40137, struct.pack("<fI", 0.0, rid))
+    return got(A, 50176), got(B, 50176)
+
+
+mine, theirs = report(d_rid)
+ok &= check("a reported dummy is on A's radar",
+            mine == [struct.pack("<I3ffI", d_rid, 0.0, 0.0, 30.0, ls.REPORT_SECONDS, ls.DEFAULT_ROBOT)] and not theirs)
+ok &= check("a second report at once is ignored", report(d_rid, 0.0) == ([], []))
+mine, theirs = report(b_rid)
+ok &= check("an enemy player reported: on A's radar, not B's",
+            len(mine) == 1 and struct.unpack_from("<I3f", mine[0]) == (b_rid, 40.0, 0.0, 0.0) and not theirs)
+ok &= check("A can not report itself", report(a_rid) == ([], []))
+ls.STORE.by_id(b_cid)["model"] = ls.ALLIANCE
+mine, theirs = report(d_rid)
+ok &= check("A's side sees the report too", len(mine) == 1 and theirs == mine)
+ok &= check("nor a player of its own side", report(b_rid) == ([], []))
+dummy["pos"] = dummy["home"] = (0.0, 0.0, ls.REPORT_RANGE + 10)
+ok &= check("an enemy out of range can not be reported", report(d_rid) == ([], []))
+ok &= check("nor an unknown object", report(12345) == ([], []))
+dummy["pos"], dummy["home"] = dummy_at
+ls.STORE.by_id(a_cid)["model"], ls.STORE.by_id(b_cid)["model"] = models
+pb.pos = (10.0, 0.0, 0.0)
+
 # PvP: A shoots straight at B until B dies
 pb.protected_until = pa.protected_until = 0
 for target in m.targets.values():

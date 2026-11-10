@@ -46,7 +46,10 @@ reply layout, and answer with real data.
       original's gun ban for a suicide without the Suicide plugin is not done. tools/msgids.py lists every
       catalog 9 message the client sends. Jumps (9,40102) are now shown to players near with (19,50102); not
       tried in game. Weapon put away / taken up (9,40105) is shown to the others with (19,50105), and a robot
-      with its weapon put away can not fire; not tried in game. (9,40133) is a hard landing (fall speed), maybe fall damage; ignored. Many of 40109..40181 (revive by others, equipment, booty) and
+      with its weapon put away can not fire; not tried in game. Enemy reports (9,40137) go on the radar of the
+      player's side with (19,50176); not tried in game, and the key that sends it is not known yet (check
+      InputConfig_Default.ini). Note: msgids.py also lists some local client events, e.g. (9,40106) in
+      Robot::Asphyxia goes through EventAttemper::AddEvent, not the network. (9,40133) is a hard landing (fall speed), maybe fall damage; ignored. Many of 40109..40181 (revive by others, equipment, booty) and
       40320..40327 (seats, vehicles) are not handled yet. (9,40314) and (9,40333) are
       taken and ignored; (9,40311) is not handled (no caller found).
       Offline 2026-11-06: Respawn sends (9,40310) (robot + weapons); the server answers ProduceRes (19,50312)

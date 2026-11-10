@@ -100,6 +100,7 @@
   - [GS\_Robot\_Skill](#m-19-50132) `(19,50132)`
   - [GS\_Robot\_Action (move)](#m-19-50100) `(19,50100)`
   - [GS\_Robot\_Action (jump)](#m-19-50102) `(19,50102)`
+  - [GS\_ReportPoint](#m-19-50176) `(19,50176)`
   - [GS\_Robot\_SystemPart (rebuild)](#m-19-50104) `(19,50104)`
   - [GS\_Robot\_SystemPart (switch weapon)](#m-19-50105) `(19,50105)`
   - [GS\_Robot\_SystemPart (shot)](#m-19-50122) `(19,50122)`
@@ -120,6 +121,7 @@
   - [position](#m-9-40130) `(9,40130)`
   - [hard landing](#m-9-40133) `(9,40133)`
   - [robot action](#m-9-40101) `(9,40101)`
+  - [report enemy](#m-9-40137) `(9,40137)`
   - [suicide](#m-9-40110) `(9,40110)`
   - [clock](#m-9-20001) `(9,20001)`
   - [ping](#m-9-9001) `(9,9001)`
@@ -1287,6 +1289,17 @@ u32 robot | u32 steer flags | vec3 position | vec3 facing
 
 Remote robots only (GS\_Robot\_Action\_ObjectObserver, 0x10265f70). Skipped while robot +0x194 is set. Sets the position and facing, then Robot::Move(flags) and Robot::Jump. The other actions in the same handler: 50101 vec3 facing (turn); 50103 u8 | vec3 | vec3 (sets robot +0x18c, then MoveTo); 50139 u8 on | vec3 | vec3 (robot state 2 on or off, then MoveTo).
 
+<a name="m-19-50176"></a>
+#### GS\_ReportPoint `(19,50176)`
+
+*S→C · from the code*
+
+```text
+u32 object id | vec3 position | f32 seconds | u32 flyweight
+```
+
+Handler Game.dll 0x10265c80 (GS\_ReportPoint\_ObjectObserver). Calls CRadarMapUI::AddReportSpotLocate on the radar (dialog 15) with the name of the flyweight's product.
+
 <a name="m-19-50104"></a>
 #### GS\_Robot\_SystemPart (rebuild) `(19,50104)`
 
@@ -1493,6 +1506,17 @@ f32 | f32 | f32 | f32
 ```
 
 Sent about once a second.
+
+<a name="m-9-40137"></a>
+#### report enemy `(9,40137)`
+
+*C→S · from the code*
+
+```text
+f32 time | u32 object id
+```
+
+Robot::ReportPoint (0x10246b20) casts a ray from the camera and sends this when it hits an object of another side. The server checks the enemy is alive, within 1500 and not behind a hill or a building, then puts it on the radar of the player and of the players on the same side with [(19,50176)](#m-19-50176) for 10 s. One report a second per player. Not tried in game.
 
 <a name="m-9-40110"></a>
 #### suicide `(9,40110)`

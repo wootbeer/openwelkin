@@ -2915,6 +2915,9 @@ MID_EVERY = 6          # one every MID_EVERY ticks (5 a second) up to MID_BAND p
 MID_BAND = 150.0
 FAR_EVERY = 15         # and one every FAR_EVERY ticks (2 a second) farther away
 STILL_EVERY = 30       # a robot that has not changed is sent again only after this many ticks (moves can be lost)
+REPORT_GAP = 1.0       # seconds between one player's enemy reports (9,40137)
+REPORT_RANGE = 1500.0  # an enemy farther than this, or behind a hill or a building, can not be reported
+REPORT_SECONDS = 10.0  # how long a reported enemy stays on the radar
 JUMP_GAP = 0.4         # seconds: jumps closer together than this are not shown to others (a robot can not jump in
                        # the air, so only a cheating client sends them that fast)
 REMOVE_LEFT_PLAYERS = True  # delete a leaving player's robot and character on the other clients (not yet tried in
@@ -4053,6 +4056,8 @@ def on_game_message(server, peer, raw):
             peer.jumped_at = m.now
             m.jump(peer.player_rid, struct.pack("<II3f3f", peer.player_rid, steer, *pos, *peer.facing), pos,
                    peer.fire_range, skip=peer)
+    elif key == (9, 40137) and len(body) >= 8:
+        report_enemy(server, peer, struct.unpack_from("<I", body, 4)[0])
     elif key == (9, 40105) and len(body) >= 8:
         # Weapon switch request (hotkey 1-9 / 0 / Q in Robot::UpdateInput): i32 | i32 equipment slot (1-based,
         # 0 = take off). The robot only gets a current equip (and Weapon::UpdateInput, i.e. firing) once the server
@@ -4114,6 +4119,38 @@ def on_game_message(server, peer, raw):
                         what = m.targets[victim]["name"] if isinstance(victim, int) else victim.name
                         log(f"[game] {peer.name} fires at {what}")
                     fire_tick(server, peer, peer.trigger, 0)
+
+
+def report_enemy(server, peer, rid):
+    """Robot::ReportPoint (0x10246b20) casts a ray from the camera and sends (9,40137) f32 | u32 object id when it hits
+    an object of another side. The player and their side see it on the radar: GS_ReportPoint (19,50176) u32 object |
+    vec3 position | f32 seconds | u32 flyweight (named on the radar by its product) -> CRadarMapUI::AddReportSpotLocate
+    (handler Game.dll 0x10265c80). Only an enemy the player can see: in range, nothing in the way."""
+    with GAME_LOCK:
+        m = getattr(peer, "match", None)
+        if not m or m.over or peer not in (m.peers or ()) or peer.player_dead:
+            return
+        if m.now - getattr(peer, "reported_at", -REPORT_GAP) < REPORT_GAP:
+            return
+        side = nation_of(peer.cid)
+        t = m.targets.get(rid)
+        if t is not None:
+            if t["dead"]:
+                return
+            pos, robot = t["pos"], DEFAULT_ROBOT
+        else:
+            other = next((p for p in m.peers if p.player_rid == rid), None)
+            if other is None or other is peer or other.player_dead or (side and nation_of(other.cid) == side):
+                return
+            pos, robot = other.pos, player_robot(other.cid)
+        eye = (peer.pos[0], peer.pos[1] + HIT_HEIGHT, peer.pos[2])
+        if math.dist(peer.pos, pos) > REPORT_RANGE or not m.sees(eye, (pos[0], pos[1] + HIT_HEIGHT, pos[2])):
+            return
+        peer.reported_at = m.now
+        body = struct.pack("<I3ffI", rid, *pos, REPORT_SECONDS, robot)
+        for p in m.peers:
+            if p is peer or (side and nation_of(p.cid) == side):
+                send_game_event(server, p, 19, 50176, body)
 
 
 def gm_game_command(server, peer, body):
