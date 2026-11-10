@@ -99,6 +99,7 @@
   - [GS\_Character\_Delete\_Character](#m-19-30002) `(19,30002)`
   - [GS\_Robot\_Skill](#m-19-50132) `(19,50132)`
   - [GS\_Robot\_Action (move)](#m-19-50100) `(19,50100)`
+  - [GS\_Robot\_Action (jump)](#m-19-50102) `(19,50102)`
   - [GS\_Robot\_SystemPart (rebuild)](#m-19-50104) `(19,50104)`
   - [GS\_Robot\_SystemPart (switch weapon)](#m-19-50105) `(19,50105)`
   - [GS\_Robot\_SystemPart (shot)](#m-19-50122) `(19,50122)`
@@ -115,8 +116,9 @@
   - [trigger pulled](#m-9-40122) `(9,40122)`
   - [trigger released](#m-9-40125) `(9,40125)`
   - [robot move](#m-9-40100) `(9,40100)`
+  - [jump](#m-9-40102) `(9,40102)`
   - [position](#m-9-40130) `(9,40130)`
-  - [position + facing](#m-9-40133) `(9,40133)`
+  - [hard landing](#m-9-40133) `(9,40133)`
   - [robot action](#m-9-40101) `(9,40101)`
   - [suicide](#m-9-40110) `(9,40110)`
   - [clock](#m-9-20001) `(9,20001)`
@@ -1270,9 +1272,20 @@ Without it a robot's speed stays 0 and it can not walk. The Walker body uses 8 a
 u32 robot | u32 steer flags (1 = walking) | vec3 position | vec3 facing
 ```
 
-Remote robots only. Also 50101 (turn), 50102 (jump), 50103.
+Remote robots only. Also [50102 (jump)](#m-19-50102) and the others listed there.
 
 Calls `Robot::Move(flags)` then `Robot::MoveTo(position)`. MoveTo puts the robot on the position at once when the robot is off screen, or the position is more than 15 units away (or more than 15 up or down). Closer, it only sets a glide, and the glide runs only when bit 0x80 of robot +0x19c is set; only `Robot::Revived` and `RobotCallback::OnEnterLand` set it, and our remote robots never have it. Real client 2026-11-04: the client walks a robot on by itself, speeds it up over about 4 s from a start, and lets it slide about a second after a stop, so a stopped robot stayed up to 9 units from where the server had it. The emulator now sends a robot that has stood for a second (sent again unchanged) twice in one packet: 20 units up, then in place. That puts it exactly where the server has it.
+
+<a name="m-19-50102"></a>
+#### GS\_Robot\_Action (jump) `(19,50102)`
+
+*S→C · from the code*
+
+```text
+u32 robot | u32 steer flags | vec3 position | vec3 facing
+```
+
+Remote robots only (GS\_Robot\_Action\_ObjectObserver, 0x10265f70). Skipped while robot +0x194 is set. Sets the position and facing, then Robot::Move(flags) and Robot::Jump. The other actions in the same handler: 50101 vec3 facing (turn); 50103 u8 | vec3 | vec3 (sets robot +0x18c, then MoveTo); 50139 u8 on | vec3 | vec3 (robot state 2 on or off, then MoveTo).
 
 <a name="m-19-50104"></a>
 #### GS\_Robot\_SystemPart (rebuild) `(19,50104)`
@@ -1439,6 +1452,17 @@ u32 | u32 weapon object | u32
 f32 | u32 steer flags | vec3 position | vec3 facing
 ```
 
+<a name="m-9-40102"></a>
+#### jump `(9,40102)`
+
+*C→S · from the code*
+
+```text
+f32 time | u32 steer flags | vec3 position | vec3 facing
+```
+
+Sent by Robot::Jump (0x10241e70) for the local robot, same layout as (9,40100). The server runs the speed check on the position and shows the jump to the players near (the ones that get the robot's moves every tick or every few ticks) with [(19,50102)](#m-19-50102). Jumps less than 0.4 s apart are not shown. Not tried in game.
+
 <a name="m-9-40130"></a>
 #### position `(9,40130)`
 
@@ -1449,13 +1473,15 @@ u32 | vec3 position
 ```
 
 <a name="m-9-40133"></a>
-#### position + facing `(9,40133)`
+#### hard landing `(9,40133)`
 
 *C→S · partial*
 
 ```text
-u32 | vec3 position | vec3 facing | f32
+f32 time | vec3 position | vec3 facing | f32 fall speed
 ```
+
+Sent by Robot::Land only when the robot lands faster than its limit (robot +0x334). Probably for fall damage; the server ignores it.
 
 <a name="m-9-40101"></a>
 #### robot action `(9,40101)`

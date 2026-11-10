@@ -170,6 +170,34 @@ ok &= check("each time first raised, so the client puts it in place at once",
 moving = [struct.unpack_from("<f", x, 12)[0] for x in moves_of_a(5)]
 ok &= check("a walking robot is never raised", moving == [2.0] * 5)
 
+
+# jumps (9,40102): shown at once (19,50102) to players near, not echoed, not faster than JUMP_GAP
+def a_jumps(x):
+    before = len(got(B, 50102)), len(got(B, 50100)), len(got(A, 50102))
+    msg(A, 40102, struct.pack("<fI3f3f", 0.0, 1, x, 2.0, 3.0, 1.0, 0.0, 0.0))
+    jumps = got(B, 50102)[before[0]:]
+    moves = [y for y in got(B, 50100)[before[1]:] if struct.unpack_from("<I", y)[0] == a_rid]
+    return jumps, moves, got(A, 50102)[before[2]:]
+
+
+step(1.0)
+jumps, moves, echo = a_jumps(51.0)
+ok &= check("A's jump shown to B on the next tick",
+            [struct.unpack_from("<II3f", y) for y in jumps] == [(a_rid, 1, 51.0, 2.0, 3.0)])
+ok &= check("the jump is not echoed to A, nor sent again as a move", not echo and not moves)
+jumps, _, _ = a_jumps(52.0)
+ok &= check("a second jump at once is not shown, but the robot still moved", not jumps and pa.pos == (52.0, 2.0, 3.0))
+step(ls.JUMP_GAP)
+ok &= check("a jump after JUMP_GAP is shown", len(a_jumps(53.0)[0]) == 1)
+pb.pos = (10.0 + near + ls.MID_BAND + 100, 2.0, 3.0)
+step(ls.JUMP_GAP)
+ok &= check("a jump far away is not sent", not a_jumps(54.0)[0])
+pb.pos = (10.0, 0.0, 0.0)
+step(ls.JUMP_GAP)
+pa.player_dead = True
+ok &= check("a destroyed robot can not jump", not a_jumps(55.0)[0] and pa.pos == (54.0, 2.0, 3.0))
+pa.player_dead = False
+
 # PvP: A shoots straight at B until B dies
 pb.protected_until = pa.protected_until = 0
 for target in m.targets.values():

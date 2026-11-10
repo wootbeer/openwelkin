@@ -44,7 +44,8 @@ reply layout, and answer with real data.
       relive that names one.
       Offline 2026-11-09: F12 suicide (9,40110) destroys the robot (a death, no kill). Not tried in game. The
       original's gun ban for a suicide without the Suicide plugin is not done. tools/msgids.py lists every
-      catalog 9 message the client sends; many of 40109..40181 (revive by others, equipment, booty) and
+      catalog 9 message the client sends. Jumps (9,40102) are now shown to players near with (19,50102); not
+      tried in game. (9,40133) is a hard landing (fall speed), maybe fall damage; ignored. Many of 40109..40181 (revive by others, equipment, booty) and
       40320..40327 (seats, vehicles) are not handled yet. (9,40314) and (9,40333) are
       taken and ignored; (9,40311) is not handled (no caller found).
       Offline 2026-11-06: Respawn sends (9,40310) (robot + weapons); the server answers ProduceRes (19,50312)

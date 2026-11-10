@@ -2915,6 +2915,8 @@ MID_EVERY = 6          # one every MID_EVERY ticks (5 a second) up to MID_BAND p
 MID_BAND = 150.0
 FAR_EVERY = 15         # and one every FAR_EVERY ticks (2 a second) farther away
 STILL_EVERY = 30       # a robot that has not changed is sent again only after this many ticks (moves can be lost)
+JUMP_GAP = 0.4         # seconds: jumps closer together than this are not shown to others (a robot can not jump in
+                       # the air, so only a cheating client sends them that fast)
 REMOVE_LEFT_PLAYERS = True  # delete a leaving player's robot and character on the other clients (not yet tried in
                             # game: if a client crashes when someone leaves, set False to only show the robot destroyed)
 STATS_EVERY = float(os.environ.get("MW_STATS_EVERY", "60") or 0)  # seconds between [stats] log lines, 0 = off
@@ -3003,6 +3005,23 @@ class Match:
         for p in self.peers:
             if p is not skip:
                 p.moves[rid] = (body, pos, reach)
+        self.track(rid, pos)
+
+    def jump(self, rid, body, pos, reach, skip=None):
+        """A robot jumped (GS_Robot_Action 19,50102, same body as a move): sent at once to the players who get its
+        moves every tick or every few ticks; farther away the next move shows where it went."""
+        for v in self.peers:
+            if v is skip:
+                continue
+            d2 = (pos[0] - v.pos[0]) ** 2 + (pos[1] - v.pos[1]) ** 2 + (pos[2] - v.pos[2]) ** 2
+            if d2 <= (max(NEAR_DISTANCE, v.fire_range, reach) + MID_BAND) ** 2:
+                v.moves.pop(rid, None)
+                v.sent[rid] = (body, self.tick_no)
+                send_game_event(self.server, v, 19, 50102, body, reliable=False)
+        self.track(rid, pos)
+
+    def track(self, rid, pos):
+        """Keep where a robot was over the last TRAIL_SECONDS (see recent)."""
         trail = self.trails.setdefault(rid, collections.deque())
         if not trail or trail[-1][1] != pos:
             trail.append((self.now, pos))
@@ -4013,6 +4032,23 @@ def on_game_message(server, peer, raw):
             if any(abs(v) > 1e-3 for v in facing):
                 peer.facing = facing
             m.move(peer.player_rid, struct.pack("<II3f3f", peer.player_rid, steer, *pos, *peer.facing), pos,
+                   peer.fire_range, skip=peer)
+    elif key == (9, 40102) and len(body) >= 32:
+        # Robot::Jump (0x10241e70): f32 | u32 steer flags | vec3 pos | vec3 facing, as (9,40100). The other clients
+        # show it on GS_Robot_Action (19,50102): position, facing, Move(steer), then Robot::Jump.
+        steer = struct.unpack_from("<I", body, 4)[0]
+        pos, facing = struct.unpack_from("<3f", body, 8), struct.unpack_from("<3f", body, 20)
+        with GAME_LOCK:
+            if (peer.player_dead or not all(math.isfinite(v) for v in pos + facing)
+                    or not move_allowed(server, peer, pos)):
+                return
+            peer.steer, peer.pos = steer, pos
+            if any(abs(v) > 1e-3 for v in facing):
+                peer.facing = facing
+            if m.now - getattr(peer, "jumped_at", -JUMP_GAP) < JUMP_GAP:
+                return
+            peer.jumped_at = m.now
+            m.jump(peer.player_rid, struct.pack("<II3f3f", peer.player_rid, steer, *pos, *peer.facing), pos,
                    peer.fire_range, skip=peer)
     elif key == (9, 40105) and len(body) >= 8:
         # Weapon switch request (hotkey 1-9 / 0 / Q in Robot::UpdateInput): i32 | i32 equipment slot (1-based,
