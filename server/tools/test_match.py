@@ -198,6 +198,26 @@ pa.player_dead = True
 ok &= check("a destroyed robot can not jump", not a_jumps(55.0)[0] and pa.pos == (54.0, 2.0, 3.0))
 pa.player_dead = False
 
+# weapon switch (9,40105): confirmed to the player, shown to the others when it changes
+sent.clear()
+msg(A, 40105, struct.pack("<ii", 0, 0))
+ok &= check("putting the weapon away is confirmed and shown to B",
+            got(A, 50105) == got(B, 50105) == [struct.pack("<Iii", a_rid, 0, -1)] and pa.equip_slot == 0)
+sent.clear()
+msg(A, 40105, struct.pack("<ii", 0, 0))
+ok &= check("the same slot again is not sent to B", len(got(A, 50105)) == 1 and not got(B, 50105))
+sent.clear()
+msg(A, 40122, struct.pack("<III3f3fII", 0, 0, 0, 0.0, 2.5, 0.0, 10.0, 2.5, 0.0, 0, 0))
+step(1.0)
+ok &= check("no shots with the weapon put away", not got(B, 50122))
+msg(A, 40125, b"")
+sent.clear()
+msg(A, 40105, struct.pack("<ii", 0, 5))
+ok &= check("a slot with no weapon is ignored", not got(A, 50105) and not got(B, 50105) and pa.equip_slot == 0)
+msg(A, 40105, struct.pack("<ii", 0, 1))
+ok &= check("taking it up again is shown to B", got(B, 50105) == [struct.pack("<Iii", a_rid, 1, -1)]
+            and pa.equip_slot == 1)
+
 # PvP: A shoots straight at B until B dies
 pb.protected_until = pa.protected_until = 0
 for target in m.targets.values():

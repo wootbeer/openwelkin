@@ -3215,6 +3215,8 @@ def relive_on(server, viewer, rid, cid, pos, facing, hp, max_hp):
     send_game_event(server, viewer, 19, 50005, struct.pack("<I", rid) + snapshots.armor_info(max_hp, hp)
                     + struct.pack("<I", 0))
     send_game_event(server, viewer, 19, 50105, struct.pack("<Iii", rid, 1, -1))
+    if getattr(viewer, "player_rid", None) == rid:
+        viewer.equip_slot = 1
     send_speed(server, viewer, rid)
 
 
@@ -3272,6 +3274,7 @@ def join_match(server, peer):
     placed(peer)
     peer.player_hp, peer.player_dead = float(PLAYER_HP), False
     peer.trigger, peer.kills, peer.deaths, peer.fire, peer.steer = 0, 0, 0, None, 0
+    peer.equip_slot = 1  # the weapon slot in hand (0 = put away)
     peer.player_kills = 0  # target robots do not count towards a round
     peer.aim_shots, peer.aim_hits, peer.aim_warned = 0, 0, False
     peer.stats_clock = time.time()
@@ -4054,8 +4057,19 @@ def on_game_message(server, peer, raw):
         # Weapon switch request (hotkey 1-9 / 0 / Q in Robot::UpdateInput): i32 | i32 equipment slot (1-based,
         # 0 = take off). The robot only gets a current equip (and Weapon::UpdateInput, i.e. firing) once the server
         # confirms with GS_Robot_SystemPart (19,50105): u32 robot id | i32 slot | i32 (-1) -> Robot::SetCurEquip.
+        # The robots here hold one weapon, in slot 1, so only 1 and 0 are taken. The others get the same message
+        # (the handler, Game.dll 0x102662c0, is for any robot), so they see the weapon put away or taken up.
         _, slot = struct.unpack_from("<ii", body)
-        send_game_event(server, peer, 19, 50105, struct.pack("<Iii", peer.player_rid, slot, -1))
+        if slot not in (0, 1):
+            return
+        with GAME_LOCK:
+            if peer.player_dead:
+                return
+            changed, peer.equip_slot = slot != peer.equip_slot, slot
+            body = struct.pack("<Iii", peer.player_rid, slot, -1)
+            send_game_event(server, peer, 19, 50105, body)
+            if changed:
+                m.broadcast(19, 50105, body, skip=peer)
     elif key == (9, 11000) and len(body) >= 4:
         gm_game_command(server, peer, body)
     elif key == (9, 40301) and len(body) >= 8:
@@ -4083,7 +4097,8 @@ def on_game_message(server, peer, raw):
         # trigger-pull ray.
         with GAME_LOCK:
             peer.trigger += 1
-            if msg.type == 40122 and len(body) >= 36 and not peer.player_dead:
+            # a robot with its weapon put away can not fire: only a cheating client sends this
+            if msg.type == 40122 and len(body) >= 36 and not peer.player_dead and peer.equip_slot:
                 origin, aim = struct.unpack_from("<3f", body, 12), struct.unpack_from("<3f", body, 24)
                 if all(math.isfinite(v) for v in origin + aim):
                     # the muzzle must be at the robot: a client can not shoot from next to its target

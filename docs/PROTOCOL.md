@@ -1307,7 +1307,7 @@ Clears the robot and re-reads its parts. Needed after every relive, because Reli
 u32 robot | i32 slot (1-based, 0 = put away) | i32 -1
 ```
 
-Answer to [(9,40105)](#m-9-40105). A robot has no current weapon, and cannot fire, until this arrives.
+Answer to [(9,40105)](#m-9-40105). A robot has no current weapon, and cannot fire, until this arrives. The handler (Game.dll 0x102662c0) works for any robot, and skips one the client does not know, so the emulator also sends it to the other players when a player puts the weapon away or takes it up again (not tried in game). Robot::SetCurEquip skips a slot past the robot's equipment list.
 
 <a name="m-19-50122"></a>
 #### GS\_Robot\_SystemPart (shot) `(19,50122)`
@@ -1421,7 +1421,7 @@ Bonus. Shows "earned N crystal".
 i32 | i32 slot
 ```
 
-Hotkeys 1-9, 0 and Q. Ignored by the client for a few seconds after spawning.
+Hotkeys 1-9, 0 and Q. Ignored by the client for a few seconds after spawning. The emulator's robots hold one weapon, in slot 1, so it takes only slot 1 and 0 (put away) and ignores the rest. While the weapon is put away the server ignores trigger pulls.
 
 <a name="m-9-40122"></a>
 #### trigger pulled `(9,40122)`
