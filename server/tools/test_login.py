@@ -12,7 +12,7 @@ import tmpdir  # noqa: E402  (removes the temporary folders at exit)
 os.environ.setdefault("MW_STATE_DIR", tmpdir.make("mw-test-"))  # never the real save files
 import loginserver as ls  # noqa: E402
 
-ls.log = lambda *a, **k: None
+real_log, ls.log = ls.log, lambda *a, **k: None
 ls.STORE.save = lambda: None
 tmp = tmpdir.make()
 ls.Accounts.path = os.path.join(tmp, "accounts.db")
@@ -67,11 +67,11 @@ def create(name):
 
 
 for bad, why in [("Alpha\n", "a newline at the end"), ("Server", "the server's own name"), ("gM", "staff, any case"),
-                 ("Ａlpha", "fullwidth letters"), ("Аdmin", "a Cyrillic letter among ASCII ones"),
-                 ("ab²", "a superscript digit"), ("a", "too short"), ("a b", "a space"), ("x‍", "a joiner")]:
+                 ("\uff21lpha", "fullwidth letters"), ("\u0410dmin", "a Cyrillic letter among ASCII ones"),
+                 ("ab\u00b2", "a superscript digit"), ("a", "too short"), ("a b", "a space"), ("x\u200d", "a joiner")]:
     ok &= check(f"character name refused: {why}", create(bad) != 0, True)
 ok &= check("a plain name is fine", create("Alpha_2"), 0)
-ok &= check("so is one in another script", create("小明"), 0)
+ok &= check("so is one in another script", create("\u5c0f\u660e"), 0)
 ok &= check("a name taken in another case refused", create("ALPHA_2"), 13002)
 for _ in range(ls.LOGIN_FAILS_MAX):
     login("alice", "guess", ip="4.4.4.4")
@@ -149,5 +149,14 @@ ok &= check("durations", [ls.parse_duration(x) for x in ("30m", "12h", "7d", "2w
             [1800, 43200, 604800, 1209600, 0, None])
 ls.AUTO_REGISTER = False
 ok &= check("no auto-register when off", login("bob", "pw", ip="6.6.6.6"), (ls.LOGIN_FAILED, None))
+
+# log lines: text from players can not start a line of its own, nor carry escape codes; any script can be logged
+size = os.path.getsize(ls.LOG.name)
+real_log("[chat] \u5c0f\u660e: hi\n12:00:00 [admin] forged\x1b[2J \u202eevil")
+with open(ls.LOG.name, encoding="utf-8") as f:
+    f.seek(size)
+    written = f.read()
+ok &= check("a newline in a log line starts an indented line", written.splitlines()[1], "  12:00:00 [admin] forged\\x1b[2J \\u202eevil")
+ok &= check("and a Chinese name is logged as it is", "\u5c0f\u660e" in written.splitlines()[0], True)
 print("all ok" if ok else "FAILURES")
 sys.exit(0 if ok else 1)

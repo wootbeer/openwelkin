@@ -542,7 +542,11 @@ def load_event_names():
 
 
 EVENT_NAMES = load_event_names()
-LOG = open(os.path.join(STATE_DIR, "loginserver.log"), "a", buffering=1)
+# UTF-8, and a console that can not show a character gets an escape: with the system code page (cp1252), a line with
+# a Chinese name raised UnicodeEncodeError inside whatever handler was logging it
+LOG = open(os.path.join(STATE_DIR, "loginserver.log"), "a", buffering=1, encoding="utf-8", errors="replace")
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(errors="backslashreplace")
 
 
 def wstr(s):
@@ -980,7 +984,7 @@ atexit.register(STORE.flush)
 
 def valid_name(name):
     """A character name a player may take. Besides NAME_RE: no other forms of a plain character (fullwidth letters,
-    superscript digits: NFKC changes them), no ASCII letters mixed with other scripts (a Cyrillic "А" in "Аdmin"),
+    superscript digits: NFKC changes them), no ASCII letters mixed with other scripts (a Cyrillic A, U+0410, in "Admin"),
     and none of RESERVED_NAMES."""
     return (bool(NAME_RE.fullmatch(name)) and unicodedata.normalize("NFKC", name) == name
             and (name.isascii() or not any(c.isascii() for c in name))
@@ -1116,8 +1120,20 @@ def character_name(cid):
     return c["name"] if c else ""
 
 
+# Characters a log line must not carry as they are: control characters (a newline would start a forged line, an
+# escape code would reach the server console) and the marks that turn text around (U+202E shows "evil" as "live").
+LOG_UNSAFE = re.compile("[\x00-\x1f\x7f-\x9f\u2028\u2029\u202a-\u202e\u2066-\u2069]")
+
+
+def log_safe(m):
+    c = m.group()
+    return "\n  " if c == "\n" else f"\\x{ord(c):02x}" if ord(c) < 0x100 else f"\\u{ord(c):04x}"
+
+
 def log(msg):
-    line = f"{time.strftime('%H:%M:%S')} {msg}"
+    """One log line. A newline in msg (a hex dump, or text from a player) only ever starts an indented line, so a
+    line that starts with a time was written by the server."""
+    line = f"{time.strftime('%H:%M:%S')} {LOG_UNSAFE.sub(log_safe, str(msg))}"
     print(line + "\n", end="", flush=True)  # one write: threads can not join their lines
     LOG.write(line + "\n")
 
@@ -2019,7 +2035,7 @@ class Session:
             return self.reply(msg, result=ERR_PROTOCOL)
         if msg.flags & MSG_REQUEST:
             self.reply(msg)
-        name = name.split()[0] if name.strip() else ""
+        name = clean_line(name).split(" ")[0]
         if self.gm_level and name:
             self.gm_chat(f"mute {name} {max(1, secs // 60)}m" if secs else f"unmute {name}")
 
@@ -2201,7 +2217,7 @@ class Session:
             log(f"{self.addr} login refused: {account!r} is banned")
             return self.reply(msg, result=ACCOUNT_SUSPENDED if ban["until"] else ACCOUNT_BANNED)
         log(f"{self.addr} LOGIN account={account!r} ({status}) version={version} region={region} unk={unk} "
-            f"machine={machine}")
+            f"machine={machine[:64]!r}")
         # success body as read by the (10,10000) observer in Game.dll (0x103fe961):
         #   u32 user id | u32 next-server ip | u16 next-server port | str session key | 8 bytes | 4 bytes | u32 ip2 | u8 flag
         self.account = account
@@ -4595,7 +4611,8 @@ def admin_command(line, actor):
         reply = f"error: {e!r}"
     first = reply.splitlines()[0] if reply else ""
     with open(ADMIN_LOG, "a", encoding="utf-8") as f:
-        f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {actor}: {line[:300]} -> {first}\n")
+        f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} "
+                + LOG_UNSAFE.sub(log_safe, f"{actor}: {line[:300]} -> {first}") + "\n")
     log(f"[admin] {actor}: {line[:300]} -> {first}")
     return reply
 

@@ -205,7 +205,12 @@ reply layout, and answer with real data.
       matches before a final newline, so "Alpha\n" and "bob\n" got through; now fullmatch. Character names may not
       be Server, GM, Admin and the like (a player called Server could whisper lines that look like the server's own
       notices), nor fullwidth or other look-alike forms (NFKC must not change them), nor mix ASCII letters with
-      other scripts (a Cyrillic "А" in "Аdmin"). Names in one other script (Chinese) still work
+      other scripts (a Cyrillic A, U+0410, in "Admin"). Names in one other script (Chinese) still work
+- [x] Log lines, 2026-11-11 (tools/test_login.py): the login's machine hash went into the log as it came, so a
+      newline in it wrote a line of the player's choosing. Now every log and admin.log line escapes control
+      characters and the marks that turn text around; a newline only starts an indented line. The log file is
+      UTF-8, and the console escapes what it can not show: before, a line with a Chinese name raised
+      UnicodeEncodeError (cp1252) inside whatever handler was logging it
 - [x] FDP: 512 session cap with 60 s idle expiry; UDP loop catches handler errors
 - [x] Game message flood (2026-11-05, offline): each game session gets 300 messages at once, then 150 a second;
       more are dropped, and after 3000 dropped the session is closed. A 40-bot load test drops nothing
