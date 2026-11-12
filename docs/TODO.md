@@ -201,6 +201,11 @@ reply layout, and answer with real data.
 - [x] tools/test_login.py: passwords (scrypt, accounts.json), auto-register switch MW_AUTO_REGISTER, 5 fails/min/IP throttle,
       account name check, nothing handled before login, 30 s auth timeout, 1024 TCP connection cap
 - [x] Character create: needs login, max 4 per account, malformed name rejected instead of dropping the connection
+- [x] Names, 2026-11-11 (tools/test_login.py): the name and account checks used re.match with "$", which also
+      matches before a final newline, so "Alpha\n" and "bob\n" got through; now fullmatch. Character names may not
+      be Server, GM, Admin and the like (a player called Server could whisper lines that look like the server's own
+      notices), nor fullwidth or other look-alike forms (NFKC must not change them), nor mix ASCII letters with
+      other scripts (a Cyrillic "А" in "Аdmin"). Names in one other script (Chinese) still work
 - [x] FDP: 512 session cap with 60 s idle expiry; UDP loop catches handler errors
 - [x] Game message flood (2026-11-05, offline): each game session gets 300 messages at once, then 150 a second;
       more are dropped, and after 3000 dropped the session is closed. A 40-bot load test drops nothing
@@ -441,4 +446,9 @@ reply layout, and answer with real data.
       about 4 s from a start. A stopped dummy stayed up to 9 units off for good. Now a robot standing for a second is
       sent 20 units up and then in place, in one packet: from then on it is exactly where the server has it
 - [ ] Walking robots are still drawn up to 9 units behind the server (the client's own speed-up). Shots use the
-      1.5 s trail; a dummy that speeds up like the client would look better
+      1.5 s trail; a dummy that speeds up like the client would look better. 2026-11-11, read from Robot::doMove
+      (0x10241010), not tried: the speed at +0x340 only ramps while running (bit 1 of +0x19c, rate and cap from the
+      body at +0x190 / +0x194); walking uses the basic speed at once. A robot without bit 0x80 of +0x19c (ours) moves
+      with the velocity at +0x35c (set by SetVelocity, our 50132 sends 0); while that is 0 it gets 0.2 x the walk
+      velocity. Then NxPhysics::MoveController (Engine.dll). That does not explain the 4 s speed-up seen in game:
+      measure it first (Frida on doMove / MoveController's vector) before changing the dummies

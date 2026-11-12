@@ -31,7 +31,7 @@ Server side builder to copy: Dgram_Accept_Bluider_Process::make_respond_packet (
 SAP NAT detection (ADServer, UDP 5876) sends: fb 00 00 dc ff 12 00 00 00 00 00 00 83 04 "1000".
 """
 import collections, datetime, hashlib, heapq, hmac, ipaddress, itertools, json, math, os, random, re, secrets, socket, struct, sys
-import threading, time, traceback
+import threading, time, traceback, unicodedata
 
 import cluster
 import db
@@ -125,7 +125,8 @@ FRONT_OF = {bfid: fid for _, _, fid, _, bfid in CAMPAIGNS}  # battlefield -> its
 SESSIONS = {}           # session key -> (account, expiry time)
 SESSION_TTL = 120.0     # seconds between login and gate connect
 AUTO_REGISTER = os.environ.get("MW_AUTO_REGISTER", "1") == "1"  # unknown account name + password = new account
-ACCOUNT_RE = re.compile(r"^[A-Za-z0-9_.-]{1,32}$")
+# used with fullmatch: with match, "$" also lets a name end in a newline (a second "bob" account)
+ACCOUNT_RE = re.compile(r"[A-Za-z0-9_.-]{1,32}")
 LOGIN_FAILS_MAX, LOGIN_FAILS_WINDOW = 5, 300.0  # failed logins allowed per IP per window (seconds)
 # Result codes: the client shows Language/ErrorInfoENG.xml text for them.
 LOGIN_FAILED = 10001    # "Invalid account or password."
@@ -145,9 +146,12 @@ MAX_STR = 1024          # one string field
 # Requests per connection: a bucket of REQ_BURST, refilled at REQ_RATE a second. The real client sends a few dozen at
 # once when the hall opens, then a few a second. Requests past it are dropped; a connection that keeps going is closed.
 REQ_RATE, REQ_BURST, REQ_DROP_CLOSE = 30.0, 120.0, 300
-# Character names: 2-16 letters (any script, so Chinese names work), digits or underscore
+# Character names: 2-16 letters (any script, so Chinese names work), digits or underscore; see valid_name
 MAX_CHARACTERS = 4  # per account
-NAME_RE = re.compile(r"^[^\W]{2,16}$")
+NAME_RE = re.compile(r"[^\W]{2,16}")  # fullmatch only
+# Names that would pass for the server's own lines ("Server: You were banned ...") or for staff
+RESERVED_NAMES = {"server", "system", "admin", "administrator", "gm", "gamemaster", "moderator", "mod", "support",
+                  "staff", "notice", "broadcast"}
 # The hall's scrolling bar: announcements.txt next to the databases, one line each. Made with these on first start;
 # edit it while the server runs.
 ANNOUNCEMENTS = [
@@ -974,6 +978,15 @@ import atexit  # noqa: E402
 atexit.register(STORE.flush)
 
 
+def valid_name(name):
+    """A character name a player may take. Besides NAME_RE: no other forms of a plain character (fullwidth letters,
+    superscript digits: NFKC changes them), no ASCII letters mixed with other scripts (a Cyrillic "А" in "Аdmin"),
+    and none of RESERVED_NAMES."""
+    return (bool(NAME_RE.fullmatch(name)) and unicodedata.normalize("NFKC", name) == name
+            and (name.isascii() or not any(c.isascii() for c in name))
+            and name.casefold() not in RESERVED_NAMES)
+
+
 def clean_line(text):
     """Text that is safe to show or log on one line: no control characters, not too long."""
     return " ".join("".join(c for c in text if c.isprintable()).split())[:CHAT_MAX]
@@ -1333,9 +1346,10 @@ class Session:
             name, off = "", len(msg.body)
         rest = msg.body[off:]
         # never trust the client's own checks: validate the name here before storing or showing it to anyone
-        if not NAME_RE.match(name) or STORE.name_taken(name):
-            log(f"{self.addr} rejected character name {name!r}")
-            self.reply(msg, result=13002 if NAME_RE.match(name) else ERR_PROTOCOL)  # 13002 "Character already exist."
+        if not valid_name(name) or STORE.name_taken(name):
+            log(f"{self.addr} rejected character name {name[:32]!r}")
+            # 13002 "Character already exist." (a reserved name looks taken)
+            self.reply(msg, result=13002 if NAME_RE.fullmatch(name) else ERR_PROTOCOL)
             return
         gender = rest[0] if rest else 0
         model = struct.unpack_from("<I", rest, 1)[0] if len(rest) >= 5 else 0
@@ -2173,7 +2187,7 @@ class Session:
         if login_throttled(ip):
             log(f"{self.addr} login refused: too many failures")
             return self.reply(msg, result=LOGIN_LOCKED)
-        if not ACCOUNT_RE.match(account) or not password:
+        if not ACCOUNT_RE.fullmatch(account) or not password:
             login_throttled(ip, failed=True)
             log(f"{self.addr} login refused: bad account name {account[:40]!r}")
             return self.reply(msg, result=LOGIN_FAILED)

@@ -53,6 +53,26 @@ ok &= check("new account registers", login("alice", "pw1"), (0, "alice"))
 ok &= check("same password logs in", login("alice", "pw1"), (0, "alice"))
 ok &= check("wrong password refused", login("alice", "nope", ip="2.2.2.2"), (ls.LOGIN_FAILED, None))
 ok &= check("bad account name refused", login("a b'; --", "x", ip="3.3.3.3"), (ls.LOGIN_FAILED, None))
+ok &= check("an account name ending in a newline refused", login("alice\n", "x", ip="3.3.3.4"), (ls.LOGIN_FAILED, None))
+
+# character names: the create request with names the client's own check might let through
+s = FakeSession(ip="3.3.3.5")
+s.handle(ls.Message(10, 10000, token=1, flags=ls.MSG_REQUEST, body=login_body("namer", "pw")))
+
+
+def create(name):
+    s.handle(ls.Message(13, 13006, token=1, flags=ls.MSG_REQUEST,
+                        body=ls.wstr(name) + bytes([1]) + struct.pack("<I", 1) + bytes(8)))
+    return s.sent[-1].result
+
+
+for bad, why in [("Alpha\n", "a newline at the end"), ("Server", "the server's own name"), ("gM", "staff, any case"),
+                 ("Ａlpha", "fullwidth letters"), ("Аdmin", "a Cyrillic letter among ASCII ones"),
+                 ("ab²", "a superscript digit"), ("a", "too short"), ("a b", "a space"), ("x‍", "a joiner")]:
+    ok &= check(f"character name refused: {why}", create(bad) != 0, True)
+ok &= check("a plain name is fine", create("Alpha_2"), 0)
+ok &= check("so is one in another script", create("小明"), 0)
+ok &= check("a name taken in another case refused", create("ALPHA_2"), 13002)
 for _ in range(ls.LOGIN_FAILS_MAX):
     login("alice", "guess", ip="4.4.4.4")
 ok &= check("throttled after failures (even right password)", login("alice", "pw1", ip="4.4.4.4"), (ls.LOGIN_LOCKED, None))
