@@ -243,9 +243,9 @@ reply layout, and answer with real data.
 - [ ] Speed check (2026-11-05, offline): position reports may cover 16 units a second with 40 saved up, falling is
       free; a faster move is not relayed and the robot is put back with GS_GMSetLocation (19,33000), at most every
       0.5 s. Reports in the 1.5 s after a spawn, respawn or goto are dropped quietly (they may be from before).
-      MW_MOVE_CHECK=0 turns it off; tools/loadtest.py does, its bots send the time as their height. Try in game:
-      walking, jumping and falling off something high must never log "put back"; does (19,33000) really move the
-      robot back?
+      MW_MOVE_CHECK=0 turns it off; tools/loadtest.py does, its bots send the time as their height. Real client
+      2026-11-12: walking, strafing, backing up and jumps logged no "put back". Not tried: falling off something
+      high, running (Shift does not run; running is a body skill), and whether (19,33000) really moves it back
 - [x] Batched saves: stats/log lines flushed every 5 s (atomic writes); purchases/talents/creates save at once
 - [x] Request flood (2026-11-05, offline): each hall connection gets 120 requests at once, then 30 a second; more
       are dropped, and after 300 dropped the connection is closed (tools/test_login.py). Equipping and loadout
@@ -450,10 +450,10 @@ reply layout, and answer with real data.
       GS_Robot_Action in PROTOCOL.md), the client slides a robot on about a second after a stop, and speeds it up over
       about 4 s from a start. A stopped dummy stayed up to 9 units off for good. Now a robot standing for a second is
       sent 20 units up and then in place, in one packet: from then on it is exactly where the server has it
-- [ ] Walking robots are still drawn up to 9 units behind the server (the client's own speed-up). Shots use the
-      1.5 s trail; a dummy that speeds up like the client would look better. 2026-11-11, read from Robot::doMove
-      (0x10241010), not tried: the speed at +0x340 only ramps while running (bit 1 of +0x19c, rate and cap from the
-      body at +0x190 / +0x194); walking uses the basic speed at once. A robot without bit 0x80 of +0x19c (ours) moves
-      with the velocity at +0x35c (set by SetVelocity, our 50132 sends 0); while that is 0 it gets 0.2 x the walk
-      velocity. Then NxPhysics::MoveController (Engine.dll). That does not explain the 4 s speed-up seen in game:
-      measure it first (Frida on doMove / MoveController's vector) before changing the dummies
+- [x] Walking robots drawn off the server's path, real client 2026-11-12 (Frida on Robot::doMove, see 50132 in
+      PROTOCOL.md): another client's robot walks with a stored velocity and takes a new one only when it lands,
+      every few seconds. After a turn it walked the old way for up to 3 s; from a stop it crept at 0.2 x speed.
+      The server now sends the velocity (19,50132) on every start, stop and turn: dummies from their patrol,
+      players from their steer flags, and from the way their reports go after a mouse turn (with the facing
+      worked out from it, so a landing keeps it). Seen in game: dummies turn without the zig-zag, a scripted
+      player's start, mouse turn and strafe stay on its path. Not tried: running (a body skill), two real clients

@@ -1265,6 +1265,8 @@ u32 robot | f32 basic speed | f32 up speed | vec3 velocity
 
 Without it a robot's speed stays 0 and it can not walk. The Walker body uses 8 and 5.
 
+The velocity goes to robot +0x35c (SetVelocity), and another client's robot walks with it. Real client 2026-11-12 (Frida on `Robot::doMove`): a remote robot takes a new velocity from its steer flags and facing only when it lands (`RobotCallback::OnEnterLand`, every few seconds on flat ground). Until then it keeps the old one, or creeps at 0.2 × speed when the old one is 0. So after a turn it walked the old way for up to 3 s, snapped forward at each move and walked back between them. The emulator sends this message whenever a robot starts, stops or turns: dummies from their patrol, players from their steer flags. The client's rule for players: flag 1 forward, 2 back (× 0.75, so 6), 4 left, 8 right, where right of facing (fx, 0, fz) is (fz, 0, −fx); several flags are added and brought back to one speed. A mouse turn sends no new flags or facing, so when a walking player's position reports bend more than 25° away, the server works out the facing that makes the held flags go that way, relays it in the moves, and sends the new velocity. Tried in game with a scripted player: start, a mouse turn and strafing all stay on the reported path. Running (a body skill) is not covered.
+
 <a name="m-19-50100"></a>
 #### GS\_Robot\_Action (move) `(19,50100)`
 
@@ -1276,7 +1278,7 @@ u32 robot | u32 steer flags (1 = walking) | vec3 position | vec3 facing
 
 Remote robots only. Also [50102 (jump)](#m-19-50102) and the others listed there.
 
-Calls `Robot::Move(flags)` then `Robot::MoveTo(position)`. MoveTo puts the robot on the position at once when the robot is off screen, or the position is more than 15 units away (or more than 15 up or down). Closer, it only sets a glide, and the glide runs only when bit 0x80 of robot +0x19c is set; only `Robot::Revived` and `RobotCallback::OnEnterLand` set it, and our remote robots never have it. Real client 2026-11-04: the client walks a robot on by itself, speeds it up over about 4 s from a start, and lets it slide about a second after a stop, so a stopped robot stayed up to 9 units from where the server had it. The emulator now sends a robot that has stood for a second (sent again unchanged) twice in one packet: 20 units up, then in place. That puts it exactly where the server has it.
+Calls `Robot::Move(flags)` then `Robot::MoveTo(position)`. MoveTo puts the robot on the position at once when the robot is off screen, or the position is more than 15 units away (or more than 15 up or down). Closer, it only sets a glide, and the glide runs only when bit 0x80 of robot +0x19c is set; only `Robot::Revived` and `RobotCallback::OnEnterLand` set it, and our remote robots never have it. Real client 2026-11-04: the client walks a robot on by itself, speeds it up over about 4 s from a start, and lets it slide about a second after a stop (2026-11-12: both come from the velocity, see [50132](#m-19-50132), now sent on every start, stop and turn), so a stopped robot stayed up to 9 units from where the server had it. The emulator now sends a robot that has stood for a second (sent again unchanged) twice in one packet: 20 units up, then in place. That puts it exactly where the server has it.
 
 <a name="m-19-50102"></a>
 #### GS\_Robot\_Action (jump) `(19,50102)`

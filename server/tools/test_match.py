@@ -5,6 +5,7 @@ Fake clients talk to a real fdp.Server through a fake socket; the game loop is s
 a fake clock where timers must fire. Nothing is saved.
 Usage: python -I tools/test_match.py"""
 import copy
+import math
 import os
 import struct
 import sys
@@ -169,6 +170,49 @@ ok &= check("each time first raised, so the client puts it in place at once",
             heights == [2.0 + ls.SNAP_RISE, 2.0] * 2)
 moving = [struct.unpack_from("<f", x, 12)[0] for x in moves_of_a(5)]
 ok &= check("a walking robot is never raised", moving == [2.0] * 5)
+
+# walking velocity (19,50132): the other clients only take a new direction when the robot lands, so the server sends
+# it whenever a robot starts, stops or turns (measured on a real client 2026-11-12)
+wv = ls.walk_velocity
+ok &= check("walk velocity: forward, right, back, left, forward+right, none",
+            [tuple(round(v, 2) for v in wv(f, (0.0, 0.0, 1.0))) for f in (1, 8, 2, 4, 9, 0)]
+            == [(0, 0, 8), (8, 0, 0), (0, 0, -6), (-8, 0, 0), (5.66, 0, 5.66), (0, 0, 0)])
+ok &= check("walk velocity: right of a robot facing +x is -z", tuple(round(v, 2) for v in wv(8, (1.0, 0.0, 0.0))) == (0, 0, -8))
+
+
+def a_steers(steer, facing=(0.0, 0.0, 1.0)):
+    before = len(got(B, 50132)), len(got(A, 50132))
+    msg(A, 40100, struct.pack("<fI3f3f", 0.0, steer, *pa.pos, *facing))
+    return [struct.unpack("<Iff3f", y) for y in got(B, 50132)[before[0]:]], got(A, 50132)[before[1]:]
+
+
+theirs, mine = a_steers(1)
+ok &= check("A walks forward: B gets A's velocity, A does not", theirs == [(a_rid, 8.0, 5.0, 0.0, 0.0, 8.0)] and not mine)
+ok &= check("the same steer flags again: nothing new", a_steers(1)[0] == [])
+step(0.2)
+before = len(got(B, 50132))
+msg(A, 40130, struct.pack("<I3f", 0, pa.pos[0] + 1.6, pa.pos[1], pa.pos[2]))  # turned with the mouse: now going +x
+vel = [struct.unpack("<Iff3f", y)[3:] for y in got(B, 50132)[before:]]
+ok &= check(f"a mouse turn while walking: B gets the new way ({vel})", [tuple(round(v, 2) for v in x) for x in vel] == [(8, 0, 0)])
+ok &= check("and A's robot faces that way in the moves (a landing recomputes the velocity from it)",
+            tuple(round(v, 2) for v in pa.facing) == (1, 0, 0))
+step(0.2)
+before = len(got(B, 50132))
+msg(A, 40130, struct.pack("<I3f", 0, pa.pos[0] + 1.6, pa.pos[1], pa.pos[2]))
+ok &= check("going on the same way: nothing new", len(got(B, 50132)) == before)
+a_steers(8, (1.0, 0.0, 0.0))  # strafing right while facing +x goes -z ...
+step(0.2)
+msg(A, 40130, struct.pack("<I3f", 0, pa.pos[0] - 1.6, pa.pos[1], pa.pos[2]))  # ... but it goes -x: turned to face -z
+ok &= check(f"a mouse turn while strafing: the facing that makes D go that way ({pa.facing})",
+            tuple(round(v, 2) for v in pa.facing) == (0, 0, -1)
+            and tuple(round(v, 2) for v in pa.sent_vel) == (-8, 0, 0))
+ok &= check("A stops: B gets velocity 0", a_steers(0)[0] == [(a_rid, 8.0, 5.0, 0.0, 0.0, 0.0)])
+before = len(got(B, 50132))
+step(4 * ls.AI_PATROL / ls.AI_SPEED + 1)
+dummy_vels = [struct.unpack("<Iff3f", y) for y in got(B, 50132)[before:]]
+dummy_vels = [v[3:] for v in dummy_vels if v[0] in m.targets]
+ok &= check(f"patrolling dummies send their velocity at each turn ({len(dummy_vels)})",
+            dummy_vels and all(round(math.hypot(v[0], v[2]), 2) in (0.0, ls.AI_SPEED) for v in dummy_vels))
 
 
 # jumps (9,40102): shown at once (19,50102) to players near, not echoed, not faster than JUMP_GAP

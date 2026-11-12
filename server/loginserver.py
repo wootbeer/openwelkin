@@ -2956,6 +2956,59 @@ STATS_EVERY = float(os.environ.get("MW_STATS_EVERY", "60") or 0)  # seconds betw
 GAME_SERVER = None    # the fdp.Server once serve_udp runs
 MATCH_IDS = itertools.count(1)
 TIMER_IDS = itertools.count()
+BACK_SPEED = 6.0  # MOVE_SPEED x BackCoefficient 0.75 (StrafeCoefficient is 1)
+TURN_RESEND = math.cos(math.radians(25))  # a walking player's reports bending more than this resend its velocity
+
+
+def walk_velocity(steer, facing):
+    """The velocity a client gives a robot for its steer flags (Robot::doMove; measured on a real client 2026-11-12):
+    1 forward, 2 back (x 0.75), 4 left, 8 right, where right is (fz, 0, -fx); several at once are added and brought
+    back to one speed, the back speed if 2 is among them. Running (a faster speed after a while) is not covered."""
+    fx, fz = facing[0], facing[2]
+    n = math.hypot(fx, fz)
+    side = (1 if steer & 8 else 0) - (1 if steer & 4 else 0)
+    ahead = (1 if steer & 1 else 0) - (1 if steer & 2 else 0)
+    if not n or not (side or ahead):
+        return (0.0, 0.0, 0.0)
+    fx, fz = fx / n, fz / n
+    x, z = side * fz + ahead * fx, -side * fx + ahead * fz
+    k = (BACK_SPEED if steer & 2 else MOVE_SPEED) / math.hypot(x, z)
+    return (x * k, 0.0, z * k)
+
+
+def player_velocity(m, peer, vel):
+    """Tell the other clients a player's robot walks with vel now (see send_speed), if that is new."""
+    if getattr(peer, "sent_vel", None) != vel:
+        peer.sent_vel = vel
+        m.broadcast(19, 50132, speed_body(peer.player_rid, vel), skip=peer)
+
+
+def report_heading(m, peer, pos):
+    """A player turning with the mouse while walking sends no new steer flags or facing, only positions. The other
+    clients would keep walking the robot the old way (and turn it back at each landing, which recomputes the
+    velocity from the facing in the moves). When the reports bend away from the velocity last sent, the server
+    works out the facing that makes the held steer flags go that way, relays that, and sends the new velocity."""
+    last, peer.last_report = getattr(peer, "last_report", None), (m.now, pos)
+    vel = getattr(peer, "sent_vel", None)
+    if last and m.now - last[0] < 0.15:
+        peer.last_report = last  # measure over a longer stretch
+        return
+    if not last or not vel or not any(vel):
+        return
+    dx, dz = pos[0] - last[1][0], pos[2] - last[1][2]
+    d, speed = math.hypot(dx, dz), math.hypot(vel[0], vel[2])
+    if d < 1.0 or (dx * vel[0] + dz * vel[2]) / (d * speed) > TURN_RESEND:
+        return
+    # walk_velocity turns the facing f into the way v = (a fx + s fz, -s fx + a fz); undo that for the way gone
+    steer, hx, hz = peer.steer, dx / d, dz / d
+    s = (1 if steer & 8 else 0) - (1 if steer & 4 else 0)
+    a = (1 if steer & 1 else 0) - (1 if steer & 2 else 0)
+    if not (s or a):
+        return
+    fx, fz = a * hx - s * hz, s * hx + a * hz
+    n = math.hypot(fx, fz)
+    peer.facing = (fx / n, 0.0, fz / n)
+    player_velocity(m, peer, walk_velocity(steer, peer.facing))
 
 
 def issue_ticket(cid, bfid, gm_level=0):
@@ -3231,11 +3284,20 @@ def is_player(cid):
     return STORE.by_id(cid) is not None
 
 
-def send_speed(server, viewer, rid):
+def speed_body(rid, velocity=(0.0, 0.0, 0.0)):
+    return struct.pack("<Iff3f", rid, MOVE_SPEED, JUMP_SPEED, *velocity)
+
+
+def send_speed(server, viewer, rid, velocity=(0.0, 0.0, 0.0)):
     """GS_Robot_Skill (19,50132): u32 robot | f32 basic speed | f32 up speed | vec3 velocity -> Robot::SetBasicSpeed,
     SetUpSpeed, SetVelocity (observer Game.dll 0x10266b20). Without it a robot's speed stays 0 and it can't walk
-    (Walker body flyweight: NormalSpeed 8, JumpSpeed 5)."""
-    send_game_event(server, viewer, 19, 50132, struct.pack("<Iff3f", rid, MOVE_SPEED, JUMP_SPEED, 0.0, 0.0, 0.0))
+    (Walker body flyweight: NormalSpeed 8, JumpSpeed 5).
+    Real client 2026-11-12 (Frida on Robot::doMove): another client's robot walks with the velocity at robot +0x35c,
+    and takes a new one from its steer flags and facing only when it lands (RobotCallback::OnEnterLand, every few
+    seconds on flat ground). So after a turn it kept walking the old way for up to 3 s, snapped forward at each move
+    and walked back between them; from a stop it crept at 0.2 x speed until it landed. SetVelocity changes +0x35c at
+    once, so the server sends the new velocity whenever a robot starts, stops or turns (ai_step, player_velocity)."""
+    send_game_event(server, viewer, 19, 50132, speed_body(rid, velocity))
 
 
 def relive_on(server, viewer, rid, cid, pos, facing, hp, max_hp):
@@ -3260,6 +3322,8 @@ def show_dummy(server, viewer, rid, t):
         send_game_event(server, viewer, 19, 50107, struct.pack("<Iff", rid, 0.0, 0.0))
     else:
         relive_on(server, viewer, rid, t["cid"], t["pos"], (0.0, 0.0, 1.0), t["hp"], DUMMY_HP)
+        if any(t.get("vel") or ()):
+            send_speed(server, viewer, rid, t["vel"])
 
 
 def show_player(server, viewer, other):
@@ -3271,6 +3335,8 @@ def show_player(server, viewer, other):
         send_game_event(server, viewer, 19, 50107, struct.pack("<Iff", other.player_rid, 0.0, 0.0))
     else:
         relive_on(server, viewer, other.player_rid, other.cid, other.pos, other.facing, other.player_hp, PLAYER_HP)
+        if any(getattr(other, "sent_vel", None) or ()):
+            send_speed(server, viewer, other.player_rid, other.sent_vel)
 
 
 def spawn_point(m, slot, nation=0):
@@ -3306,6 +3372,7 @@ def join_match(server, peer):
     peer.pos, peer.facing = spawn_point(m, slot, nation_of(peer.cid)), SPAWN_FACING
     placed(peer)
     peer.player_hp, peer.player_dead = float(PLAYER_HP), False
+    peer.sent_vel = None  # relive_on sends everyone 0
     peer.trigger, peer.kills, peer.deaths, peer.fire, peer.steer = 0, 0, 0, None, 0
     peer.equip_slot = 1  # the weapon slot in hand (0 = put away)
     peer.player_kills = 0  # target robots do not count towards a round
@@ -3537,6 +3604,7 @@ def order_robot(server, peer, body):
         peer.fire_interval = weapon_stats(weapon)[1][0]
         peer.fire_range = fire_range(weapon)
         peer.player_hp = float(PLAYER_HP)
+        peer.sent_vel = None  # relive_on sends everyone 0
         m.trails.pop(peer.player_rid, None)
         for p in list(m.peers):
             relive_on(server, p, peer.player_rid, peer.cid, peer.pos, peer.facing, PLAYER_HP, PLAYER_HP)
@@ -3816,7 +3884,7 @@ def relive_target(m, rid):
         if m.peers is None:
             return
         t = m.targets[rid]
-        t.update(hp=float(DUMMY_HP), dead=False, pos=t["home"], phase=0.0, cooldown=AI_PAUSE, burst=0)
+        t.update(hp=float(DUMMY_HP), dead=False, pos=t["home"], phase=0.0, cooldown=AI_PAUSE, burst=0, vel=None)
         m.trails.pop(rid, None)
         for p in list(m.peers):
             relive_on(m.server, p, rid, t["cid"], t["pos"], (0.0, 0.0, 1.0), DUMMY_HP, DUMMY_HP)
@@ -3900,6 +3968,7 @@ def relive_player(server, peer):
         if not m or peer not in m.peers or m.over:
             return
         peer.player_hp, peer.player_dead = float(PLAYER_HP), False
+        peer.sent_vel = None
         peer.protected_until = time.time() + SPAWN_PROTECTION
         at = {fid: pos for fid, _, pos in reborn_locations(peer)}.get(getattr(peer, "reborn", None))
         peer.reborn = None
@@ -3937,6 +4006,10 @@ def ai_step(m, now):
             t["pos"] = (hx + (u - AI_PATROL if ahead else 3 * AI_PATROL - u), hy, hz)
             face, flags = (1.0 if ahead else -1.0, 0.0, 0.0), 1
         m.move(rid, struct.pack("<II3f3f", rid, flags, *t["pos"], *face), t["pos"], fire_range(DEFAULT_WEAPON))
+        vel = (face[0] * AI_SPEED, 0.0, face[2] * AI_SPEED) if flags else (0.0, 0.0, 0.0)
+        if t.get("vel") != vel:  # started, stopped or turned: see send_speed
+            t["vel"] = vel
+            m.broadcast(19, 50132, speed_body(rid, vel))
         if not best or PASSIVE_DUMMIES:
             continue
         t["cooldown"] -= AI_TICK
@@ -4058,6 +4131,7 @@ def on_game_message(server, peer, raw):
             peer.pos = pos
             m.move(peer.player_rid, struct.pack("<II3f3f", peer.player_rid, peer.steer, *pos, *peer.facing), pos,
                    peer.fire_range, skip=peer)
+            report_heading(m, peer, pos)
     elif key == (9, 40100) and len(body) >= 32:
         # GC_Robot_Action, sent by Robot::Move when the steer flags change: f32 | u32 steer flags (ROBOT_STEER_FLAG,
         # 0 = standing) | vec3 pos | vec3 facing -- the same layout as GS_Robot_Action (19,50100), relayed as is.
@@ -4069,6 +4143,8 @@ def on_game_message(server, peer, raw):
                 peer.facing = facing
             m.move(peer.player_rid, struct.pack("<II3f3f", peer.player_rid, steer, *pos, *peer.facing), pos,
                    peer.fire_range, skip=peer)
+            player_velocity(m, peer, walk_velocity(steer, peer.facing))
+            peer.last_report = (m.now, pos)
     elif key == (9, 40102) and len(body) >= 32:
         # Robot::Jump (0x10241e70): f32 | u32 steer flags | vec3 pos | vec3 facing, as (9,40100). The other clients
         # show it on GS_Robot_Action (19,50102): position, facing, Move(steer), then Robot::Jump.
