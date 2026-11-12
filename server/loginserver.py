@@ -3195,8 +3195,9 @@ def round_timer(m):
 
 
 def countdown_body(m):
-    """Arena_KILL_Waiting_Begin (19,49000): f32 seconds | u8 | f32 -> CArenaMessageUI::SetCountDown (Game.dll
-    0x106a0800). Only the seconds are known; the u8 and the second f32 are sent as 0."""
+    """Arena_KILL_Waiting_Begin (19,49000): f32 seconds | u8 keep shown | f32 flash seconds ->
+    CArenaMessageUI::SetCountDown (Game.dll 0x106a0800). The arena window's timer counts the seconds down from when
+    this arrives and stops at 00:00; the last f32 makes it flash red for that long. Sent as time left, 0, 0."""
     return struct.pack("<fBf", max(0.0, m.round_ends - time.time()), 0, 0.0)
 
 

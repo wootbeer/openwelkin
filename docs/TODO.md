@@ -273,7 +273,9 @@ reply layout, and answer with real data.
 - [ ] Kill mode (MW_KILL_MODE=1), 2026-11-05 offline: arena logic 5, side scores (19,52001), countdown (19,49000),
       the side that reaches MW_ROUND_KILLS wins and all its players get a win (tools/test_match.py). Real client
       2026-11-05: the "Our Force" / "Enemy Force" bar and a timer show. Not yet seen: the scores counting up after a
-      kill (needs two players on different sides), and the timer running (it showed 00:00 at the end of a round)
+      kill (needs two players on different sides), and the timer running (it showed 00:00 at the end of a round).
+      2026-11-12, offline: (19,49000) is the only thing that sets that timer, and the server's body is right
+      (time left | 0 | 0; the last f32 is how long it flashes). 00:00 is also what it shows once the time is up
 - [x] Score table (20,20130), real client 2026-11-05: a Kill mode round ends with it in place of 30150 (neither
       clears the Record window). Under "Campaign": winner, then each side's kills; then the 20 s countdown and back
       to the lobby. Only arena logics register a 20130 observer, so other battles keep 30150. Catalog 20 game

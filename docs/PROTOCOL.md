@@ -1587,10 +1587,10 @@ The client has its own team mode: arena logic 5 in [GS\_Battle\_Initialize](#m-1
 *S→C · read, not tried*
 
 ```text
-f32 seconds | u8 | f32
+f32 seconds | u8 keep shown | f32 flash seconds
 ```
 
-Starts the arena countdown (CArenaMessageUI::SetCountDown).
+Starts the arena countdown (CArenaMessageUI::SetCountDown). Read from Game.dll 2026-11-12: the timer is control 1 of the arena window (dialog 0x67), the same window as the "Our Force" / "Enemy Force" bar. CArenaLogicKill::OnInit makes that window when the battle starts, and nothing else sets its time (the f32 in the Kill init data is stored and never read). The window draws mm:ss = seconds minus the time since this message, down to 00:00, and stops there. Until the first one arrives there is no countdown. The last f32 makes the timer flash red for that many seconds after the message (0 = no flash). With no countdown running, a u8 of 0 lets the client set the timer text visible again. The emulator sends the time left with 0 and 0.
 
 <a name="m-19-52001"></a>
 #### Arena\_KILL\_SetScore `(19,52001)`
