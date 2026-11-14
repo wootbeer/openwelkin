@@ -240,12 +240,14 @@ reply layout, and answer with real data.
       an enemy player more than 100 units away. After 30 in one match, 90% hits or more logs "[aim] ..." and the
       aim command (GM) marks the player. Nothing is done to them. Not tried in game: how often a good player hits
       far shots (if fair players get marked, raise AIM_WARN or AIM_FAR)
-- [ ] Speed check (2026-11-05, offline): position reports may cover 16 units a second with 40 saved up, falling is
+- [x] Speed check (2026-11-05, offline): position reports may cover 16 units a second with 40 saved up, falling is
       free; a faster move is not relayed and the robot is put back with GS_GMSetLocation (19,33000), at most every
       0.5 s. Reports in the 1.5 s after a spawn, respawn or goto are dropped quietly (they may be from before).
       MW_MOVE_CHECK=0 turns it off; tools/loadtest.py does, its bots send the time as their height. Real client
       2026-11-12: walking, strafing, backing up and jumps logged no "put back". Not tried: falling off something
-      high, running (Shift does not run; running is a body skill), and whether (19,33000) really moves it back
+      high, running (Shift does not run; running is a body skill). 2026-11-12: (19,33000) does move the robot
+      (goto, below), so a put-back works. A goto high up lands on the ground at once, so it can not start a fall;
+      falling is not counted by the check, so it can not cause a put-back
 - [x] Batched saves: stats/log lines flushed every 5 s (atomic writes); purchases/talents/creates save at once
 - [x] Request flood (2026-11-05, offline): each hall connection gets 120 requests at once, then 30 a second; more
       are dropped, and after 300 dropped the connection is closed (tools/test_login.py). Equipping and loadout
@@ -270,12 +272,15 @@ reply layout, and answer with real data.
       (+0x30), and the robot snapshot's u32 after the owner is the robot's (+0x6c). Robots of your own nation get a white
       name, others a red one. The client still sends shots at your own side, so the server ignores them (players only;
       target dummies have no nation and fight everyone). Kill feed lines carry both nations
-- [ ] Kill mode (MW_KILL_MODE=1), 2026-11-05 offline: arena logic 5, side scores (19,52001), countdown (19,49000),
+- [x] Kill mode (MW_KILL_MODE=1), 2026-11-05 offline: arena logic 5, side scores (19,52001), countdown (19,49000),
       the side that reaches MW_ROUND_KILLS wins and all its players get a win (tools/test_match.py). Real client
       2026-11-05: the "Our Force" / "Enemy Force" bar and a timer show. Not yet seen: the scores counting up after a
       kill (needs two players on different sides), and the timer running (it showed 00:00 at the end of a round).
       2026-11-12, offline: (19,49000) is the only thing that sets that timer, and the server's body is right
-      (time left | 0 | 0; the last f32 is how long it flashes). 00:00 is also what it shows once the time is up
+      (time left | 0 | 0; the last f32 is how long it flashes). 00:00 is also what it shows once the time is up.
+      Real client 2026-11-12, tester (Alliance) against a scripted Federal player: the timer counts down from
+      the round length, each kill raised Our Force (the client set it to "2" after the second), and the third
+      kill (MW_ROUND_KILLS=3) ended the round: "Alliance won with 3 kills" and the score window opened
 - [x] Score table (20,20130), real client 2026-11-05: a Kill mode round ends with it in place of 30150 (neither
       clears the Record window). Under "Campaign": winner, then each side's kills; then the 20 s countdown and back
       to the lobby. Only arena logics register a 20130 observer, so other battles keep 30150. Catalog 20 game
@@ -286,7 +291,7 @@ reply layout, and answer with real data.
       = countdown, (19,52001) u8 nation | i32 = score of a side ("Our Force" / "Enemy Force"), (20,20130) u32 n |
       n x 6 str = score table. The local character's nation (+0x30) picks the sides; 0x10 is one of them. Not read yet:
       what sets +0x30, and whether a catalog 20 message reaches the client on the game session
-- [ ] Hit detection is generous (HIT_RADIUS 6 around the robot or the client's ray end point): shots at the ground next to a player count.
+- [x] Hit detection is generous (HIT_RADIUS 6 around the robot or the client's ray end point): shots at the ground next to a player count.
       2026-11-04, offline: nothing past where the shot landed (plus HIT_RADIUS) is hit any more, so a shot into a wall or
       the ground in front of a robot misses. A shot at open sky lands at exactly WP1Range and still reaches the whole
       range. Real client 2026-11-04: shots at a dummy still hit; the client's ray goes through robots (it landed 61.5
@@ -294,7 +299,11 @@ reply layout, and answer with real data.
       against where a robot was over the last 1.5 s (clients draw walking robots up to 9 units behind). With that the
       radius could come down to about 3. 2026-11-05, offline: now a capsule, radius 3 around a vertical line from
       0.5 to 4.5 above the robot's position (was a sphere of 6 around 2.5). Shoulder, head and feet shots hit; 4 to
-      the side, over the head, or into the ground beside a robot miss (tools/test_match.py). Not tried in game
+      the side, over the head, or into the ground beside a robot miss (tools/test_match.py). Real client
+      2026-11-12 (MW_DEBUG=1 logs how far each shot passes): from 6 units, shots passing up to 3.4 from the center
+      hit and 4.1 or more to the side or over the head miss. A shot into the ground 3 units in front of the feet
+      still hit, because 3 units past the landing point were allowed; now nothing past it counts (shot_reach), and
+      in game that shot misses while shots at the feet, or 2 units in front of them, still hit
 - [x] Test tooling: tools/vinput.py drives a client's DirectInput keyboard/mouse (even minimized); tools/quickenter.js presses Quick Enter; MW_FORCE_BF=1 sends every Quick Enter to one battlefield. The client saves LastAccount after login, so set Welkin4591.ini right before each launch.
 
 ## Admin / moderation (2026-10-29, tested offline)
@@ -333,8 +342,9 @@ reply layout, and answer with real data.
       /e N enter, /L leave, /l apply to be leader, /t N set the target zone (requests not read yet), /h hides the
       screen's windows and HUD (client only). Squads need teams first
 - [x] goto <account> <x> <y> <z> (GM), 2026-11-05 offline: GS_GMSetLocation (19,33000) vec3 moves the player's own
-      robot; the server moves it on the others too. Works across split servers (tools/test_split.py). Not tried in
-      game. Also read, not used: GS_GMCommando (19,31000) u32 robot | u32 state | u32 on (1 = no physics body,
+      robot; the server moves it on the others too. Works across split servers (tools/test_split.py). Real client
+      2026-11-12: goto test 38 86 -60 put the robot at 38, 81 (the ground), -60; the client drops it onto the ground
+      at once. Also read, not used: GS_GMCommando (19,31000) u32 robot | u32 state | u32 on (1 = no physics body,
       2 = view mode)
 - [x] notice <text>, real client 2026-11-02: "[Broadcast] Server: ..." in the hall chat; in battle the same line plus big
       red text in the middle for a few seconds. announcements.txt holds the hall scrolling bar

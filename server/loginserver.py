@@ -3835,13 +3835,20 @@ def in_range(peer, pos):
     return sum((a - b) ** 2 for a, b in zip(peer.pos, pos)) <= peer.fire_range ** 2
 
 
+def shot_reach(fire_range, origin, aim):
+    """How far a shot can hit: up to where it landed (on the ground or a wall), or the whole range for a shot at
+    open sky (it then lands at exactly WP1Range). Nothing past the landing point counts: real client 2026-11-12, a
+    shot into the ground 3 units in front of a dummy's feet still hit while 3 more units past the landing were
+    allowed (the line went on under the ground to its feet). A shot at the feet lands at them and still hits."""
+    landed = math.dist(origin, aim)
+    return min(fire_range, landed) if landed < fire_range / RANGE_MARGIN - 1.0 else fire_range
+
+
 def pick_victim(m, shooter, origin, aim):
     """What the trigger-pull ray hits: a dummy rid, another player, or None. The client's aim point is where its
     ray met the ground or a wall (remote robots do not stop it), so nothing past that point is hit. A shot at open
     sky ends at exactly the weapon's range (WP1Range), and then the whole range counts."""
-    reach, landed = shooter.fire_range, math.dist(origin, aim)
-    if landed < reach / RANGE_MARGIN - 1.0:
-        reach = min(reach, landed + HIT_RADIUS)
+    reach, landed = shot_reach(shooter.fire_range, origin, aim), math.dist(origin, aim)
 
     def hit(rid, pos):  # a hill between the muzzle and the robot stops the shot (aim bots, shots through hills)
         return any(ray_hits_robot(origin, aim, p, reach) and m.sees(origin, (p[0], p[1] + HIT_HEIGHT, p[2]))

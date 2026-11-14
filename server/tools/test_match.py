@@ -512,6 +512,13 @@ ok &= check("hit shape: 4 to the side or over the head misses", not rh(o, (40.0,
 ok &= check("hit shape: a shot down into the ground beside it misses", not rh(o, (40.0, 0.0, 5.0), (40.0, 0.0, 0.0)))
 ok &= check("hit shape: straight down from above hits, behind the muzzle misses",
             rh((40.0, 30.0, 0.0), (40.0, 0.0, 1.0), (40.0, 0.0, 0.0)) and not rh(o, (40.0, 2.5, 0.0), (-10.0, 0.0, 0.0)))
+# real client 2026-11-12 (Mars Front, Target 1): muzzle, where the shot landed, the dummy
+o2, land, dummy = (36.0, 81.6, -60.0), (37.3, 80.0, -57.3), (38.6, 81.0, -54.6)
+ok &= check("hit shape: a shot into the ground 3 in front of the feet misses",
+            not rh(o2, land, dummy, reach=ls.shot_reach(300.0, o2, land)))
+ok &= check("hit shape: a shot into the ground at the feet hits",
+            rh(o2, (38.4, 80.9, -55.0), dummy, reach=ls.shot_reach(300.0, o2, (38.4, 80.9, -55.0))))
+ok &= check("hit shape: a shot at open sky keeps the whole range", ls.shot_reach(300.0, o2, (36.0, 81.6, 180.0)) == 300.0)
 ok &= check("hit shape: past the reach misses", not rh(o, (40.0, 2.5, 0.0), (40.0, 0.0, 0.0), reach=30.0))
 msg(A, 40125, b"\0" * 4)
 pb.pos = (10.0, 0.0, 0.0)

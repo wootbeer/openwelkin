@@ -1053,13 +1053,13 @@ Read from Game.dll (0x103541c0), not sent by the emulator. Sets or clears a bit 
 <a name="m-19-33000"></a>
 #### GS\_GMSetLocation `(19,33000)`
 
-*S→C · partial*
+*S→C · verified*
 
 ```text
 vec3 position
 ```
 
-Read from Game.dll (0x10354260), not tried in game. Puts the local character's own robot at that position. The emulator sends it for the admin command `goto <account> <x> <y> <z>` and moves the robot on the other clients too.
+Read from Game.dll (0x10354260). Puts the local character's own robot at that position, on the ground: real client 2026-11-12, a goto 120 units up landed on the ground at once. The emulator sends it for the admin command `goto <account> <x> <y> <z>` and moves the robot on the other clients too.
 
 <a name="char-msgs"></a>
 
@@ -1579,29 +1579,29 @@ Big red text in the middle of the screen with kind 0, which is what the emulator
 
 ### Kill arena
 
-The client has its own team mode: arena logic 5 in [GS\_Battle\_Initialize](#m-19-40050). The other ids are 1 Big, 2 GrabMoney, 3 OD and 4 EM. Init data after the logic id: `u8 nation | u8 nation | f32` (CArenaLogicKill::SetInitData; the f32 is kept at +0x18, use not known). With `MW_KILL_MODE=1` the emulator uses it on battlefields with rounds: it sends both nations and the round length, both scores and the time left when a player joins, a side's new score on each kill of the other nation, and the side that reaches `MW_ROUND_KILLS` (or has more kills when time runs out) wins the round. Not tried in game. The local character's nation (+0x30) picks which side is "Our Force".
+The client has its own team mode: arena logic 5 in [GS\_Battle\_Initialize](#m-19-40050). The other ids are 1 Big, 2 GrabMoney, 3 OD and 4 EM. Init data after the logic id: `u8 nation | u8 nation | f32` (CArenaLogicKill::SetInitData; the f32 is kept at +0x18, use not known). With `MW_KILL_MODE=1` the emulator uses it on battlefields with rounds: it sends both nations and the round length, both scores and the time left when a player joins, a side's new score on each kill of the other nation, and the side that reaches `MW_ROUND_KILLS` (or has more kills when time runs out) wins the round. Real client 2026-11-12: the timer, the score and a round won by kills all work. The local character's nation (+0x30) picks which side is "Our Force".
 
 <a name="m-19-49000"></a>
 #### Arena\_KILL\_Waiting\_Begin `(19,49000)`
 
-*S→C · read, not tried*
+*S→C · verified*
 
 ```text
 f32 seconds | u8 keep shown | f32 flash seconds
 ```
 
-Starts the arena countdown (CArenaMessageUI::SetCountDown). Read from Game.dll 2026-11-12: the timer is control 1 of the arena window (dialog 0x67), the same window as the "Our Force" / "Enemy Force" bar. CArenaLogicKill::OnInit makes that window when the battle starts, and nothing else sets its time (the f32 in the Kill init data is stored and never read). The window draws mm:ss = seconds minus the time since this message, down to 00:00, and stops there. Until the first one arrives there is no countdown. The last f32 makes the timer flash red for that many seconds after the message (0 = no flash). With no countdown running, a u8 of 0 lets the client set the timer text visible again. The emulator sends the time left with 0 and 0.
+Starts the arena countdown (CArenaMessageUI::SetCountDown). Read from Game.dll 2026-11-12: the timer is control 1 of the arena window (dialog 0x67), the same window as the "Our Force" / "Enemy Force" bar. CArenaLogicKill::OnInit makes that window when the battle starts, and nothing else sets its time (the f32 in the Kill init data is stored and never read). The window draws mm:ss = seconds minus the time since this message, down to 00:00, and stops there. Until the first one arrives there is no countdown. The last f32 makes the timer flash red for that many seconds after the message (0 = no flash). With no countdown running, a u8 of 0 lets the client set the timer text visible again. The emulator sends the time left with 0 and 0. Real client 2026-11-12: the timer counts down from the round length.
 
 <a name="m-19-52001"></a>
 #### Arena\_KILL\_SetScore `(19,52001)`
 
-*S→C · read, not tried*
+*S→C · verified*
 
 ```text
 u8 nation | i32 score
 ```
 
-Sets one side's score.
+Sets one side's score (CArenaMessageUI::SetScore; side 0 is Our Force). Real client 2026-11-12: each kill on the other nation raised Our Force.
 
 <a name="m-20-20130"></a>
 #### Arena\_KILL\_Score `(20,20130)`
