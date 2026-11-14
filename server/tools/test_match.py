@@ -404,6 +404,32 @@ shoot(aim=(14.0, 2.5, 0.0))
 ok &= check("but not after the trail runs out", pb.player_hp == hp)
 msg(B, 40130, struct.pack("<I3f", 0, 10.0, 0.0, 0.0))
 step(0.1)
+# which robot takes a shot: the nearest in front of the muzzle (real client 2026-11-12: a dummy beside the shooter
+# took a shot aimed at a player 12 units away, and dummies were checked before players whatever the distance)
+v_rid = next(r for r, t in m.targets.items() if not t["dead"])
+v_saved, v_trail = m.targets[v_rid]["pos"], m.trails.pop(v_rid, None)
+for r in m.targets:
+    m.trails.pop(r, None)
+others = {r: t["pos"] for r, t in m.targets.items() if r != v_rid}
+for r in others:
+    m.targets[r]["pos"] = (0.0, 0.0, 500.0)
+m.targets[v_rid]["pos"] = (-0.3, 0.0, 1.5)
+ok &= check("a dummy beside the shooter (just behind the muzzle) does not take the shot",
+            ls.pick_victim(m, pa, (0.0, 2.5, 0.0), (14.0, 2.5, 0.0)) is pb)
+m.targets[v_rid]["pos"] = (20.0, 0.0, 0.0)
+ok &= check("a dummy behind the player does not take the shot", ls.pick_victim(m, pa, (0.0, 2.5, 0.0), (30.0, 2.5, 0.0)) is pb)
+m.targets[v_rid]["pos"] = (5.0, 0.0, 0.0)
+ok &= check("a dummy in front of the player takes it", ls.pick_victim(m, pa, (0.0, 2.5, 0.0), (30.0, 2.5, 0.0)) == v_rid)
+m.targets[v_rid]["pos"] = (1.5, 0.0, 1.3)  # real client 2026-11-12: 1.5 ahead, 1.3 to the side, out of view
+ok &= check("a dummy just off the line near the muzzle does not take a shot aimed at the player",
+            ls.pick_victim(m, pa, (0.0, 2.5, 0.0), (10.0, 0.0, 0.0)) is pb)
+m.targets[v_rid]["pos"] = (5.0, 0.0, 0.5)
+ok &= check("but one the shot goes through still does", ls.pick_victim(m, pa, (0.0, 2.5, 0.0), (10.0, 0.0, 0.0)) == v_rid)
+m.targets[v_rid]["pos"] = v_saved
+for r, pos in others.items():
+    m.targets[r]["pos"] = pos
+if v_trail is not None:
+    m.trails[v_rid] = v_trail
 # aim bot check: far shots at a player are counted, and too many hits are flagged
 step(ls.TRAIL_SECONDS + 0.2)  # B's old places near A are out of the trail
 kept_hp = pb.player_hp

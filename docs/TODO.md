@@ -303,7 +303,11 @@ reply layout, and answer with real data.
       2026-11-12 (MW_DEBUG=1 logs how far each shot passes): from 6 units, shots passing up to 3.4 from the center
       hit and 4.1 or more to the side or over the head miss. A shot into the ground 3 units in front of the feet
       still hit, because 3 units past the landing point were allowed; now nothing past it counts (shot_reach), and
-      in game that shot misses while shots at the feet, or 2 units in front of them, still hit
+      in game that shot misses while shots at the feet, or 2 units in front of them, still hit. 2026-11-13, real
+      client: a dummy standing next to the shooter took shots aimed at a player 12 units away (dummies were checked
+      first, and the 3-unit radius reached the muzzle). Now a robot whose middle is behind the muzzle is never hit,
+      a robot the shot goes through (within HIT_BODY, 1 unit) stops it, nearest first, and otherwise the robot the
+      shot passed closest to takes it. In game the same shot then hit the player
 - [x] Test tooling: tools/vinput.py drives a client's DirectInput keyboard/mouse (even minimized); tools/quickenter.js presses Quick Enter; MW_FORCE_BF=1 sends every Quick Enter to one battlefield. The client saves LastAccount after login, so set Welkin4591.ini right before each launch.
 
 ## Admin / moderation (2026-10-29, tested offline)
@@ -375,7 +379,9 @@ reply layout, and answer with real data.
 - [x] Others are told: robot shown destroyed, then GS_Object_Detach_Object (19,50002, u32 object id) and
       GS_Character_Delete_Character (19,30002, u32 char id). In game: 7 fake players left a real client's match, the
       client's robot list dropped them and it did not crash. If it ever does, set REMOVE_LEFT_PLAYERS = False
-- [ ] Watch a robot vanish on screen, and leave with a real second client (only fake players tried so far)
+- [x] Watch a robot vanish on screen. Real client 2026-11-13: a scripted player (Bot0) stood in view; it left at
+      22:11:12 and was gone from the screen 2 s later, and from the client's robot list. Leaving with a real second
+      client is still not tried (a second client beside the first never connected)
 - [x] Time played is saved when a player leaves
 
 ## Split servers (2026-10-30, real client 2026-10-31)

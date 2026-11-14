@@ -83,6 +83,7 @@ AI_RANGE, AI_BURST, AI_PAUSE, AI_HIT_CHANCE, AI_DAMAGE = 70.0, 6, 1.5, 0.5, 15.0
 # position (a capsule). Was a sphere of 6 around HIT_HEIGHT: shots at the ground next to a robot counted. A shot at a
 # standing dummy's shoulder passed 2.2 from its center (real client 2026-11-04)
 HIT_RADIUS, HIT_HEIGHT, HIT_LOW, HIT_HIGH = 3.0, 2.5, 0.5, 4.5
+HIT_BODY = 1.0  # a shot this close to the line goes through the robot's body, so it stops there (pick_victim)
 # Robot::MoveTo on a robot in view only glides it to a new position closer than 15 units, and the glide never runs
 # for our remote robots (it needs a state bit that only Robot::Revived and RobotCallback::OnEnterLand set). So a robot
 # that stopped stayed where the client's own walking left it, up to 9 units off. A move more than 15 units up or away
@@ -2882,8 +2883,14 @@ EVENT_HEAD = struct.Struct("<BBHfI")  # u8 flags | u8 catalog | u16 type | f32 e
 
 def ray_hits_robot(origin, target, pos, reach=math.inf):
     """Does the ray from origin through target pass within HIT_RADIUS of the robot standing at pos (its capsule),
-    within reach? The distance from a ray to a segment is convex along the ray, so its minimum is at one of three
-    points: closest to the infinite line through the segment, or closest to either end."""
+    within reach?"""
+    return ray_robot_distance(origin, target, pos, reach) <= HIT_RADIUS
+
+
+def ray_robot_distance(origin, target, pos, reach=math.inf):
+    """How close the ray from origin through target (up to reach) passes to the vertical line from HIT_LOW to
+    HIT_HIGH above pos. The distance from a ray to a segment is convex along the ray, so its minimum is at one of
+    three points: closest to the infinite line through the segment, or closest to either end."""
     d = [t - o for t, o in zip(target, origin)]
     n = sum(x * x for x in d) ** 0.5 or 1.0
     d = [x / n for x in d]
@@ -2899,7 +2906,7 @@ def ray_hits_robot(origin, target, pos, reach=math.inf):
     tries = [(rx * d[0] + rz * d[2]) / flat] if flat > 1e-9 else []  # closest to the vertical line
     for y in (low, high):
         tries.append(rx * d[0] + (y - origin[1]) * d[1] + rz * d[2])  # closest to an end
-    return min(dist2(s) for s in tries) <= HIT_RADIUS * HIT_RADIUS
+    return math.sqrt(min(dist2(s) for s in tries))
 
 
 MAX_GAME_PER_IP = 16  # game sessions from one address (players behind one router share it); not for 127.x
@@ -3850,9 +3857,24 @@ def pick_victim(m, shooter, origin, aim):
     sky ends at exactly the weapon's range (WP1Range), and then the whole range counts."""
     reach, landed = shot_reach(shooter.fire_range, origin, aim), math.dist(origin, aim)
 
-    def hit(rid, pos):  # a hill between the muzzle and the robot stops the shot (aim bots, shots through hills)
-        return any(ray_hits_robot(origin, aim, p, reach) and m.sees(origin, (p[0], p[1] + HIT_HEIGHT, p[2]))
-                   for p in m.recent(rid, pos))
+    d = [b - a for a, b in zip(origin, aim)]
+    n = math.hypot(*d) or 1.0
+
+    def hit(rid, pos):
+        """(how close the shot passes, how far along it) for this robot, or None if it is not hit. A hill between
+        the muzzle and the robot stops the shot (aim bots, shots through hills). A robot whose middle is not in
+        front of the muzzle is not hit: real client 2026-11-12, a dummy standing beside the shooter took a shot
+        aimed at a player 12 units away."""
+        best = None
+        for p in m.recent(rid, pos):
+            center = (p[0], p[1] + HIT_HEIGHT, p[2])
+            along = sum((c - o) * x for c, o, x in zip(center, origin, d)) / n
+            if along <= 0:
+                continue
+            miss = ray_robot_distance(origin, aim, p, reach)
+            if miss <= HIT_RADIUS and m.sees(origin, center) and (best is None or miss < best[0]):
+                best = (miss, along)
+        return best
     if DEBUG:
         for name, pos in [(t["name"], t["pos"]) for t in m.targets.values()] + [(p.name, p.pos) for p in m.peers
                                                                                 if p is not shooter]:
@@ -3862,16 +3884,20 @@ def pick_victim(m, shooter, origin, aim):
             miss = math.dist(center, [o + along * x / (landed or 1.0) for o, x in zip(origin, d)])
             log(f"[game] shot vs {name} at {tuple(round(v, 1) for v in pos)}: from {tuple(round(v, 1) for v in origin)}"
                 f" to {tuple(round(v, 1) for v in aim)}, passes {miss:.1f} from its center {along:.1f} along")
-    for rid, t in m.targets.items():
-        if not t["dead"] and hit(rid, t["pos"]):
-            return rid
+    hits = [(h, rid) for rid, t in m.targets.items() if not t["dead"] and (h := hit(rid, t["pos"])) is not None]
     side = nation_of(shooter.cid)
     for p in m.peers:
         if p is shooter or p.player_dead or (side and nation_of(p.cid) == side):  # no damage to your own side
             continue
-        if hit(p.player_rid, p.pos):
-            return p
-    return None
+        if (h := hit(p.player_rid, p.pos)) is not None:
+            hits.append((h, p))
+    if not hits:
+        return None
+    # The shot goes through a robot's body (HIT_BODY): the nearest such robot stops it. Otherwise it only came near
+    # some (HIT_RADIUS forgives aim): the one it passed closest to takes it. Real client 2026-11-12: a dummy 1.5
+    # ahead and 1.3 to the side, out of view, took a shot that landed at the feet of the player being aimed at.
+    body = [h for h in hits if h[0][0] <= HIT_BODY]
+    return (min(body, key=lambda h: h[0][1]) if body else min(hits, key=lambda h: h[0][0]))[1]
 
 
 def rebuild_robot(server, peer, cid, rid, pos, hp):
