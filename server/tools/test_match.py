@@ -207,6 +207,49 @@ ok &= check(f"a mouse turn while strafing: the facing that makes D go that way (
             tuple(round(v, 2) for v in pa.facing) == (0, 0, -1)
             and tuple(round(v, 2) for v in pa.sent_vel) == (-8, 0, 0))
 ok &= check("A stops: B gets velocity 0", a_steers(0)[0] == [(a_rid, 8.0, 5.0, 0.0, 0.0, 0.0)])
+
+
+def b_vels():
+    return [tuple(round(v, 2) for v in struct.unpack("<Iff3f", y)[3:]) for y in got(B, 50132)
+            if struct.unpack_from("<I", y)[0] == a_rid]
+
+
+# turning (9,40101): f32 | vec3 facing. B sees A look, and walk, the new way
+a_steers(1, (0.0, 0.0, 1.0))
+before = len(b_vels())
+msg(A, 40101, struct.pack("<f3f", 0.0, 2.0, 0.0, 0.0))
+ok &= check(f"a turn while walking: B gets the new way ({b_vels()[before:]})",
+            b_vels()[before:] == [(8, 0, 0)] and tuple(round(v, 2) for v in pa.facing) == (1, 0, 0))
+step()
+ok &= check("and a move showing A facing that way",
+            struct.unpack_from("<3f", [x for x in got(B, 50100) if struct.unpack_from("<I", x)[0] == a_rid][-1], 20)
+            == (1.0, 0.0, 0.0))
+for bad in ((0.0, 0.0, 0.0), (float("nan"), 0.0, 1.0), (0.0, 1.0, 0.0)):
+    msg(A, 40101, struct.pack("<f3f", 0.0, *bad))
+ok &= check("a turn to nowhere, NaN or straight up is ignored", tuple(round(v, 2) for v in pa.facing) == (1, 0, 0))
+msg(A, 40101, struct.pack("<f3f", 0.0, 1e38, 0.0, 1e38))
+ok &= check("a huge facing is made length 1", round(math.hypot(*pa.facing), 3) == 1.0)
+msg(A, 40101, struct.pack("<f3f", 0.0, 1.0, 0.0, 0.0))
+
+# the stop (9,40100 steer 0) is sent unreliably: if it is lost, a robot that stays put is shown standing
+before = len(b_vels())
+for _ in range(3):
+    step(0.2)
+    msg(A, 40130, struct.pack("<I3f", 0, *pa.pos))
+ok &= check(f"stop lost: A stays put, B sees it stand ({b_vels()[before:]})",
+            b_vels()[before:] == [(0, 0, 0)] and pa.steer == 0)
+before = len(b_vels())
+msg(A, 40130, struct.pack("<I3f", 0, pa.pos[0] + 1.6, pa.pos[1], pa.pos[2]))
+ok &= check(f"it walks on: walking again ({b_vels()[before:]})", b_vels()[before:] == [(8, 0, 0)] and pa.steer == 1)
+for _ in range(4):
+    step(0.2)
+    msg(A, 40130, struct.pack("<I3f", 0, pa.pos[0] + 1.6, pa.pos[1], pa.pos[2]))
+ok &= check("walking on: never shown standing", pa.steer == 1)
+a_steers(0)
+ok &= check("a real stop clears it", pa.steer == 0 and not pa.lost_steer)
+step(1.0)
+msg(A, 40130, struct.pack("<I3f", 0, pa.pos[0] + 1.6, pa.pos[1], pa.pos[2]))
+ok &= check("moved after a real stop: still standing", pa.steer == 0)
 before = len(got(B, 50132))
 step(4 * ls.AI_PATROL / ls.AI_SPEED + 1)
 dummy_vels = [struct.unpack("<Iff3f", y) for y in got(B, 50132)[before:]]
@@ -609,6 +652,8 @@ ok &= check("speed check: the player is put back", got(A, 33000) == [struct.pack
 ok &= check("speed check: the others never see the jump",
             not any(struct.unpack_from("<f", x, 8)[0] == 210.0 for x in got(B, 50100)[before:]))
 ok &= check("speed check: GC_Robot_Action is checked too", not a_moves_to((10.0, 0.0, 300.0), typ=40100))
+msg(A, 40100, struct.pack("<fI3f3f", 0.0, 0, 10.0, 0.0, 300.0, 1.0, 0.0, 0.0))
+ok &= check("speed check: a stop counts even when its position does not", pa.steer == 0 and pa.sent_vel == (0.0, 0.0, 0.0))
 ok &= check("speed check: put back at most every half second", len(got(A, 33000)) == 1)
 ok &= check("speed check: falling is free", a_moves_to((10.0, -100.0, 16.0)))
 wait(pa, 3)

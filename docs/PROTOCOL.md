@@ -120,7 +120,7 @@
   - [jump](#m-9-40102) `(9,40102)`
   - [position](#m-9-40130) `(9,40130)`
   - [hard landing](#m-9-40133) `(9,40133)`
-  - [robot action](#m-9-40101) `(9,40101)`
+  - [turn](#m-9-40101) `(9,40101)`
   - [report enemy](#m-9-40137) `(9,40137)`
   - [suicide](#m-9-40110) `(9,40110)`
   - [clock](#m-9-20001) `(9,20001)`
@@ -1499,15 +1499,15 @@ f32 time | vec3 position | vec3 facing | f32 fall speed
 Sent by Robot::Land only when the robot lands faster than its limit (robot +0x334). Probably for fall damage; the server ignores it.
 
 <a name="m-9-40101"></a>
-#### robot action `(9,40101)`
+#### turn `(9,40101)`
 
 *C→S · partial*
 
 ```text
-f32 | f32 | f32 | f32
+f32 | vec3 facing
 ```
 
-Sent about once a second.
+The robot's forward axis. Sent unreliably after a turn of over 30 degrees, or of over 5 degrees at most once a second (Game.dll 0x1024c784, 0x1024c8f5), and once a second from 0x1023f63f. The server takes it as the player's facing, shows it to the others in the next move and sends a walking robot's new velocity. Not yet checked in game.
 
 <a name="m-9-40137"></a>
 #### report enemy `(9,40137)`

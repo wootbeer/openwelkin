@@ -2966,6 +2966,8 @@ MATCH_IDS = itertools.count(1)
 TIMER_IDS = itertools.count()
 BACK_SPEED = 6.0  # MOVE_SPEED x BackCoefficient 0.75 (StrafeCoefficient is 1)
 TURN_RESEND = math.cos(math.radians(25))  # a walking player's reports bending more than this resend its velocity
+STOP_AFTER = 0.5  # seconds: a walking player whose robot stays in one place this long is shown standing (lost_stop)
+STILL_DISTANCE = 0.3  # moving less than this (x and z) counts as staying in one place
 
 
 def walk_velocity(steer, facing):
@@ -2989,6 +2991,33 @@ def player_velocity(m, peer, vel):
     if getattr(peer, "sent_vel", None) != vel:
         peer.sent_vel = vel
         m.broadcast(19, 50132, speed_body(peer.player_rid, vel), skip=peer)
+
+
+def relay_steer(m, peer):
+    """Show the other clients a player's steer flags, position and facing now, and send its new velocity."""
+    m.move(peer.player_rid, struct.pack("<II3f3f", peer.player_rid, peer.steer, *peer.pos, *peer.facing), peer.pos,
+           peer.fire_range, skip=peer)
+    player_velocity(m, peer, walk_velocity(peer.steer, peer.facing))
+
+
+def moved_to(m, peer, pos):
+    """A player's position report was taken. Notes when the robot last moved (for lost_stop); a robot shown standing
+    by lost_stop that walks on gets its steer flags back."""
+    still = getattr(peer, "still", None)
+    if still and math.hypot(pos[0] - still[1][0], pos[2] - still[1][2]) <= STILL_DISTANCE:
+        return
+    peer.still = (m.now, pos)
+    if getattr(peer, "lost_steer", 0) and not peer.steer:
+        peer.steer, peer.lost_steer = peer.lost_steer, 0
+        relay_steer(m, peer)
+
+
+def lost_stop(m, peer):
+    """The client sends its steer flags (9,40100) unreliably, the stop too (Robot::Move, Game.dll 0x10241de9). When a
+    stop is lost the other clients would show the robot walking on and on. So a walking player whose robot has not
+    moved for STOP_AFTER is shown standing, until it moves again (moved_to) or new steer flags come."""
+    peer.lost_steer, peer.steer = peer.steer, 0
+    relay_steer(m, peer)
 
 
 def report_heading(m, peer, pos):
@@ -3148,6 +3177,9 @@ class Match:
             self.server.close(p, "stopped sending")
         if self.peers is None:
             return
+        for p in self.peers:
+            if p.steer and not p.player_dead and now - getattr(p, "still", (now,))[0] >= STOP_AFTER:
+                lost_stop(self, p)
         if now >= self.next_ai and not self.over:
             self.next_ai = now + AI_TICK
             ai_step(self, now)
@@ -4012,6 +4044,7 @@ def relive_player(server, peer):
         peer.reborn = None
         at = at and (at[0], at[1] + SPAWN_DROP, at[2])  # drop in above the station, like on the spawn point
         peer.pos, peer.facing, peer.steer = at or spawn_point(m, peer.slot, nation_of(peer.cid)), SPAWN_FACING, 0
+        peer.lost_steer, peer.still = 0, None
         placed(peer)
         m.trails.pop(peer.player_rid, None)  # where it was before it died does not count
         for p in list(m.peers):
@@ -4169,20 +4202,33 @@ def on_game_message(server, peer, raw):
             peer.pos = pos
             m.move(peer.player_rid, struct.pack("<II3f3f", peer.player_rid, peer.steer, *pos, *peer.facing), pos,
                    peer.fire_range, skip=peer)
+            moved_to(m, peer, pos)
             report_heading(m, peer, pos)
     elif key == (9, 40100) and len(body) >= 32:
         # GC_Robot_Action, sent by Robot::Move when the steer flags change: f32 | u32 steer flags (ROBOT_STEER_FLAG,
         # 0 = standing) | vec3 pos | vec3 facing -- the same layout as GS_Robot_Action (19,50100), relayed as is.
         steer = struct.unpack_from("<I", body, 4)[0]
         pos, facing = struct.unpack_from("<3f", body, 8), struct.unpack_from("<3f", body, 20)
-        if all(math.isfinite(v) for v in pos + facing) and move_allowed(server, peer, pos):
-            peer.steer, peer.pos = steer, pos
+        if all(math.isfinite(v) for v in pos + facing):
+            # the steer flags count even when the position fails the speed check: a stop dropped here would leave
+            # the robot walking on the other screens
+            if move_allowed(server, peer, pos):
+                peer.pos = pos
+            peer.steer, peer.lost_steer = steer, 0
             if any(abs(v) > 1e-3 for v in facing):
                 peer.facing = facing
-            m.move(peer.player_rid, struct.pack("<II3f3f", peer.player_rid, steer, *pos, *peer.facing), pos,
-                   peer.fire_range, skip=peer)
-            player_velocity(m, peer, walk_velocity(steer, peer.facing))
-            peer.last_report = (m.now, pos)
+            relay_steer(m, peer)
+            peer.last_report = peer.still = (m.now, peer.pos)
+    elif key == (9, 40101) and len(body) >= 16:
+        # Turn: f32 | vec3 facing (the robot's forward axis), sent unreliably from the robot update (Game.dll
+        # 0x1024c784, 0x1024c8f5) after a turn of over 30 degrees, or of over 5 degrees at most once a second, and
+        # once a second from 0x1023f63f. Without it the others see the robot look and walk the old way.
+        facing = struct.unpack_from("<3f", body, 4)
+        n = math.hypot(*facing) if all(math.isfinite(v) for v in facing) else 0.0
+        if n > 1e-3 and math.hypot(facing[0], facing[2]) > 1e-3 * n and not peer.player_dead:
+            peer.facing = tuple(v / n for v in facing)
+            relay_steer(m, peer)
+            peer.last_report = (m.now, peer.pos)
     elif key == (9, 40102) and len(body) >= 32:
         # Robot::Jump (0x10241e70): f32 | u32 steer flags | vec3 pos | vec3 facing, as (9,40100). The other clients
         # show it on GS_Robot_Action (19,50102): position, facing, Move(steer), then Robot::Jump.
@@ -4192,9 +4238,11 @@ def on_game_message(server, peer, raw):
             if (peer.player_dead or not all(math.isfinite(v) for v in pos + facing)
                     or not move_allowed(server, peer, pos)):
                 return
-            peer.steer, peer.pos = steer, pos
+            peer.steer, peer.pos, peer.lost_steer = steer, pos, 0
             if any(abs(v) > 1e-3 for v in facing):
                 peer.facing = facing
+            player_velocity(m, peer, walk_velocity(steer, peer.facing))  # a jump can start or stop a walk too
+            peer.still = (m.now, pos)
             if m.now - getattr(peer, "jumped_at", -JUMP_GAP) < JUMP_GAP:
                 return
             peer.jumped_at = m.now

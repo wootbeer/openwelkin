@@ -195,6 +195,10 @@ reply layout, and answer with real data.
       Base info now sends team id -1 (real client 2026-11-14: the tag went away)
 - [ ] Untested: dummy misses aimed at the ground, fixed spawn point. (No damage to or from a dead robot: tools/test_match.py.
       Single-use, signed gate session keys: tools/test_split.py)
+- [ ] Untested in game (2026-11-14, offline): other players' robots kept walking after the keys were let go, and did
+      not walk the way the player looked. The client sends its steer flags (stop too) unreliably, so a lost stop is
+      now guessed when the robot stays put for half a second; a stop that fails the speed check still counts; turns
+      (9,40101) are taken now. Check with two clients: stop, turn while standing then walk, turn while walking.
 
 ## Security / robustness (2026-10-20, offline)
 - [x] tools/fuzz_handlers.py: every gate handler survives random bodies (0 failures)
