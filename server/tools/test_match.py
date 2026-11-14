@@ -44,6 +44,7 @@ a_cid = ls.STORE.create("acctA", "Alpha", gender=1, model=1, state=1, raw="")
 b_cid = ls.STORE.create("acctB", "Bravo", gender=1, model=1, state=1, raw="")
 c_cid = ls.STORE.create("acctC", "Charlie", gender=1, model=1, state=1, raw="")
 clock = [time.time()]
+GAP = ls.VEL_GAP + 0.01  # a little over VEL_GAP: the clock's large numbers round
 
 
 def step(dt=0.0):
@@ -181,6 +182,7 @@ ok &= check("walk velocity: right of a robot facing +x is -z", tuple(round(v, 2)
 
 
 def a_steers(steer, facing=(0.0, 0.0, 1.0)):
+    step(GAP)  # one player's velocity changes go out at most every VEL_GAP
     before = len(got(B, 50132)), len(got(A, 50132))
     msg(A, 40100, struct.pack("<fI3f3f", 0.0, steer, *pa.pos, *facing))
     return [struct.unpack("<Iff3f", y) for y in got(B, 50132)[before[0]:]], got(A, 50132)[before[1]:]
@@ -216,6 +218,7 @@ def b_vels():
 
 # turning (9,40101): f32 | vec3 facing. B sees A look, and walk, the new way
 a_steers(1, (0.0, 0.0, 1.0))
+step(GAP)
 before = len(b_vels())
 msg(A, 40101, struct.pack("<f3f", 0.0, 2.0, 0.0, 0.0))
 ok &= check(f"a turn while walking: B gets the new way ({b_vels()[before:]})",
@@ -238,6 +241,7 @@ for _ in range(3):
     msg(A, 40130, struct.pack("<I3f", 0, *pa.pos))
 ok &= check(f"stop lost: A stays put, B sees it stand ({b_vels()[before:]})",
             b_vels()[before:] == [(0, 0, 0)] and pa.steer == 0)
+step(GAP)
 before = len(b_vels())
 msg(A, 40130, struct.pack("<I3f", 0, pa.pos[0] + 1.6, pa.pos[1], pa.pos[2]))
 ok &= check(f"it walks on: walking again ({b_vels()[before:]})", b_vels()[before:] == [(8, 0, 0)] and pa.steer == 1)
@@ -250,8 +254,21 @@ ok &= check("a real stop clears it", pa.steer == 0 and not pa.lost_steer)
 step(1.0)
 msg(A, 40130, struct.pack("<I3f", 0, pa.pos[0] + 1.6, pa.pos[1], pa.pos[2]))
 ok &= check("moved after a real stop: still standing", pa.steer == 0)
+
+# velocity changes go to everyone reliably, so a client flipping its steer flags can not make the server flood them
+step(1.0)
+before = len(b_vels())
+for i in range(20):
+    msg(A, 40100, struct.pack("<fI3f3f", 0.0, (1, 8)[i % 2], *pa.pos, 0.0, 0.0, 1.0))
+ok &= check(f"20 flips at once: B gets one velocity ({b_vels()[before:]})", b_vels()[before:] == [(0, 0, 8)])
+step(GAP)
+ok &= check(f"and the newest a moment later ({b_vels()[before:]})", b_vels()[before:] == [(0, 0, 8), (8, 0, 0)])
+a_steers(0)
 before = len(got(B, 50132))
+shield = pa.protected_until, pb.protected_until
+pa.protected_until = pb.protected_until = clock[0] + 1000  # dummies that see no player patrol
 step(4 * ls.AI_PATROL / ls.AI_SPEED + 1)
+pa.protected_until, pb.protected_until = shield
 dummy_vels = [struct.unpack("<Iff3f", y) for y in got(B, 50132)[before:]]
 dummy_vels = [v[3:] for v in dummy_vels if v[0] in m.targets]
 ok &= check(f"patrolling dummies send their velocity at each turn ({len(dummy_vels)})",
@@ -652,6 +669,7 @@ ok &= check("speed check: the player is put back", got(A, 33000) == [struct.pack
 ok &= check("speed check: the others never see the jump",
             not any(struct.unpack_from("<f", x, 8)[0] == 210.0 for x in got(B, 50100)[before:]))
 ok &= check("speed check: GC_Robot_Action is checked too", not a_moves_to((10.0, 0.0, 300.0), typ=40100))
+step(GAP)
 msg(A, 40100, struct.pack("<fI3f3f", 0.0, 0, 10.0, 0.0, 300.0, 1.0, 0.0, 0.0))
 ok &= check("speed check: a stop counts even when its position does not", pa.steer == 0 and pa.sent_vel == (0.0, 0.0, 0.0))
 ok &= check("speed check: put back at most every half second", len(got(A, 33000)) == 1)

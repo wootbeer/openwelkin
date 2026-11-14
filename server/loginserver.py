@@ -2968,6 +2968,7 @@ BACK_SPEED = 6.0  # MOVE_SPEED x BackCoefficient 0.75 (StrafeCoefficient is 1)
 TURN_RESEND = math.cos(math.radians(25))  # a walking player's reports bending more than this resend its velocity
 STOP_AFTER = 0.5  # seconds: a walking player whose robot stays in one place this long is shown standing (lost_stop)
 STILL_DISTANCE = 0.3  # moving less than this (x and z) counts as staying in one place
+VEL_GAP = 0.1  # seconds between one player's velocity messages (sent reliably to everyone: a flood guard)
 
 
 def walk_velocity(steer, facing):
@@ -2987,10 +2988,13 @@ def walk_velocity(steer, facing):
 
 
 def player_velocity(m, peer, vel):
-    """Tell the other clients a player's robot walks with vel now (see send_speed), if that is new."""
-    if getattr(peer, "sent_vel", None) != vel:
-        peer.sent_vel = vel
-        m.broadcast(19, 50132, speed_body(peer.player_rid, vel), skip=peer)
+    """Tell the other clients a player's robot walks with vel now (see send_speed), if that is new. It goes to everyone
+    reliably, so one player's are sent at most every VEL_GAP; a newer one waits for the tick (Match.tick)."""
+    peer.want_vel = vel
+    if getattr(peer, "sent_vel", None) == vel or m.now - getattr(peer, "vel_at", -VEL_GAP) < VEL_GAP:
+        return
+    peer.sent_vel, peer.vel_at = vel, m.now
+    m.broadcast(19, 50132, speed_body(peer.player_rid, vel), skip=peer)
 
 
 def relay_steer(m, peer):
@@ -3180,6 +3184,9 @@ class Match:
         for p in self.peers:
             if p.steer and not p.player_dead and now - getattr(p, "still", (now,))[0] >= STOP_AFTER:
                 lost_stop(self, p)
+            want = getattr(p, "want_vel", None)
+            if want is not None and want != getattr(p, "sent_vel", None):
+                player_velocity(self, p, want)  # held back by VEL_GAP
         if now >= self.next_ai and not self.over:
             self.next_ai = now + AI_TICK
             ai_step(self, now)
@@ -3413,7 +3420,7 @@ def join_match(server, peer):
     peer.pos, peer.facing = spawn_point(m, slot, nation_of(peer.cid)), SPAWN_FACING
     placed(peer)
     peer.player_hp, peer.player_dead = float(PLAYER_HP), False
-    peer.sent_vel = None  # relive_on sends everyone 0
+    peer.sent_vel = peer.want_vel = None  # relive_on sends everyone 0
     peer.trigger, peer.kills, peer.deaths, peer.fire, peer.steer = 0, 0, 0, None, 0
     peer.equip_slot = 1  # the weapon slot in hand (0 = put away)
     peer.player_kills = 0  # target robots do not count towards a round
@@ -3645,7 +3652,7 @@ def order_robot(server, peer, body):
         peer.fire_interval = weapon_stats(weapon)[1][0]
         peer.fire_range = fire_range(weapon)
         peer.player_hp = float(PLAYER_HP)
-        peer.sent_vel = None  # relive_on sends everyone 0
+        peer.sent_vel = peer.want_vel = None  # relive_on sends everyone 0
         m.trails.pop(peer.player_rid, None)
         for p in list(m.peers):
             relive_on(server, p, peer.player_rid, peer.cid, peer.pos, peer.facing, PLAYER_HP, PLAYER_HP)
@@ -4038,7 +4045,7 @@ def relive_player(server, peer):
         if not m or peer not in m.peers or m.over:
             return
         peer.player_hp, peer.player_dead = float(PLAYER_HP), False
-        peer.sent_vel = None
+        peer.sent_vel = peer.want_vel = None
         peer.protected_until = time.time() + SPAWN_PROTECTION
         at = {fid: pos for fid, _, pos in reborn_locations(peer)}.get(getattr(peer, "reborn", None))
         peer.reborn = None
