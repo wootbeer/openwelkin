@@ -94,6 +94,7 @@ SNAP_RISE = 20.0
 FEDERAL, ALLIANCE = 0x10, 0x20  # NATION_TYPE: the two sides ("Federal", "Alliance" in Language/ENG.xml)
 NATIONS = (FEDERAL, ALLIANCE)
 NATION_NAMES = {FEDERAL: "Federal", ALLIANCE: "Alliance"}
+NO_TEAM = -1  # team id in base info (19,30040): none, so nameplates get no "[team]" tag
 DUMMY_NATION = 0  # target dummies are on no side: everyone's enemy (red names); a side's own robots have white names
 TRAIL_SECONDS = 1.5  # a client draws other robots up to about a second behind: shots count against where they were
 MUZZLE_REACH = 15.0     # a shot must start this close to where the server last saw the robot
@@ -3932,14 +3933,17 @@ def nation_of(cid):
 
 def send_base_info(server, peer, cid, name, rid, kills=0, deaths=0, rank=0, nation=0, gm=False):
     """GS_Character_Set_BaseInfo (19,30040) creates or updates a character (handler Game.dll 0x1035fab0):
-    u32 char id | wstr name (character +8, shown on nameplates and in the kill feed) | u32 | u32 | u32
-    | u32 rank (+0x44, 0 = Recruit) | u8 GM (+0xb8) | u32 (+0xe8) | u32 (+0x108) | u8 (+0x168) | u8 (+0x169) | u8 (+0x220)
-    | u32 kills (+0xf8) | u32 deaths (+0xfc) | u32 n x (u16 | u8) | u32 controlled robot id (+0xec)
+    u32 char id | wstr name (character +8, shown on nameplates and in the kill feed) | u32 nation (+0x30) | u32 (+0x38)
+    | u32 team id (+0x40, -1 = none) | u32 rank (+0x44, 0 = Recruit) | u8 GM (+0xb8) | u32 (+0xe8) | u32 (+0x108)
+    | u8 (+0x168) | u8 (+0x169) | u8 (+0x220) | u32 kills (+0xf8) | u32 deaths (+0xfc) | u32 n x (u16 | u8)
+    | u32 controlled robot id (+0xec)
     Without it a remote character has no name and its nameplate shows only "[GM]". A character with no group
     (+0xe8 = 0) gets a "[Need Team]" tag over its robot unless the +0x220 byte is set (Robot::updateHeading).
+    The nameplate puts "[" + GroupManager::GetTeamShortName(team id) + "]" before the name; team 0 has an empty
+    short name, so 0 drew a bare "[]" (real client 2026-11-14), while -1 shows no tag.
     The GM byte puts "[GM]" before the name and, for the player's own character, opens the client's / GM commands
     in the battle chat box (real client 2026-11-05: sending 0 here took away the GM byte CharacterOnline had set)."""
-    send_game_event(server, peer, 19, 30040, struct.pack("<I", cid) + wstr(name) + struct.pack("<IIIIB", nation, 0, 0, rank, 1 if gm else 0)
+    send_game_event(server, peer, 19, 30040, struct.pack("<I", cid) + wstr(name) + struct.pack("<IIiIB", nation, 0, NO_TEAM, rank, 1 if gm else 0)
                     + struct.pack("<IIBBB", 0, 0, 0, 0, 1) + struct.pack("<III", kills, deaths, 0)
                     + struct.pack("<I", rid))
 

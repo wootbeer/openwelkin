@@ -190,8 +190,9 @@ reply layout, and answer with real data.
 ## Other open items
 - [x] Anti-addiction banner in the hall
 - [x] "Waiting to enter arena." popup = GAMEENGINE_DATAUNNORMAL (bad reply data); gone once shop replies were real
-- [ ] Glyph before nameplate names in battle: a small bracket before "Target 1" in red or white. The hall's star before
-      your name became the nation emblem once CharacterOnline sent the nation, so this may be the same thing
+- [x] Glyph before nameplate names in battle: a small bracket before "Target 1" in red or white. It was a "[]" team
+      tag: the nameplate shows "[" + team short name + "]" for base info (19,30040) team id 0, whose name is empty.
+      Base info now sends team id -1 (real client 2026-11-14: the tag went away)
 - [ ] Untested: dummy misses aimed at the ground, fixed spawn point. (No damage to or from a dead robot: tools/test_match.py.
       Single-use, signed gate session keys: tools/test_split.py)
 
