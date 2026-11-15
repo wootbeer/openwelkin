@@ -130,6 +130,7 @@ AUTO_REGISTER = os.environ.get("MW_AUTO_REGISTER", "1") == "1"  # unknown accoun
 # used with fullmatch: with match, "$" also lets a name end in a newline (a second "bob" account)
 ACCOUNT_RE = re.compile(r"[A-Za-z0-9_.-]{1,32}")
 LOGIN_FAILS_MAX, LOGIN_FAILS_WINDOW = 5, 300.0  # failed logins allowed per IP per window (seconds)
+REGISTER_MAX, REGISTER_WINDOW = 5, 3600.0  # new accounts (AUTO_REGISTER) per IP per window (seconds)
 # Result codes: the client shows Language/ErrorInfoENG.xml text for them.
 LOGIN_FAILED = 10001    # "Invalid account or password."
 LOGIN_LOCKED = 10002    # "Excessive number of retries, the account is locked, ... waiting for 5 minutes"
@@ -139,6 +140,7 @@ ACCOUNT_SUSPENDED = 12011  # "Account being punished, you can not login game for
 ERR_UNKNOWN, ERR_PROTOCOL = 3, 6
 AUTH_TIMEOUT = 30.0     # seconds a connection may stay open without logging in
 MAX_CONNECTIONS = 1024  # open TCP connections (login + gate together)
+MAX_CONNECTIONS_PER_IP = 16  # of those, from one address (a household or café behind one address is a few players)
 PRE_AUTH = {(10, 10000)}  # the only request handled before the connection is authenticated
 SESSION_LOCK = threading.Lock()
 # Limits on untrusted input: checked before any buffer is allocated
@@ -154,6 +156,8 @@ NAME_RE = re.compile(r"[^\W]{2,16}")  # fullmatch only
 # Names that would pass for the server's own lines ("Server: You were banned ...") or for staff
 RESERVED_NAMES = {"server", "system", "admin", "administrator", "gm", "gamemaster", "moderator", "mod", "support",
                   "staff", "notice", "broadcast"}
+# Letters that draw nothing (Hangul fillers, Khmer inherent vowels, Mongolian selectors): a name of them looks blank
+BLANK_LETTERS = set("ᅟᅠㅤﾠ឴឵᠋᠌᠍᠎᠏")
 # The hall's scrolling bar: announcements.txt next to the databases, one line each. Made with these on first start;
 # edit it while the server runs.
 ANNOUNCEMENTS = [
@@ -990,7 +994,9 @@ def valid_name(name):
     and none of RESERVED_NAMES."""
     return (bool(NAME_RE.fullmatch(name)) and unicodedata.normalize("NFKC", name) == name
             and (name.isascii() or not any(c.isascii() for c in name))
-            and name.casefold() not in RESERVED_NAMES)
+            and not any(c in BLANK_LETTERS for c in name)
+            and any(c.isalnum() for c in name)
+            and not any(w in RESERVED_NAMES for w in re.split(r"[\d_]+", name.casefold())))
 
 
 def clean_line(text):
@@ -1015,18 +1021,26 @@ class Accounts:
     def hash(password, salt):
         return hashlib.scrypt(password, salt=salt, n=2 ** 14, r=8, p=1, dklen=32)
 
-    def check(self, account, password):
-        """'ok', 'created' or 'bad'. password is the raw bytes the client sent."""
+    def check(self, account, password, may_create=None):
+        """'ok', 'created', 'bad', or 'limit' (a new account, but may_create() said no). password is the raw bytes the
+        client sent. The slow hash runs outside the lock, so one login does not hold up the others."""
         with self.lock:
             rec = self.get(account)
-            if rec is None:
-                if not AUTO_REGISTER:
-                    return "bad"
-                salt = os.urandom(16)
-                with self.con:
-                    self.con.execute("INSERT INTO accounts (name, salt, hash, created) VALUES (?, ?, ?, ?)",
-                                     (account, salt.hex(), self.hash(password, salt).hex(), int(time.time())))
-                return "created"
+        if rec is None:
+            if not AUTO_REGISTER:
+                return "bad"
+            if may_create and not may_create():
+                return "limit"
+            salt = os.urandom(16)
+            digest = self.hash(password, salt).hex()
+            with self.lock:
+                rec = self.get(account)
+                if rec is None:
+                    with self.con:
+                        self.con.execute("INSERT INTO accounts (name, salt, hash, created) VALUES (?, ?, ?, ?)",
+                                         (account, salt.hex(), digest, int(time.time())))
+                    return "created"
+            # made by another login meanwhile: check against that one
         good = hmac.compare_digest(self.hash(password, bytes.fromhex(rec[0])), bytes.fromhex(rec[1]))
         return "ok" if good else "bad"
 
@@ -1114,6 +1128,26 @@ def login_throttled(ip, failed=False):
         else:
             LOGIN_FAILS.pop(ip, None)
         return len(fails) >= LOGIN_FAILS_MAX
+
+
+REGISTERS = {}  # ip -> [times it made an account]
+
+
+def register_allowed(ip):
+    """True (and counted) if ip may make one more account: REGISTER_MAX per REGISTER_WINDOW. Each new account costs a
+    slow password hash and a database row. Loopback (tools/loadtest.py) is not limited."""
+    if ip.startswith("127."):
+        return True
+    now = time.time()
+    with LOGIN_FAILS_LOCK:
+        made = [t for t in REGISTERS.get(ip, []) if t > now - REGISTER_WINDOW]
+        for old in [k for k, v in REGISTERS.items() if not v or v[-1] <= now - REGISTER_WINDOW]:
+            del REGISTERS[old]  # keep the table small
+        if len(made) >= REGISTER_MAX:
+            REGISTERS[ip] = made
+            return False
+        REGISTERS[ip] = made + [now]
+        return True
 
 
 def character_name(cid):
@@ -1221,8 +1255,8 @@ class Message:
 
 
 class Session:
-    def __init__(self, conn, addr):
-        self.conn, self.addr = conn, addr
+    def __init__(self, conn, addr, port=None):
+        self.conn, self.addr, self.port = conn, addr, port
         self.aes_key = os.urandom(16)
         self.key_index = 7  # server picks rand()%32+1; client only checks the range
         self.rbuf = b""
@@ -1322,6 +1356,11 @@ class Session:
             return
         if self.account is None and (msg.catalog, msg.type) not in PRE_AUTH:
             log(f"{self.addr} ignored {msg} before login")
+            return
+        if self.port == LOGIN_PORT and msg.catalog != 10:
+            # the login port only logs in. Hall requests on it would get past kicks and bans, which close only the
+            # account's gate connection (ROLE "all" shares one handler table between the ports)
+            log(f"{self.addr} ignored {msg} on the login port")
             return
         handler = HANDLERS.get((msg.catalog, msg.type))
         if handler:
@@ -1479,7 +1518,7 @@ class Session:
         # the hall's Battle Report panel: battlefield time (s) | kills | deaths | honor | crystal, then the same five
         # for arena (the panel adds the two honor and the two crystal values). We report lifetime totals as "today".
         cid = struct.unpack_from("<I", msg.body)[0] if len(msg.body) >= 4 else 0
-        st = STORE.stats(cid)
+        st = STORE.stats(cid) if self.own_character(cid) else {}  # only your own: it shows crystal won
         self.reply(msg, struct.pack("<10I", int(st.get("battle_time", 0)), st.get("kills", 0), st.get("deaths", 0),
                                     st.get("honor", 0), st.get("crystal", 0), 0, 0, 0, 0, 0))
 
@@ -1504,7 +1543,8 @@ class Session:
         # GS_UpdateCharacterMoney (24,24019), request: u32 character id. Reply: u32 money (character +0x1ac,
         # raises the client's money-changed event 12160).
         cid = struct.unpack_from("<I", msg.body)[0] if len(msg.body) >= 4 else 0
-        self.reply(msg, struct.pack("<I", int(STORE.stats(cid)["money"])))
+        money = STORE.stats(cid)["money"] if self.own_character(cid) else 0  # nobody reads another player's balance
+        self.reply(msg, struct.pack("<I", int(money)))
 
     def on_item_flyweight(self, msg):
         # GS_UpdateItemFlyweight (24,24002), request: u32 item id. The shop asks for each item it shows. Reply read by
@@ -1792,7 +1832,8 @@ class Session:
     def on_points(self, msg):
         # GS_UpdateCharacterPoint (24,24020), request: u32 character id. Reply: u32 points (Credit).
         cid = struct.unpack_from("<I", msg.body)[0] if len(msg.body) >= 4 else 0
-        self.reply(msg, struct.pack("<I", int(STORE.stats(cid)["points"])))
+        points = STORE.stats(cid)["points"] if self.own_character(cid) else 0  # nobody reads another player's balance
+        self.reply(msg, struct.pack("<I", int(points)))
 
     # Chat, tried with the real client. Hall: the Lobby tab sends (21,21513) str text, shown from (21,21514); whispers are
     # (21,21051) str name | str text, shown from (21,21200), and the client also has (21,21032) with that layout. Battle: see
@@ -2209,7 +2250,10 @@ class Session:
             login_throttled(ip, failed=True)
             log(f"{self.addr} login refused: bad account name {account[:40]!r}")
             return self.reply(msg, result=LOGIN_FAILED)
-        status = ACCOUNTS.check(account, password)
+        status = ACCOUNTS.check(account, password, may_create=lambda: register_allowed(ip))
+        if status == "limit":
+            log(f"{self.addr} login refused: too many new accounts from this address")
+            return self.reply(msg, result=LOGIN_LOCKED)
         if status == "bad":
             login_throttled(ip, failed=True)
             log(f"{self.addr} login refused: wrong password for {account!r}")
@@ -2268,6 +2312,11 @@ class Session:
         debug(f"{self.addr} kx reply sent")
 
     def run(self):
+        # settimeout only limits each recv: a client sending a byte now and then would never time out. So a
+        # connection that has not logged in by AUTH_TIMEOUT is closed whatever it sends.
+        deadline = threading.Timer(AUTH_TIMEOUT, lambda: self.account is None and self.close())
+        deadline.daemon = True
+        deadline.start()
         try:
             self.conn.settimeout(AUTH_TIMEOUT)
             self.key_exchange()
@@ -2282,9 +2331,11 @@ class Session:
         except Exception as e:
             log(f"{self.addr} error {e!r}")
         finally:
+            deadline.cancel()
             log(f"{self.addr} closed")
             self.conn.close()
             CONNECTIONS.release()
+            release_ip(self.addr[0])
             go_offline(self)
 
 
@@ -2839,6 +2890,27 @@ def banned_ip(ip):
         return False
 
 
+IP_CONNECTIONS = collections.Counter()  # open TCP connections per address
+IP_CONNECTIONS_LOCK = threading.Lock()
+
+
+def take_ip(ip):
+    """Count a new connection from ip; False if it already has MAX_CONNECTIONS_PER_IP open (so one address can not
+    take every slot). Loopback is this machine (tools/loadtest.py) and is not capped."""
+    with IP_CONNECTIONS_LOCK:
+        if IP_CONNECTIONS[ip] >= MAX_CONNECTIONS_PER_IP and not ip.startswith("127."):
+            return False
+        IP_CONNECTIONS[ip] += 1
+        return True
+
+
+def release_ip(ip):
+    with IP_CONNECTIONS_LOCK:
+        IP_CONNECTIONS[ip] -= 1
+        if IP_CONNECTIONS[ip] <= 0:
+            del IP_CONNECTIONS[ip]
+
+
 def serve(port):
     s = socket.socket()
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -2851,12 +2923,17 @@ def serve(port):
             log(f"[{port}] connect from {a} refused: IP banned")
             c.close()
             continue
+        if not take_ip(a[0]):
+            log(f"[{port}] connect from {a} refused: {MAX_CONNECTIONS_PER_IP} connections open from there")
+            c.close()
+            continue
         if not CONNECTIONS.acquire(blocking=False):
             log(f"[{port}] connect from {a} refused: {MAX_CONNECTIONS} connections open")
+            release_ip(a[0])
             c.close()
             continue
         log(f"[{port}] connect from {a}")
-        threading.Thread(target=Session(c, a).run, daemon=True).start()
+        threading.Thread(target=Session(c, a, port).run, daemon=True).start()
 
 
 GAME_LOCK = threading.RLock()  # FDP peer state is shared by the UDP loop and the damage timers
@@ -2968,6 +3045,7 @@ BACK_SPEED = 6.0  # MOVE_SPEED x BackCoefficient 0.75 (StrafeCoefficient is 1)
 TURN_RESEND = math.cos(math.radians(25))  # a walking player's reports bending more than this resend its velocity
 STOP_AFTER = 0.5  # seconds: a walking player whose robot stays in one place this long is shown standing (lost_stop)
 STILL_DISTANCE = 0.3  # moving less than this (x and z) counts as staying in one place
+SWITCH_GAP = 0.25  # seconds between one player's weapon switches (shown to everyone reliably: a flood guard)
 VEL_GAP = 0.1  # seconds between one player's velocity messages (sent reliably to everyone: a flood guard)
 
 
@@ -4269,6 +4347,9 @@ def on_game_message(server, peer, raw):
         with GAME_LOCK:
             if peer.player_dead:
                 return
+            if slot != peer.equip_slot and m.now - getattr(peer, "switched_at", -SWITCH_GAP) < SWITCH_GAP:
+                return  # each switch goes to everyone reliably: a client flipping slots can not flood them
+            peer.switched_at = m.now
             changed, peer.equip_slot = slot != peer.equip_slot, slot
             body = struct.pack("<Iii", peer.player_rid, slot, -1)
             send_game_event(server, peer, 19, 50105, body)

@@ -111,6 +111,23 @@ for port in range(ls.MAX_GAME_PER_IP + 2):
 ok &= check("sessions per address are capped", sum(a[0] == "9.9.9.9" for a in server.peers) == ls.MAX_GAME_PER_IP)
 for a in [a for a in server.peers if a[0] == "9.9.9.9"]:
     server.close(server.peers[a], "test")
+ids = [server.new_session_id() for _ in range(2000)]
+ok &= check("server session ids are random u16s, never 0 nor one in use",
+            all(1 <= i <= 0xFFFF and i != pa.server_session for i in ids) and len(set(ids)) > 1900)
+before = len(sent)
+server.handle(fdp.Packet(0x07, 1, pa.server_session ^ 1, 12, fdp.SPLIT_FIN, 0, 0).pack(), A)
+raw = bytes([0x80, 9]) + struct.pack("<H", 30050) + b"\0" * 4
+server.handle(fdp.Packet(0x01, 1, pa.server_session ^ 1, 14 + len(raw), 0, 0, 0,
+                         struct.pack("<H", len(raw)) + raw).pack(), A)
+step()
+ok &= check("packets without our session id are dropped (a forged close or spawn)",
+            server.peers.get(A) is pa and not getattr(pa, "spawned", False))
+try:
+    connect(A, a_cid, session=10)
+except KeyError:
+    pass
+ok &= check("a new session over an open one right away is ignored",
+            server.peers[A] is pa and pa.client_session == 9)
 msg(A, 30050, b"\0" * 4)
 ok &= check("A spawned as Alpha", pa.name == "Alpha" and pa.player_rid == ls.PLAYER_RID_STEP + 1)
 before = len(packets)
@@ -318,9 +335,12 @@ msg(A, 40125, b"")
 sent.clear()
 msg(A, 40105, struct.pack("<ii", 0, 5))
 ok &= check("a slot with no weapon is ignored", not got(A, 50105) and not got(B, 50105) and pa.equip_slot == 0)
+step(ls.SWITCH_GAP + 0.01)
 msg(A, 40105, struct.pack("<ii", 0, 1))
 ok &= check("taking it up again is shown to B", got(B, 50105) == [struct.pack("<Iii", a_rid, 1, -1)]
             and pa.equip_slot == 1)
+msg(A, 40105, struct.pack("<ii", 0, 0))
+ok &= check("switching again at once is ignored (flood guard)", len(got(B, 50105)) == 1 and pa.equip_slot == 1)
 
 # enemy report (9,40137): on the radar (19,50176) of the player and their side, at most once per REPORT_GAP
 models = ls.STORE.by_id(a_cid)["model"], ls.STORE.by_id(b_cid)["model"]

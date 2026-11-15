@@ -68,8 +68,11 @@ def create(name):
 
 for bad, why in [("Alpha\n", "a newline at the end"), ("Server", "the server's own name"), ("gM", "staff, any case"),
                  ("\uff21lpha", "fullwidth letters"), ("\u0410dmin", "a Cyrillic letter among ASCII ones"),
-                 ("ab\u00b2", "a superscript digit"), ("a", "too short"), ("a b", "a space"), ("x\u200d", "a joiner")]:
+                 ("ab\u00b2", "a superscript digit"), ("a", "too short"), ("a b", "a space"), ("x\u200d", "a joiner"),
+                 ("\u115f\u115f", "Hangul fillers (draws blank)"), ("\u3164\uac00\u3164", "a filler among letters"),
+                 ("__", "only underscores"), ("GM_Admin", "staff words joined"), ("Server1", "a staff word and digits")]:
     ok &= check(f"character name refused: {why}", create(bad) != 0, True)
+ok &= check("a name with a staff word inside another word is fine", create("Modesty"), 0)
 ok &= check("a plain name is fine", create("Alpha_2"), 0)
 ok &= check("so is one in another script", create("\u5c0f\u660e"), 0)
 ok &= check("a name taken in another case refused", create("ALPHA_2"), 13002)
@@ -81,6 +84,45 @@ ok &= check("password not stored in clear", "pw1" in open(ls.Accounts.path).read
 s = FakeSession()
 s.handle(ls.Message(13, 13000, token=1, flags=ls.MSG_REQUEST, body=b""))
 ok &= check("requests before login ignored", len(s.sent), 0)
+
+# new accounts: REGISTER_MAX per address per window (each costs a slow hash and a database row)
+made = [login(f"new{i}", "pw", ip="7.7.7.7")[0] for i in range(ls.REGISTER_MAX)]
+ok &= check(f"{ls.REGISTER_MAX} new accounts from one address", made, [0] * ls.REGISTER_MAX)
+ok &= check("one more is refused", login("new_extra", "pw", ip="7.7.7.7"), (ls.LOGIN_LOCKED, None))
+ok &= check("and was not made", ls.ACCOUNTS.exists("new_extra"), False)
+ok &= check("an existing account still logs in from there", login("new0", "pw", ip="7.7.7.7"), (0, "new0"))
+ok &= check("another address may still make one", login("new_extra", "pw", ip="7.7.7.8"), (0, "new_extra"))
+
+# the login port only logs in: hall requests on it would get past kicks and bans (they close the gate connection)
+s = FakeSession(ip="5.5.5.5")
+s.port = ls.LOGIN_PORT
+s.handle(ls.Message(10, 10000, token=1, flags=ls.MSG_REQUEST, body=login_body("alice", "pw1")))
+n = len(s.sent)
+s.handle(ls.Message(13, 13000, token=1, flags=ls.MSG_REQUEST, body=b""))
+ok &= check("a hall request on the login port is ignored", (s.account, len(s.sent) - n), ("alice", 0))
+
+# balances: only of your own characters
+rich = ls.STORE.create("richacct", "Rich", gender=1, model=1, state=1, raw="")
+s.port = None  # a gate connection, logged in as alice
+for typ, what in ((24019, "money"), (24020, "credit")):
+    s.handle(ls.Message(24, typ, token=1, flags=ls.MSG_REQUEST, body=struct.pack("<I", rich)))
+    ok &= check(f"another account's {what} reads 0", s.sent[-1].body, struct.pack("<I", 0))
+s.handle(ls.Message(14, 14057, token=1, flags=ls.MSG_REQUEST, body=struct.pack("<I", rich)))
+ok &= check("another account's battle report reads 0", s.sent[-1].body, bytes(40))
+own = FakeSession(ip="5.5.5.6")
+own.account = "richacct"
+own.handle(ls.Message(24, 24019, token=1, flags=ls.MSG_REQUEST, body=struct.pack("<I", rich)))
+ok &= check("your own money reads right", own.sent[-1].body, struct.pack("<I", int(ls.STORE.stats(rich)["money"])))
+
+# TCP connections per address are capped (loopback is this machine)
+taken = [ls.take_ip("8.8.8.8") for _ in range(ls.MAX_CONNECTIONS_PER_IP + 1)]
+ok &= check("connections from one address capped", taken.count(True), ls.MAX_CONNECTIONS_PER_IP)
+ls.release_ip("8.8.8.8")
+ok &= check("a closed one frees a slot", ls.take_ip("8.8.8.8"), True)
+for _ in range(ls.MAX_CONNECTIONS_PER_IP):
+    ls.release_ip("8.8.8.8")
+ok &= check("all closed: the address is forgotten", "8.8.8.8" in ls.IP_CONNECTIONS, False)
+ok &= check("loopback not capped", all(ls.take_ip("127.0.0.1") for _ in range(ls.MAX_CONNECTIONS_PER_IP + 5)), True)
 s = FakeSession()
 s.handle(ls.Message(10, 10000, token=1, flags=ls.MSG_REQUEST, body=b"\x01\x00"))
 ok &= check("malformed login refused", s.sent[-1].result, ls.LOGIN_FAILED)

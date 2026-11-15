@@ -60,7 +60,7 @@ def main():
         data = rng.randbytes(rng.choice([0, 1, 5, 12, 13, 20, 40, 200, 1500]))
         run("fdp.handle", server.handle, data, addr)
     # 2) game messages straight into the dispatcher with a connected-looking peer
-    peer = fdp.Peer(("127.0.0.1", 9), 1)
+    peer = fdp.Peer(("127.0.0.1", 9), 1, 1)
     for i in range(rounds):
         t = rng.choice(types)
         body = rng.randbytes(rng.choice([0, 3, 4, 8, 15, 16, 35, 36, 44, 100]))

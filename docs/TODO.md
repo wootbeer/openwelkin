@@ -217,6 +217,17 @@ reply layout, and answer with real data.
       UTF-8, and the console escapes what it can not show: before, a line with a Chinese name raised
       UnicodeEncodeError (cp1252) inside whatever handler was logging it
 - [x] FDP: 512 session cap with 60 s idle expiry; UDP loop catches handler errors
+- [x] Review 2026-11-15 (offline; tools/test_match.py, test_login.py). Server session ids counted up without end and
+      go out as a u16: past 65535 every SYN-ACK raised, so nobody could join (one player re-SYNing with one ticket
+      got there). Now random unused ids, and every packet must carry ours (the real client does: 2026-11-02 log),
+      so a forged close or message from a player's address is dropped; a new session over an open one at most once
+      a second. TCP: at most 16 connections per address (not 127.x), and a connection must log in within 30 s
+      however it trickles bytes. New accounts: 5 per address per hour (each is a slow scrypt and a row); the hash
+      runs outside the accounts lock. The login port only handles login (in ROLE all it took hall requests, which
+      kicks and bans did not close). Money, credit and the battle report answer only for your own characters.
+      Names: no blank-drawing letters (Hangul fillers), at least one letter or digit, no staff word among the
+      parts split by digits and "_" (GM_Admin, Server1). Weapon switches at most every 0.25 s. Not done: a name in
+      one other script that looks like a Latin one (Cyrillic "СОВА" for "COBA")
 - [x] Game message flood (2026-11-05, offline): each game session gets 300 messages at once, then 150 a second;
       more are dropped, and after 3000 dropped the session is closed. A 40-bot load test drops nothing
 - [x] Game sessions need a live battle ticket in the SYN (2026-11-05, offline): before, any made-up SYN opened a

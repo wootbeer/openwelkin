@@ -28,6 +28,7 @@ Sending: messages are queued per peer and sent once per game tick (flush), sever
 lazily (its cumulative ack often lags 5+ seconds), so a lost reliable packet is resent when the client repeats the
 same ack DUP_ACKS times, and the oldest unacked one again after RESEND_AFTER seconds (then 8, 16, 16, ...).
 """
+import secrets
 import struct
 import time
 
@@ -36,6 +37,7 @@ LENGTH = struct.Struct("<H")
 SPLIT_ACK, SPLIT_SYN, SPLIT_SYN_ACK, SPLIT_FIN = 1, 2, 3, 4
 MAX_PEERS = 512       # open sessions per game server; SYNs beyond this are ignored
 PEER_TIMEOUT = 60.0   # seconds without any packet before a session is dropped
+RESYN_GAP = 1.0       # seconds: one address may start a new session over its open one at most this often
 MAX_BATCH = 1024      # payload bytes per packet when queued messages are sent together (the client takes 953 B)
 DUP_ACKS = 3          # the same ack this many times in a row resends the packet it asks for
 RESEND_AFTER = 4.0    # seconds before the oldest unacked reliable packet is sent again
@@ -69,12 +71,10 @@ class Packet:
 
 class Peer:
     """Server-side state for one client FDP session."""
-    next_server_session = 1
 
-    def __init__(self, addr, client_session):
-        self.addr, self.client_session = addr, client_session
-        self.server_session = Peer.next_server_session
-        Peer.next_server_session += 1
+    def __init__(self, addr, client_session, server_session):
+        self.addr, self.client_session, self.server_session = addr, client_session, server_session
+        self.created = time.monotonic()
         self.next_reliable = 1     # number of our next reliable packet (seeded by the SYN-ACK number)
         self.next_unreliable = 1   # unreliable packets have their own counter
         self.next_order = 1        # order id of our next ordered (reliable) packet; repeats are dropped as duplicates
@@ -99,6 +99,16 @@ class Server:
         self.stats = dict.fromkeys(("pkts_in", "bytes_in", "pkts_out", "bytes_out", "resent"), 0)
         self.next_expiry = 0.0
 
+    def new_session_id(self):
+        """A random server session id (1..65535, a u16 in the SYN-ACK's ack id) not in use. Every later packet from
+        the client carries it (handle drops any without it), so someone forging a player's address must also guess
+        it. MAX_PEERS keeps far fewer open than there are ids."""
+        used = {p.server_session for p in self.peers.values()}
+        while True:
+            sid = secrets.randbelow(0xFFFF) + 1
+            if sid not in used:
+                return sid
+
     def handle(self, data, addr):
         try:
             pkt = Packet.parse(data)
@@ -108,7 +118,7 @@ class Server:
         self.stats["pkts_in"] += 1
         self.stats["bytes_in"] += len(data)
         peer = self.peers.get(addr)
-        if peer:
+        if peer and pkt.session == peer.server_session:  # a forged packet (see below) does not keep a session alive
             peer.last_seen = time.time()
         if self.trace:
             quiet = peer and not pkt.system and messages(pkt.payload) and all(
@@ -122,6 +132,11 @@ class Server:
                 self.debug(f"[fdp] {addr} <- {pkt}\n{self.hexdump(pkt.payload)}")
         if pkt.system and pkt.split_id == SPLIT_SYN:
             self.on_syn(pkt, addr)
+            return
+        if peer and pkt.session != peer.server_session:
+            # after the handshake every packet carries our session id (real client 2026-11-02: client session 9,
+            # packets sess=1 = ours). Without it the packet may be forged from the player's address: data, acks and
+            # the close (FIN) are all dropped.
             return
         if peer and pkt.system and pkt.split_id == SPLIT_ACK:
             self.on_ack(peer, pkt.ack_id)  # bare or with a selective-ack list (flags 0x06): ack id is cumulative
@@ -173,8 +188,11 @@ class Server:
                 self.log(f"[fdp] {addr} SYN ignored: {len(self.peers)} sessions open")
                 return
             if peer:  # same address, new session: the client restarted its connection
+                if time.monotonic() - peer.created < RESYN_GAP:
+                    self.debug(f"[fdp] {addr} SYN ignored: new session too soon")
+                    return
                 self.close(peer, "reconnected")
-            peer = self.peers[addr] = Peer(addr, pkt.session)
+            peer = self.peers[addr] = Peer(addr, pkt.session, self.new_session_id())
             peer.last_seen = time.time()
             peer.connect_stream = stream
             self.log(f"[fdp] {addr} new session client={pkt.session} server={peer.server_session} "
