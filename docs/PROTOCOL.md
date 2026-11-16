@@ -1501,13 +1501,13 @@ Sent by Robot::Land only when the robot lands faster than its limit (robot +0x33
 <a name="m-9-40101"></a>
 #### turn `(9,40101)`
 
-*C→S · partial*
+*C→S · verified*
 
 ```text
 f32 | vec3 facing
 ```
 
-The robot's forward axis. Sent unreliably after a turn of over 30 degrees, or of over 5 degrees at most once a second (Game.dll 0x1024c784, 0x1024c8f5), and once a second from 0x1023f63f. The server takes it as the player's facing, shows it to the others in the next move and sends a walking robot's new velocity. Not yet checked in game.
+The robot's forward axis. Sent unreliably after a turn of over 30 degrees, or of over 5 degrees at most once a second (Game.dll 0x1024c784, 0x1024c8f5), and once a second from 0x1023f63f. Real client 2026-11-15: the f32 is 0.3 (the pose delay), the facing has length 1 and y 0, and it comes both standing and walking (between the steer messages). The server takes it as the player's facing, shows it to the others in the next move and sends a walking robot's new velocity. How that looks on a second client is not tried.
 
 <a name="m-9-40137"></a>
 #### report enemy `(9,40137)`

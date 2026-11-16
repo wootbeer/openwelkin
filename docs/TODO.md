@@ -199,6 +199,8 @@ reply layout, and answer with real data.
       not walk the way the player looked. The client sends its steer flags (stop too) unreliably, so a lost stop is
       now guessed when the robot stays put for half a second; a stop that fails the speed check still counts; turns
       (9,40101) are taken now. Check with two clients: stop, turn while standing then walk, turn while walking.
+      Real client 2026-11-15 (one client): 40101 comes standing and walking, f32 0.3 | unit facing; the stop
+      (40100 steer 0) came when W was let go
 
 ## Security / robustness (2026-10-20, offline)
 - [x] tools/fuzz_handlers.py: every gate handler survives random bodies (0 failures)
@@ -227,7 +229,9 @@ reply layout, and answer with real data.
       kicks and bans did not close). Money, credit and the battle report answer only for your own characters.
       Names: no blank-drawing letters (Hangul fillers), at least one letter or digit, no staff word among the
       parts split by digits and "_" (GM_Admin, Server1). Weapon switches at most every 0.25 s. Not done: a name in
-      one other script that looks like a Latin one (Cyrillic "СОВА" for "COBA")
+      one other script that looks like a Latin one (Cyrillic "СОВА" for "COBA").
+      Real client 2026-11-15: login (nothing ignored on the login port), hall, and a battle join with a random
+      session id (247): the client sent it on every packet and spawned
 - [x] Game message flood (2026-11-05, offline): each game session gets 300 messages at once, then 150 a second;
       more are dropped, and after 3000 dropped the session is closed. A 40-bot load test drops nothing
 - [x] Game sessions need a live battle ticket in the SYN (2026-11-05, offline): before, any made-up SYN opened a
