@@ -228,8 +228,9 @@ reply layout, and answer with real data.
       runs outside the accounts lock. The login port only handles login (in ROLE all it took hall requests, which
       kicks and bans did not close). Money, credit and the battle report answer only for your own characters.
       Names: no blank-drawing letters (Hangul fillers), at least one letter or digit, no staff word among the
-      parts split by digits and "_" (GM_Admin, Server1). Weapon switches at most every 0.25 s. Not done: a name in
-      one other script that looks like a Latin one (Cyrillic "СОВА" for "COBA").
+      parts split by digits and "_" (GM_Admin, Server1). Weapon switches at most every 0.25 s. 2026-11-16: a name
+      that looks like a taken one is refused too (name_skeleton: Cyrillic and Greek look-alikes, 0 and 1 read as
+      o and l, so "СОВА" for "COBA" or "A1pha" for "Alpha"); staff words are checked in that form as well.
       Real client 2026-11-15: login (nothing ignored on the login port), hall, and a battle join with a random
       session id (247): the client sent it on every packet and spawned
 - [x] Game message flood (2026-11-05, offline): each game session gets 300 messages at once, then 150 a second;

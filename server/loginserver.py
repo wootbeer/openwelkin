@@ -158,6 +158,19 @@ RESERVED_NAMES = {"server", "system", "admin", "administrator", "gm", "gamemaste
                   "staff", "notice", "broadcast"}
 # Letters that draw nothing (Hangul fillers, Khmer inherent vowels, Mongolian selectors): a name of them looks blank
 BLANK_LETTERS = set("ᅟᅠㅤﾠ឴឵᠋᠌᠍᠎᠏")
+# Letters of other scripts that look like Latin ones (after casefold), and digits that pass for letters: a name in
+# Cyrillic "СОВА" draws like a Latin "COBA". name_skeleton maps both to the same text, and a new name whose
+# skeleton matches a taken one is refused (STORE.name_taken).
+LOOKALIKES = str.maketrans({
+    "а": "a", "в": "b", "е": "e", "ё": "e", "к": "k", "м": "m", "н": "h", "о": "o", "р": "p", "с": "c", "т": "t",
+    "у": "y", "х": "x", "ѕ": "s", "і": "i", "ї": "i", "ј": "j", "ӏ": "l", "ԁ": "d", "һ": "h", "ԛ": "q", "ԝ": "w",
+    "α": "a", "β": "b", "ε": "e", "ζ": "z", "η": "h", "ι": "i", "κ": "k", "μ": "m", "ν": "n", "ο": "o", "ρ": "p",
+    "τ": "t", "υ": "y", "χ": "x", "ϲ": "c", "0": "o", "1": "l"})
+
+
+def name_skeleton(name):
+    """What a name looks like: casefolded, look-alike letters and digits turned into the Latin letters they copy."""
+    return name.casefold().translate(LOOKALIKES)
 # The hall's scrolling bar: announcements.txt next to the databases, one line each. Made with these on first start;
 # edit it while the server runs.
 ANNOUNCEMENTS = [
@@ -600,12 +613,14 @@ class Store:
         self.saved = {}  # the same, as far as characters.db has it
         self.used = collections.OrderedDict()  # loaded accounts, least recently used first
         self.names = {}
+        self.skeletons = set()  # name_skeleton of every name: a new name may not look like a taken one
         if ROLE in ("all", "gate"):
             self.con = db.open_characters(self.path)
             self.reader = db.reader(self.path)
             known = db.load_index(self.con)
             self.index = {cid: account for cid, (account, _) in known.items()}
             self.names = {name.lower(): cid for cid, (_, name) in known.items()}
+            self.skeletons = {name_skeleton(name) for _, name in known.values()}
             self.data["next_id"] = db.next_id(self.con)
             self.saved = db.load_reports(self.con)
             self.done = dict(self.saved)
@@ -712,11 +727,12 @@ class Store:
     def create(self, account, name, **fields):
         """The new character's id, or None if the name was taken."""
         with self.lock:
-            if name.lower() in self.names:
+            if self.name_taken(name):
                 return None
             self.load(account)
             cid = self.data["next_id"]; self.data["next_id"] += 1
             self.names[name.lower()] = cid
+            self.skeletons.add(name_skeleton(name))
             if self.con is not None:
                 self.index[cid] = account
             c = dict(id=cid, name=name, **fields)
@@ -917,7 +933,8 @@ class Store:
         return st
 
     def name_taken(self, name):
-        return name.lower() in self.names
+        """Taken, or looks like a taken name (name_skeleton)."""
+        return name.lower() in self.names or name_skeleton(name) in self.skeletons
 
     def id_of_name(self, name):
         return self.names.get(name.lower())
@@ -996,7 +1013,8 @@ def valid_name(name):
             and (name.isascii() or not any(c.isascii() for c in name))
             and not any(c in BLANK_LETTERS for c in name)
             and any(c.isalnum() for c in name)
-            and not any(w in RESERVED_NAMES for w in re.split(r"[\d_]+", name.casefold())))
+            and not any(w in RESERVED_NAMES for n in (name.casefold(), name_skeleton(name))
+                        for w in re.split(r"[\d_]+", n)))
 
 
 def clean_line(text):

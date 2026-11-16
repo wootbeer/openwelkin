@@ -76,6 +76,13 @@ ok &= check("a name with a staff word inside another word is fine", create("Mode
 ok &= check("a plain name is fine", create("Alpha_2"), 0)
 ok &= check("so is one in another script", create("\u5c0f\u660e"), 0)
 ok &= check("a name taken in another case refused", create("ALPHA_2"), 13002)
+ok &= check("a name drawn alike in Cyrillic refused (Моԁеѕту for Modesty)",
+            create("Моԁеѕту"), 13002)
+ok &= check("digits passing for letters refused (A1pha_2 for Alpha_2)", create("A1pha_2"), 13002)
+ok &= check("Cyrillic СОВА and Latin COBA look the same", ls.name_skeleton("СОВА"),
+            ls.name_skeleton("COBA"))
+ok &= check("a staff word in look-alike letters is refused (Cyrillic system)",
+            ls.valid_name("ѕуѕтем"), False)
 for _ in range(ls.LOGIN_FAILS_MAX):
     login("alice", "guess", ip="4.4.4.4")
 ok &= check("throttled after failures (even right password)", login("alice", "pw1", ip="4.4.4.4"), (ls.LOGIN_LOCKED, None))
