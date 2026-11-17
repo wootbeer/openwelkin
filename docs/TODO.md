@@ -205,7 +205,11 @@ reply layout, and answer with real data.
       Frida probe on Robot::doMove: a turn while standing turns it (robot +0x54..+0x64 is its forward axis); W then
       walks it the new way; a turn while walking bends its walk; with the stop left out it is shown standing about
       half a second after its reports stop, walks on when they move again, and a real stop stops it. Not tried:
-      two real clients (a second one beside the first never connected)
+      two real clients (a second one beside the first never connected). 2026-11-17, offline: the client has no
+      one-copy lock (no named mutex or FindWindow in its modules), and the server takes many players from one
+      address (tools/loadtest.py). A lead: P2PNetwork.dll (peer voice, OutpopSpeech) is on with EnableP2P = true
+      in [Game.Networking] of Welkin4591.ini and has a fixed-port setting (FixPort, set_fix_upnp_port), so a
+      second copy may fail to open its port. Next try: EnableP2P = false (and EnableVoice = false) for both
 
 ## Security / robustness (2026-10-20, offline)
 - [x] tools/fuzz_handlers.py: every gate handler survives random bodies (0 failures)
