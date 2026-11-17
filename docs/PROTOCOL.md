@@ -938,7 +938,7 @@ str name | u32 id | u8 level | u8 | u8 | str | str created | u32 leader id
 | u32 member limit | u32 crystal | u32 | u32 | u32
 ```
 
-Request: `u32 division id`. Fills the name cache (the "[short name]" before nameplate names) and, for the player's own division, the window's lines: full name, short name, "Create Time" (the date part of `YYYY-MM-DD hh:mm:ss`), Commanding Officer, Level, Record, Account, Online Member, "Division Total Member: members/limit". The leader id probably picks Dismiss or Quit. Asked for any nonzero team id in ranking rows, so those send 0.
+Request: `u32 division id`. Fills the name cache (the "[short name]" before nameplate names) and, for the player's own division, the window's lines: full name, short name, "Create Time" (the date part of `YYYY-MM-DD hh:mm:ss`), Commanding Officer, Level, Record, Account, Online Member, "Division Total Member: members/limit". The leader id probably picks Dismiss or Quit. Asked for any nonzero team id in ranking rows and base info; the emulator sends the division id in both (0 and -1 = none).
 
 <a name="m-13-13031"></a>
 #### GetCharacterByTeamID (members) `(13,13031)`
@@ -1213,7 +1213,8 @@ Walker\_Basic robot = flyweight 1311. See [Snapshots](#snapshots).
 | character id | u32 | creates the character if it does not exist |
 | name | str | nameplates, kill feed |
 | nation | u32 | character +0x30; 0x10 Federal, 0x20 Alliance |
-| — | 2 x u32 |  |
+| — | u32 | +0x38 |
+| division id | i32 | +0x40; the nameplate shows "[short name]" before the name, asking (15,15023) for it; -1 = none (0 drew a bare "[]") |
 | rank | u32 | 0 = Recruit |
 | GM flag | u8 | character +0xb8: non-zero adds a "[GM]" nameplate prefix and, for your own character, opens the / GM commands in the battle chat box (0 takes away what CharacterOnline set) |
 | group id | u32 | +0xe8 |

@@ -117,8 +117,10 @@ reply layout, and answer with real data.
       words); the client's own error codes 15001..15069. tools/test_divisions.py. Not tried in game: do the hall
       windows open and show the right lines, is members/limit the right way round, does an agreed applicant see
       the division window at once
-- [ ] Division tag before nameplate names in battle: base info (19,30040) still sends team -1; the game server needs
-      the division id (battle ticket), and the client then asks (15,15023) for the short name. Ranking rows too
+- [x] Division tag before nameplate names in battle, 2026-11-17, offline: the gate sends the division id with the
+      character to the game server, base info (19,30040) carries it (-1 = none) and ranking rows too (0 = none); the
+      client asks the gate (15,15023) for the short name. A change during a battle shows from the next one. Not tried
+      in game (tools/test_match.py checks the bytes)
 - [ ] Division invites (15079 send, 15080 fetch, 15083 answer, 15085 / 15086 pushes), titles (13,13015 / 13017 /
       13018), donating Crystal (15092), member limit upgrades (15093 / 15094), donation stats (15096), flags (15070 /
       15074). Requests read 2026-11-17: 15079 u32 | u32 | u8, 15080 u32, 15083 u32 | u32 | u8, 15092 u32 | u32,

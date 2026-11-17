@@ -21,6 +21,7 @@ import loginserver as ls  # noqa: E402
 ls.log = lambda *a, **k: None
 ls.MOVE_CHECK = False  # on only for its own tests below: the others move robots around freely
 ls.STORE.save = lambda: None
+ls.DIVISIONS.con = None  # nothing is saved: divisions stay in memory too
 ls.STORE.data = copy.deepcopy(ls.STORE.data)
 sent = []     # (addr, catalog, type, body)
 packets = []  # (addr, number of messages)
@@ -858,10 +859,35 @@ step()
 # own character: no base info (it would empty the loadout presets); a Respawn Platform (MW_PLATFORM) can be used
 ls.PLATFORM = True
 before = len(sent)
+squad, _ = ls.DIVISIONS.create(b_cid, "Test Squad", "TS", ls.nation_of(b_cid), 0)
 pa = join(A, a_cid)
 pb = join(B, b_cid)
 infos = [struct.unpack_from("<I", b)[0] for a, c, t, b in sent[before:] if a == A and t == 30040]
 ok &= check("no base info for your own character, but for the others", a_cid not in infos and b_cid in infos)
+
+
+def team_in_info(viewer, cid):
+    """The team id of cid's last base info (19,30040) sent to viewer."""
+    for a, c, t, b in reversed(sent):
+        if a == viewer and t == 30040 and struct.unpack_from("<I", b)[0] == cid:
+            return struct.unpack_from("<i", b, ls.read_wstr(b, 4)[1] + 8)[0]
+
+
+ok &= check("base info carries the division id (the nameplate's [tag])", squad and team_in_info(A, b_cid) == squad)
+ok &= check("no division: team -1, no tag", team_in_info(B, a_cid) == ls.NO_TEAM)
+
+
+class RankStub:
+    def reply(self, req, body=b"", result=0):
+        self.body = body
+
+
+stub = RankStub()
+ls.Session.send_rank_rows(stub, None, [(b_cid, "b", 0, 1), (a_cid, "a", 0, 1)], 0, 9)
+row_b = ls.read_wstr(stub.body, 12)[1]
+row_a = ls.read_wstr(stub.body, ls.read_wstr(stub.body, row_b + 5)[1] + 5 + 4)[1]
+ok &= check("ranking rows carry the division id, 0 for none",
+            struct.unpack_from("<I", stub.body, row_b + 1)[0] == squad and struct.unpack_from("<I", stub.body, row_a + 1)[0] == 0)
 attach = [b for a, c, t, b in sent[before:] if a == A and t == 50001 and struct.unpack_from("<I", b, 4)[0] == 403002]
 ok &= check("the platform stands on the ground below the drop-in point",
             pa.platform[1] == ls.spawn_point(pa.match, pa.slot)[1] - ls.SPAWN_DROP)

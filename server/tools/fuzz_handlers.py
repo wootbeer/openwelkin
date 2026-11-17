@@ -18,6 +18,7 @@ import loginserver as ls  # noqa: E402
 
 ls.log = lambda *a, **k: None
 ls.STORE.save = lambda: None
+ls.DIVISIONS.con = None  # divisions stay in memory too
 ls.STORE.data = copy.deepcopy(ls.STORE.data)
 ls.Accounts.path = os.path.join(tmpdir.make(), "accounts.db")
 ls.ACCOUNTS = ls.Accounts()

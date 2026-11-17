@@ -1045,9 +1045,12 @@ class Divisions:
     def write(self, *changes):
         """Save (fn, args...) changes in one transaction (call with the lock held)."""
         if self.con is not None:
-            with self.con:
-                for fn, *args in changes:
-                    fn(self.con, *args)
+            try:
+                with self.con:
+                    for fn, *args in changes:
+                        fn(self.con, *args)
+            except db.Error as e:  # kept in memory; lost at a restart, so say so
+                log(f"divisions: save failed: {e!r}")
 
     def of(self, cid):
         """The id of the character's division, 0 for none."""
@@ -1867,7 +1870,7 @@ class Session:
         page = rows[first:first + min(count, TOP_ROWS)]
         body = struct.pack("<II", len(rows), len(page))
         for cid, name, honor, value in page:
-            body += (struct.pack("<I", cid) + wstr(name) + struct.pack("<BI", nation_of(cid), RANK_NO_TEAM) + wstr("")
+            body += (struct.pack("<I", cid) + wstr(name) + struct.pack("<BI", nation_of(cid), DIVISIONS.of(cid)) + wstr("")
                      + struct.pack("<BI", rank_for(honor), value))
         self.reply(msg, body)
 
@@ -2876,7 +2879,6 @@ def kick(account, reason, notice=""):
 
 # Ranking tab -> (stat for Total, stat for a period). Crystal's Total is the balance; a period counts crystal earned.
 RANK_TABS = {15098: ("honor", "honor"), 15100: ("kills", "kills"), 15106: ("money", "crystal")}
-RANK_NO_TEAM = 0  # teams are not kept yet either
 
 # (event catalog, event type) -> handler. Names come from the client's observer class names (RTTI).
 HANDLERS = {
@@ -3059,7 +3061,8 @@ def place_in_game(account, cid, bfid, gm_level=0):
     """gate: announce a player to the emptiest game server: (ip, port, ticket), or None if none answers."""
     for g in sorted(LINKS, key=lambda g: g.load):
         ticket = secrets.randbits(32) or 1
-        if ask(g, "expect", False, ticket=ticket, account=account, cid=cid, bfid=bfid, character=STORE.by_id(cid),
+        character = dict(STORE.by_id(cid) or {}, division=DIVISIONS.of(cid))  # the game server has no divisions
+        if ask(g, "expect", False, ticket=ticket, account=account, cid=cid, bfid=bfid, character=character,
                gm=gm_level):
             g.load += 1  # until its next report
             g.accounts.append(account)
@@ -3918,7 +3921,8 @@ def show_player(server, viewer, other):
     """Create another player's robot on viewer's client (as a remote robot)."""
     spawn_robot(server, viewer, other.cid, other.player_rid, other.pos, other.detachment, other.name, local=False)
     send_base_info(server, viewer, other.cid, other.name, other.player_rid, other.kills, other.deaths,
-                   rank_for(STORE.stats(other.cid).get("honor", 0)), nation_of(other.cid), getattr(other, "gm_level", 0) > 0)
+                   rank_for(STORE.stats(other.cid).get("honor", 0)), nation_of(other.cid), getattr(other, "gm_level", 0) > 0,
+                   division_of(other.cid) or NO_TEAM)
     if other.player_dead:
         send_game_event(server, viewer, 19, 50107, struct.pack("<Iff", other.player_rid, 0.0, 0.0))
     else:
@@ -4504,13 +4508,21 @@ def relive_target(m, rid):
             relive_on(m.server, p, rid, t["cid"], t["pos"], (0.0, 0.0, 1.0), DUMMY_HP, DUMMY_HP)
 
 
+def division_of(cid):
+    """A character's division id, 0 for none. The gate keeps divisions; a game server has the id the gate sent with
+    the character when the player came in (a change during the battle shows from the next one)."""
+    if ROLE == "game":
+        return (STORE.by_id(cid) or {}).get("division", 0)
+    return DIVISIONS.of(cid)
+
+
 def nation_of(cid):
     """A character's nation: FEDERAL or ALLIANCE, chosen in the client's Choose Nation screen before creating it."""
     nation = (STORE.by_id(cid) or {}).get("model")
     return nation if nation in NATIONS else 0
 
 
-def send_base_info(server, peer, cid, name, rid, kills=0, deaths=0, rank=0, nation=0, gm=False):
+def send_base_info(server, peer, cid, name, rid, kills=0, deaths=0, rank=0, nation=0, gm=False, team=NO_TEAM):
     """GS_Character_Set_BaseInfo (19,30040) creates or updates a character (handler Game.dll 0x1035fab0):
     u32 char id | wstr name (character +8, shown on nameplates and in the kill feed) | u32 nation (+0x30) | u32 (+0x38)
     | u32 team id (+0x40, -1 = none) | u32 rank (+0x44, 0 = Recruit) | u8 GM (+0xb8) | u32 (+0xe8) | u32 (+0x108)
@@ -4519,10 +4531,11 @@ def send_base_info(server, peer, cid, name, rid, kills=0, deaths=0, rank=0, nati
     Without it a remote character has no name and its nameplate shows only "[GM]". A character with no group
     (+0xe8 = 0) gets a "[Need Team]" tag over its robot unless the +0x220 byte is set (Robot::updateHeading).
     The nameplate puts "[" + GroupManager::GetTeamShortName(team id) + "]" before the name; team 0 has an empty
-    short name, so 0 drew a bare "[]" (real client 2026-11-14), while -1 shows no tag.
+    short name, so 0 drew a bare "[]" (real client 2026-11-14), while -1 shows no tag. A division id makes the client
+    ask the gate for its short name (15,15023).
     The GM byte puts "[GM]" before the name and, for the player's own character, opens the client's / GM commands
     in the battle chat box (real client 2026-11-05: sending 0 here took away the GM byte CharacterOnline had set)."""
-    send_game_event(server, peer, 19, 30040, struct.pack("<I", cid) + wstr(name) + struct.pack("<IIiIB", nation, 0, NO_TEAM, rank, 1 if gm else 0)
+    send_game_event(server, peer, 19, 30040, struct.pack("<I", cid) + wstr(name) + struct.pack("<IIiIB", nation, 0, team, rank, 1 if gm else 0)
                     + struct.pack("<IIBBB", 0, 0, 0, 0, 1) + struct.pack("<III", kills, deaths, 0)
                     + struct.pack("<I", rid))
 
