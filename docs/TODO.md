@@ -193,14 +193,19 @@ reply layout, and answer with real data.
 - [x] Glyph before nameplate names in battle: a small bracket before "Target 1" in red or white. It was a "[]" team
       tag: the nameplate shows "[" + team short name + "]" for base info (19,30040) team id 0, whose name is empty.
       Base info now sends team id -1 (real client 2026-11-14: the tag went away)
-- [ ] Untested: dummy misses aimed at the ground, fixed spawn point. (No damage to or from a dead robot: tools/test_match.py.
-      Single-use, signed gate session keys: tools/test_split.py)
-- [ ] Untested in game (2026-11-14, offline): other players' robots kept walking after the keys were let go, and did
-      not walk the way the player looked. The client sends its steer flags (stop too) unreliably, so a lost stop is
-      now guessed when the robot stays put for half a second; a stop that fails the speed check still counts; turns
-      (9,40101) are taken now. Check with two clients: stop, turn while standing then walk, turn while walking.
-      Real client 2026-11-15 (one client): 40101 comes standing and walking, f32 0.3 | unit facing; the stop
-      (40100 steer 0) came when W was let go
+- [x] Dummy misses aimed at the ground, fixed spawn point. Real client 2026-11-16: in third person (V) a dummy's
+      miss draws its tracer down into the ground beside the tester; the tester spawns on the battlefield spawn
+      (Mars Front 30, -60) and the next slot 5 along x (35, -60). (No damage to or from a dead robot:
+      tools/test_match.py. Single-use, signed gate session keys: tools/test_split.py)
+- [x] Other players' robots kept walking after the keys were let go, and did not walk the way the player looked
+      (2026-11-14). The client sends its steer flags (stop too) unreliably, so a lost stop is now guessed when the
+      robot stays put for half a second; a stop that fails the speed check still counts; turns (9,40101) are taken.
+      Real client 2026-11-15: 40101 comes standing and walking, f32 0.3 | unit facing; the stop (40100 steer 0)
+      came when W was let go. Real client 2026-11-16, watching a scripted player (scratchpad turnbot.py) with a
+      Frida probe on Robot::doMove: a turn while standing turns it (robot +0x54..+0x64 is its forward axis); W then
+      walks it the new way; a turn while walking bends its walk; with the stop left out it is shown standing about
+      half a second after its reports stop, walks on when they move again, and a real stop stops it. Not tried:
+      two real clients (a second one beside the first never connected)
 
 ## Security / robustness (2026-10-20, offline)
 - [x] tools/fuzz_handlers.py: every gate handler survives random bodies (0 failures)
