@@ -3,6 +3,7 @@
 Steps run in order:
   w:3          hold a key for 3 s (keys: w a s d q e r f v space shift ctrl tab 1-9 0)
   w+d:2        hold several keys together
+  down:w up:w  press / let go of keys while the next steps run (turn while walking: down:w wait:1 turn:300 up:w)
   turn:200     move the mouse 200 units right (negative = left); turn:0,-50 also moves up
   fire:1.5     hold the left mouse button for 1.5 s
   wait:2       pause
@@ -36,6 +37,9 @@ def main():
                 parts = [int(x) for x in arg.split(",")]
                 script.post({"type": "move", "dx": parts[0], "dy": parts[1] if len(parts) > 1 else 0})
                 time.sleep(abs(parts[0]) / 12 / 50 + 0.2)
+            elif name in ("down", "up"):  # press or let go of keys and go on: down:w turn:300 wait:1 up:w
+                for k in arg.split("+"):
+                    script.post({"type": "key", "code": SCANCODES[k], "down": name == "down"})
             elif name == "fire":
                 script.post({"type": "button", "index": 0, "down": True})
                 time.sleep(float(arg))

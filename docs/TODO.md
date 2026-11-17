@@ -204,12 +204,18 @@ reply layout, and answer with real data.
       came when W was let go. Real client 2026-11-16, watching a scripted player (scratchpad turnbot.py) with a
       Frida probe on Robot::doMove: a turn while standing turns it (robot +0x54..+0x64 is its forward axis); W then
       walks it the new way; a turn while walking bends its walk; with the stop left out it is shown standing about
-      half a second after its reports stop, walks on when they move again, and a real stop stops it. Not tried:
-      two real clients (a second one beside the first never connected). 2026-11-17, offline: the client has no
-      one-copy lock (no named mutex or FindWindow in its modules), and the server takes many players from one
-      address (tools/loadtest.py). A lead: P2PNetwork.dll (peer voice, OutpopSpeech) is on with EnableP2P = true
-      in [Game.Networking] of Welkin4591.ini and has a fixed-port setting (FixPort, set_fix_upnp_port), so a
-      second copy may fail to open its port. Next try: EnableP2P = false (and EnableVoice = false) for both
+      half a second after its reports stop, walks on when they move again, and a real stop stops it.
+- [x] Two real clients on one PC, 2026-11-17 (tester and Bravo, Training Ground 1). Both log in and join one match
+      with EnableP2P on or off: the earlier "second client never connected" was most likely a password nobody knew
+      (the copy of testtest2 in the test saves now has test's). Seen from the tester's client (Frida on doMove)
+      while Bravo was driven with tools/vinput.py: a turn while standing (Bravo's own 40101 went 90 -> -26
+      degrees) and then W walked it at -26; the stop showed at once; a turn while walking bent its walk from -26 to
+      -141 degrees, as Bravo's own facing; A strafed it to its left. Closing Bravo's client logged it out at once
+      and its robot left the tester's list, no crash. Same side: shots do no harm (friendly fire is off). Bravo
+      made Federal: the tester's shots hit (the client's aim ray stops at an enemy robot: aim distance 4.8) and
+      killed Bravo twice; Bravo's death dialog read "tester [gun] Bravo", K/D 0/2. The Country chat tab reached the
+      other side; fixed, it now reaches only the sender's side in its match (tools/test_chat.py), checked in game.
+      vinput.py has down:/up: steps for holding keys across other steps (turn while walking)
 
 ## Security / robustness (2026-10-20, offline)
 - [x] tools/fuzz_handlers.py: every gate handler survives random bodies (0 failures)
@@ -357,7 +363,7 @@ reply layout, and answer with real data.
 - [x] Chat, real client 2026-11-01: gate pushes show. The hall's Lobby tab sends (21,21513) and shows as [Broadcast]. The
       client allows one Lobby line or whisper about every 60 s, and shows no message when a line is held back. Hall whispers
       are (21,21051), not 21032. The battle box's Country tab is (21,21004): u16 5 | str, shown from (21,21204), and the
-      client does not show its own line. Country reaches the player's match: game servers report joins and leaves to the
+      client does not show its own line. Country reaches the player's side in its match: game servers report joins and leaves to the
       gate, because shown lines go out on the gate. (21,21211) did not show in the battle box
 - [ ] Team and Division chat. Real client 2026-11-03: the hall's Division Channel sends (21,21004) u16 2 | str (dropped:
       there are no divisions yet). In battle the Team and Division tabs are greyed and do not open without a team or

@@ -1893,7 +1893,7 @@ class Session:
             except OSError:
                 return
 
-    def chat_to_all(self, msg, type_, include_self, same_match=False, off=0):
+    def chat_to_all(self, msg, type_, include_self, same_match=False, off=0, same_side=False):
         line = self.chat_text(msg, off)
         if not line:
             return
@@ -1903,11 +1903,13 @@ class Session:
             return
         name = self.character["name"]
         log(f"[chat] {name}: {line[0]}")
+        side = nation_of(self.character["id"])
         with ONLINE_LOCK:
             sessions = list(ONLINE.values())
         for s in sessions:
             if (s.character and (include_self or s is not self) and not s.blocks(self)
-                    and (not same_match or s.match == self.match)):
+                    and (not same_match or s.match == self.match)
+                    and (not same_side or nation_of(s.character["id"]) == side)):
                 s.chat_line(type_, name, line[0], self.character["id"])
 
     def on_chat_broadcast(self, msg):
@@ -1918,9 +1920,10 @@ class Session:
 
     def on_chat_channel(self, msg):
         """The battle chat box (21,21004): u16 channel | str text. Channel 5 is its Country tab, seen in game. The client
-        does not show its own line. Nations are not done, so Country reaches the player's match."""
+        does not show its own line. Country reaches the players of the sender's side in its match (real client
+        2026-11-17: an Alliance player got a Federal player's line before this)."""
         if len(msg.body) >= 2 and struct.unpack_from("<H", msg.body)[0] == 5:
-            self.chat_to_all(msg, 21204, True, same_match=True, off=2)
+            self.chat_to_all(msg, 21204, True, same_match=True, off=2, same_side=True)
 
     def on_chat_private(self, msg):
         try:

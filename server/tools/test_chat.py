@@ -19,11 +19,11 @@ import loginserver as ls  # noqa: E402
 check, wait_for = ts.check, ts.wait_for
 
 
-async def player(name):
-    """(gate connection, character id) of a player in the hall."""
+async def player(name, nation=1):
+    """(gate connection, character id) of a player in the hall. nation 1 is neither side."""
     code, key, _ = await ts.login(name)
     gate = await ts.gate_session(key)
-    r = await gate.request(13, 13006, ls.wstr(name) + bytes([1]) + struct.pack("<I", 1) + bytes(8))
+    r = await gate.request(13, 13006, ls.wstr(name) + bytes([1]) + struct.pack("<I", nation) + bytes(8))
     cid = struct.unpack_from("<I", r.body)[0]
     await gate.request(13, 13004, struct.pack("<I", cid))
     return gate, cid
@@ -74,7 +74,7 @@ async def scenario():
     check("no battle, no battle chat", await heard(ben, 0.4) is None and await heard(amy, 0.2) is None)
     await asyncio.sleep(ls.CHAT_EVERY + 0.1)
     cara, _ = await player("cara")
-    dan, dan_id = await player("dan")
+    dan, dan_id = await player("dan", ls.ALLIANCE)
     await battle(amy, amy_id)
     await battle(ben, ben_id)
     await battle(dan, dan_id)  # MW_MATCH_PLAYERS is 2: a new match
@@ -89,6 +89,12 @@ async def scenario():
     check("the battle chat box reaches the match", await heard(ben) == (21204, amy_id, "amy", "country"))
     check("and comes back to the sender", await heard(amy) == (21204, amy_id, "amy", "country"))
     check("but not another match", await heard(dan, 0.3) is None)
+    eve, eve_id = await player("eve", ls.FEDERAL)
+    await battle(eve, eve_id)  # joins dan's match: the other side
+    await asyncio.sleep(0.5)
+    say(eve, "federal only", 21004, struct.pack("<H", 5))
+    check("Country does not reach the other side", await heard(dan, 0.4) is None)
+    check("but comes back to the sender", await heard(eve) == (21204, eve_id, "eve", "federal only"))
     await asyncio.sleep(ls.CHAT_EVERY + 0.1)
     say(amy, "no such tab", 21004, struct.pack("<H", 9))
     check("an unknown channel is dropped", await heard(ben, 0.3) is None)
@@ -317,7 +323,9 @@ async def scenario():
     ts.admin("role amy gm")
     await asyncio.sleep(ls.CHAT_EVERY + 0.1)
     say(amy, "!who")
-    rows = [await heard(amy) for _ in range(4)] + [await heard(amy, 0.3)]
+    rows = [await heard(amy)]
+    while rows[-1]:
+        rows.append(await heard(amy, 0.3))
     check("a GM can use who", any(r and "ben" in r[3] for r in rows), str(rows))
     await asyncio.sleep(ls.CHAT_EVERY + 0.1)
     say(amy, "!role amy admin")

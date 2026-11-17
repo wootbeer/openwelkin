@@ -1651,7 +1651,7 @@ Shown from (21,21200) as [Whisper]. The client also has code that sends (21,2103
 u16 channel | str text
 ```
 
-Channel 5 is the battle box's Country tab, shown from (21,21204) as [Country]. Channel 2 is the hall's Division Channel (no divisions yet, so the emulator drops it). The battle box's Team and Division tabs stay greyed without a team. Team chat is (21,21063), not read yet. (21,21052) is in the client too, but (21,21211) did not show in the battle box.
+Channel 5 is the battle box's Country tab, shown from (21,21204) as [Country]. It reaches the sender's side in its match. Channel 2 is the hall's Division Channel (no divisions yet, so the emulator drops it). The battle box's Team and Division tabs stay greyed without a team. Team chat is (21,21063), not read yet. (21,21052) is in the client too, but (21,21211) did not show in the battle box.
 
 <a name="m-21-21522"></a>
 #### CHAT\_GetFriendListFormDB `(21,21522)`
