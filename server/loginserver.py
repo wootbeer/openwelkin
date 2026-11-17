@@ -1004,6 +1004,197 @@ STORE = Store()
 import atexit  # noqa: E402
 atexit.register(STORE.flush)
 
+# Divisions: the client's Team (GroupManager), named "Division" in Language/ENG.xml. A player makes one in the hall's
+# Division window, others of the same nation apply from its list and the leader agrees or refuses. "Troop" in the
+# client's texts is the Corp, a bigger group not made yet. Error codes are the client's (Language/ErrorInfoENG.xml).
+DIVISION_LIMIT = min(max(int(os.environ.get("MW_DIVISION_LIMIT", "30") or 30), 2), 200)  # members a new one may have
+DIVISION_NAME_RE = re.compile(r"[^\W]+(?: [^\W]+)*")  # letters, digits and _, single spaces between words
+DIVISION_NAME_LEN, DIVISION_SHORT_LEN = (4, 16), (2, 5)  # the client asks for at least 4 and 2
+D_APPLIED, D_ACCEPTED, D_REFUSED, D_MEMBER = 0, 1, 2, 3  # a character's row: an application in its states, or member
+ERR_DIVISION_TAKEN, ERR_NO_DIVISION, ERR_NO_APPLICATION = 15001, 15003, 15014
+ERR_DIVISION_FULL, ERR_NOT_YOUR_DIVISION, ERR_IN_DIVISION = 15020, 15027, 15061
+ERR_DIVISION_NATION, ERR_ALREADY_APPLIED, ERR_LEADER_STAYS = 15039, 15040, 15047
+ERR_DIVISION_NAME_LEN, ERR_DIVISION_SHORT_LEN, ERR_NOT_LEADER = 15056, 15057, 15060
+ERR_DIVISION_NAME, ERR_DIVISION_NAME_WORD, ERR_DIVISION_SHORT_WORD = 15065, 15068, 15069
+
+
+def division_name_error(name, short):
+    """0 when a division may take this name and short name (the "[tag]" before members' names), else an error code."""
+    for text, (lo, hi), length_error, word_error in ((name, DIVISION_NAME_LEN, ERR_DIVISION_NAME_LEN, ERR_DIVISION_NAME_WORD),
+                                                    (short, DIVISION_SHORT_LEN, ERR_DIVISION_SHORT_LEN, ERR_DIVISION_SHORT_WORD)):
+        if not lo <= len(text) <= hi:
+            return length_error
+        if (not DIVISION_NAME_RE.fullmatch(text) or unicodedata.normalize("NFKC", text) != text
+                or (not text.isascii() and any(c.isascii() and c.isalpha() for c in text))
+                or any(c in BLANK_LETTERS for c in text) or not any(c.isalnum() for c in text)):
+            return ERR_DIVISION_NAME
+        if any(w in RESERVED_NAMES for n in (text.casefold(), name_skeleton(text)) for w in re.split(r"[\d_ ]+", n)):
+            return word_error
+    return 0
+
+
+class Divisions:
+    """Every division and member or application row, in memory on the gate (they are few) and written to
+    characters.db at once when one changes (rarely). Uses STORE.lock."""
+
+    def __init__(self, con):
+        self.con = con
+        self.by_id, self.rows = db.load_divisions(con) if con is not None else ({}, {})
+        self.taken = {name_skeleton(d[k]) for d in self.by_id.values() for k in ("name", "short")}
+
+    def write(self, *changes):
+        """Save (fn, args...) changes in one transaction (call with the lock held)."""
+        if self.con is not None:
+            with self.con:
+                for fn, *args in changes:
+                    fn(self.con, *args)
+
+    def of(self, cid):
+        """The id of the character's division, 0 for none."""
+        row = self.rows.get(cid)
+        return row[0] if row and row[1] == D_MEMBER and row[0] in self.by_id else 0
+
+    def get(self, did):
+        return self.by_id.get(did)
+
+    def members(self, did):
+        """Member ids, the leader first, then by time joined."""
+        d = self.by_id.get(did)
+        ids = sorted((r[2], cid) for cid, r in self.rows.items() if r[0] == did and r[1] == D_MEMBER)
+        return sorted((cid for _, cid in ids), key=lambda cid: cid != d["leader"]) if d else []
+
+    def applicants(self, did):
+        """[(character id, time applied)] still waiting for the leader, oldest first."""
+        return sorted(((cid, r[2]) for cid, r in self.rows.items() if r[0] == did and r[1] == D_APPLIED),
+                      key=lambda x: x[1])
+
+    def create(self, cid, name, short, nation, now):
+        """(new division id, 0) or (None, error code). The creator becomes its leader and first member."""
+        with STORE.lock:
+            if self.of(cid):
+                return None, ERR_IN_DIVISION
+            error = division_name_error(name, short)
+            if error:
+                return None, error
+            if name_skeleton(name) in self.taken or name_skeleton(short) in self.taken:
+                return None, ERR_DIVISION_TAKEN
+            did = max(self.by_id, default=0) + 1
+            d = dict(id=did, name=name, short=short, leader=cid, nation=nation, created=int(now), money=0, points=0,
+                     limit=DIVISION_LIMIT)
+            self.by_id[did] = d
+            self.rows[cid] = [did, D_MEMBER, int(now)]
+            self.taken |= {name_skeleton(name), name_skeleton(short)}
+            self.write((db.write_division, d), (db.write_division_member, cid, self.rows[cid]))
+            return did, 0
+
+    def apply(self, cid, did, nation, now):
+        with STORE.lock:
+            d = self.by_id.get(did)
+            row = self.rows.get(cid)
+            if not d:
+                return ERR_NO_DIVISION
+            if self.of(cid):
+                return ERR_IN_DIVISION
+            if d["nation"] != nation:
+                return ERR_DIVISION_NATION
+            if row and row[1] in (D_APPLIED, D_ACCEPTED):
+                return ERR_ALREADY_APPLIED
+            self.rows[cid] = [did, D_APPLIED, int(now)]
+            self.write((db.write_division_member, cid, self.rows[cid]))
+            return 0
+
+    def application(self, cid):
+        """The character's [division id, state, time] if it has applied somewhere, else None."""
+        row = self.rows.get(cid)
+        return row if row and row[1] != D_MEMBER and row[0] in self.by_id else None
+
+    def withdraw(self, cid):
+        """Forget the character's application, whatever its state."""
+        with STORE.lock:
+            row = self.rows.get(cid)
+            if row and row[1] != D_MEMBER:
+                del self.rows[cid]
+                self.write((db.write_division_member, cid, None))
+
+    def join(self, cid, did, now):
+        """Make an applicant a member (call with the lock held). 0 or an error code."""
+        d = self.by_id[did]
+        if len(self.members(did)) >= d["limit"]:
+            return ERR_DIVISION_FULL
+        self.rows[cid] = [did, D_MEMBER, int(now)]
+        self.write((db.write_division_member, cid, self.rows[cid]))
+        return 0
+
+    def answer(self, leader, applicant, agree, now):
+        """The leader takes (joins at once) or refuses an application. 0 or an error code."""
+        with STORE.lock:
+            did = self.of(leader)
+            row = self.rows.get(applicant)
+            if not did or self.by_id[did]["leader"] != leader:
+                return ERR_NOT_LEADER
+            if not row or row[0] != did or row[1] != D_APPLIED:
+                return ERR_NO_APPLICATION
+            if agree:
+                return self.join(applicant, did, now)
+            row[1] = D_REFUSED
+            self.write((db.write_division_member, applicant, row))
+            return 0
+
+    def confirm(self, cid, now):
+        """An accepted applicant joins. (division id, 0) or (None, error code)."""
+        with STORE.lock:
+            row = self.application(cid)
+            if not row or row[1] != D_ACCEPTED:
+                return None, ERR_NO_APPLICATION
+            error = self.join(cid, row[0], now)
+            return (None, error) if error else (row[0], 0)
+
+    def leave(self, cid):
+        with STORE.lock:
+            did = self.of(cid)
+            if not did:
+                return ERR_NOT_YOUR_DIVISION
+            if self.by_id[did]["leader"] == cid:
+                return ERR_LEADER_STAYS  # the leader dismisses it instead
+            del self.rows[cid]
+            self.write((db.write_division_member, cid, None))
+            return 0
+
+    def kick(self, leader, cid):
+        with STORE.lock:
+            did = self.of(leader)
+            if not did or self.by_id[did]["leader"] != leader or cid == leader:
+                return ERR_NOT_LEADER
+            if self.of(cid) != did:
+                return ERR_NOT_YOUR_DIVISION
+            del self.rows[cid]
+            self.write((db.write_division_member, cid, None))
+            return 0
+
+    def dismiss(self, leader):
+        """(the members it had, 0) or (None, error code). Applications to it go too."""
+        with STORE.lock:
+            did = self.of(leader)
+            d = self.by_id.get(did)
+            if not d or d["leader"] != leader:
+                return None, ERR_NOT_LEADER
+            members = self.members(did)
+            for cid in [cid for cid, r in self.rows.items() if r[0] == did]:
+                del self.rows[cid]
+            del self.by_id[did]
+            self.taken -= {name_skeleton(d["name"]), name_skeleton(d["short"])}
+            self.write((db.delete_division, did))
+            return members, 0
+
+    def listed(self, nation):
+        """Divisions of a nation, the biggest first."""
+        with STORE.lock:
+            found = [d for d in self.by_id.values() if d["nation"] == nation]
+            return sorted(found, key=lambda d: (-len(self.members(d["id"])), d["id"]))
+
+
+DIVISIONS = Divisions(STORE.con)
+
 
 def valid_name(name):
     """A character name a player may take. Besides NAME_RE: no other forms of a plain character (fullwidth letters,
@@ -1280,7 +1471,7 @@ class Session:
         self.rbuf = b""
         self.account = None
         self.gm_level = 0  # GM_LEVEL of the account's role when it logged in; the client opens its / commands with it
-        self.character, self.next_chat, self.next_contact = None, 0.0, 0.0
+        self.character, self.next_chat, self.next_contact, self.next_division = None, 0.0, 0.0, 0.0
         self.match = None  # (game server, match id) while in a battle: only the game server knows who shares a match
         self.send_lock = threading.Lock()
         self.outbox = collections.deque(maxlen=CHAT_QUEUE)  # lines from other players' threads wait here
@@ -1440,6 +1631,8 @@ class Session:
         # CNewHallUI. Body = character descriptor (deserializer Game.dll 0x1031a010):
         #   u32 id | u8 nation (character +0x30: the hall's emblem and the My Ranking colour) | u32 | u32 | u8 GM level
         #   (101..110 sets the GM byte, local character +0xb8, which opens the client's own GM / commands) | str name | str | u8 rank level (character +0x44, "Lv." in the hall) | u8 | u32
+        #   The second u32 is the division id (character +0x40, 0 = none): the hall's Division button opens the
+        #   division's window (dialog 0x7c) when it is set, else the list to join or make one (0x79)
         #   | str | str | str | u32 n | n x (u32 | u16 | u8 | u8)
         debug(f"{self.addr} character online request body={msg.body.hex()}")
         chars = STORE.characters(self.account)
@@ -1451,7 +1644,7 @@ class Session:
         if not self.character:
             threading.Thread(target=self.outbox_loop, daemon=True).start()
         self.character = c
-        body = (struct.pack("<IBIIB", c["id"], nation_of(c["id"]) or c["state"], 0, 0, self.gm_level) + wstr(c["name"]) + wstr("")
+        body = (struct.pack("<IBIIB", c["id"], nation_of(c["id"]) or c["state"], 0, DIVISIONS.of(c["id"]), self.gm_level) + wstr(c["name"]) + wstr("")
                 + struct.pack("<BBI", rank_for(STORE.stats(c["id"]).get("honor", 0)), c["gender"], c["model"])
                 + wstr("") + wstr("") + wstr("")
                 + struct.pack("<I", 0))
@@ -2242,6 +2435,239 @@ class Session:
         log(f"{self.addr} set in use cid={cid} item={item} slot={slot} -> {'ok' if ok else 'refused'}")
         self.reply(msg, b"", result=0 if ok else 24005)  # "This activated item does not exist."
 
+    # Divisions (the client's Team), read from Game.dll 2026-11-17, not tried in game yet. Who acts is always this
+    # session's character: the ids at the start of requests are not trusted. Layouts (requests -> replies):
+    #   (15,15003) create: u32 character | str name | str short name | str -> u32 division id
+    #   (15,15023) info: u32 division -> str name | u32 id | u8 level | u8 | u8 | str | str created | u32 leader id
+    #     | str leader name | u32 members | u32 online | str | str short name | u32 record | u32 member limit
+    #     | u32 crystal | u32 | u32 | u32  (UpdateTeamInfoObserver 0x103b9580, CTeamListUI::UpdateMyTeamInfo)
+    #   (13,13031) members: u32 division | u32 first | u32 count -> u32 total | u32 n | n x (u32 id | str name
+    #     | u8 rank level | str joined | u8 online)
+    #   (15,15021) list: u32 | u32 first | u32 count -> u32 total | u32 n | n x (u32 id | str name | str short
+    #     | u32 leader id | str leader name | u32 members | u32 limit | u32 record)
+    #   (15,15011) apply: u32 character | u32 division | u8 -> u32 division | str name
+    #   (15,15012) my application: u32 character -> u32 n | n x (u32 division | u32 character | str division name
+    #     | 5 x str | u8 state | u8). State 0 waiting, 1 taken (the client then sends 15016), 2 refused (it sends 15014)
+    #   (15,15013) applications to my division: u32 division | u32 first | u32 count -> u32 total | u32 n | n x
+    #     (u32 character | u32 division | str name | str | str applied | u8 rank level)
+    #   (15,15014) withdraw / (15,15016) confirm: u32 character | u32 -> empty / u32 division id
+    #   (15,15015) answer: u32 character | u32 | u32 | u8 1 agree, 0 refuse -> empty
+    #   (15,15018) leave: u32 character -> empty (the client sets its division to 0 itself)
+    #   (15,15005) dismiss: u32 character | u32 division -> empty; (15,15076) kick: u32 | u32 | u32 member -> empty
+    #   (15,15062) online / (15,15066) waiting applications: u32 division -> u32 count
+    # (21,21074) TeamChange, pushed: u32 character | u32 | u32 division id (0: back to the "no division" window).
+    def division_me(self, msg, write=False, size=0):
+        """This session's character id, or None (answered with an error) when there is none, the request is shorter
+        than `size` bytes, or, for a change, the player is going too fast."""
+        if not self.character or len(msg.body) < size:
+            self.reply(msg, result=ERR_UNKNOWN if not self.character else ERR_PROTOCOL)
+            return None
+        if write:
+            now = time.time()
+            if now < self.next_division:
+                self.reply(msg, result=ERR_UNKNOWN)
+                return None
+            self.next_division = now + CHAT_EVERY
+        return self.character["id"]
+
+    @staticmethod
+    def u32s(msg, n, off=0):
+        return struct.unpack_from(f"<{n}I", msg.body, off) if len(msg.body) >= off + 4 * n else None
+
+    @staticmethod
+    def online_ids():
+        with ONLINE_LOCK:
+            return {s.character["id"] for s in ONLINE.values() if s.character}
+
+    @staticmethod
+    def push_division(cid, did):
+        """Tell an online character its division changed (TeamChange)."""
+        with ONLINE_LOCK:
+            s = next((s for s in ONLINE.values() if s.character and s.character["id"] == cid), None)
+        if s:
+            s.outbox.append(Message(21, 21074, flags=MSG_MULTI1, multi=0, body=struct.pack("<III", cid, 0, did)))
+            s.outbox_ready.set()
+
+    def on_division_info(self, msg):
+        ids = self.u32s(msg, 1)
+        d = DIVISIONS.get(ids[0]) if ids else None
+        if not d:
+            return self.reply(msg, result=ERR_NO_DIVISION)
+        members = DIVISIONS.members(d["id"])
+        leader = STORE.by_id(d["leader"]) or {}
+        created = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(d["created"]))
+        body = (wstr(d["name"]) + struct.pack("<IBBB", d["id"], 1, 0, 0) + wstr("") + wstr(created)
+                + struct.pack("<I", d["leader"]) + wstr(leader.get("name", ""))
+                + struct.pack("<II", len(members), len(self.online_ids() & set(members))) + wstr("") + wstr(d["short"])
+                + struct.pack("<IIIIII", d["points"], d["limit"], d["money"], 0, 0, 0))
+        self.reply(msg, body)
+
+    def page(self, msg, rows, first, count, row):
+        """Reply u32 total | u32 n | n rows, rows[first:first + count] made by row()."""
+        part = rows[first:first + min(count, 200)]
+        self.reply(msg, struct.pack("<II", len(rows), len(part)) + b"".join(row(x) for x in part))
+
+    def on_division_members(self, msg):
+        me = self.division_me(msg)
+        ids = self.u32s(msg, 3)
+        if me is None or not ids:
+            return
+        if ids[0] != DIVISIONS.of(me):  # only your own division's members
+            return self.reply(msg, result=ERR_NOT_YOUR_DIVISION)
+        online = self.online_ids()
+
+        def row(cid):
+            c = STORE.by_id(cid) or {}
+            since = (DIVISIONS.rows.get(cid) or [0, 0, 0])[2]
+            return (struct.pack("<I", cid) + wstr(c.get("name", "")) + struct.pack("<B", rank_for(STORE.stats(cid).get("honor", 0)))
+                    + wstr(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(since))) + struct.pack("<B", cid in online))
+        self.page(msg, DIVISIONS.members(ids[0]), ids[1], ids[2], row)
+
+    def on_create_division(self, msg):
+        me = self.division_me(msg, write=True)
+        if me is None:
+            return
+        try:
+            name, off = read_wstr(msg.body, 4)
+            short, _ = read_wstr(msg.body, off)
+        except ValueError:
+            return self.reply(msg, result=ERR_DIVISION_NAME)
+        did, error = DIVISIONS.create(me, name, short, nation_of(me), time.time())
+        if error:
+            return self.reply(msg, result=error)
+        # an application to another division was replaced by the new member row
+        log(f"{self.account}: {self.character['name']} made division {did} {name!r} [{short}]")
+        self.reply(msg, struct.pack("<I", did))
+
+    def on_division_list(self, msg):
+        me = self.division_me(msg)
+        ids = self.u32s(msg, 3)
+        if me is None or not ids:
+            return
+
+        def row(d):
+            leader = STORE.by_id(d["leader"]) or {}
+            return (struct.pack("<I", d["id"]) + wstr(d["name"]) + wstr(d["short"]) + struct.pack("<I", d["leader"])
+                    + wstr(leader.get("name", "")) + struct.pack("<III", len(DIVISIONS.members(d["id"])), d["limit"], d["points"]))
+        self.page(msg, DIVISIONS.listed(nation_of(me)), ids[1], ids[2], row)
+
+    def on_apply_division(self, msg):
+        me = self.division_me(msg, write=True)
+        ids = self.u32s(msg, 2)
+        if me is None or not ids:
+            return
+        error = DIVISIONS.apply(me, ids[1], nation_of(me), time.time())
+        if error:
+            return self.reply(msg, result=error)
+        self.reply(msg, struct.pack("<I", ids[1]) + wstr(DIVISIONS.get(ids[1])["name"]))
+
+    def on_my_division_application(self, msg):
+        me = self.division_me(msg)
+        if me is None:
+            return
+        row = DIVISIONS.application(me)
+        if not row:
+            return self.reply(msg, struct.pack("<I", 0))
+        state = {D_APPLIED: 0, D_ACCEPTED: 1, D_REFUSED: 2}[row[1]]
+        self.reply(msg, struct.pack("<III", 1, row[0], me) + wstr(DIVISIONS.get(row[0])["name"]) + wstr("") * 5
+                   + struct.pack("<BB", state, 0))
+
+    def on_division_applicants(self, msg):
+        me = self.division_me(msg)
+        ids = self.u32s(msg, 3)
+        if me is None or not ids:
+            return
+        did = DIVISIONS.of(me)
+        if not did or ids[0] != did:
+            return self.reply(msg, result=ERR_NOT_YOUR_DIVISION)
+
+        def row(x):
+            cid, since = x
+            return (struct.pack("<II", cid, did) + wstr((STORE.by_id(cid) or {}).get("name", "")) + wstr("")
+                    + wstr(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(since)))
+                    + struct.pack("<B", rank_for(STORE.stats(cid).get("honor", 0))))
+        self.page(msg, DIVISIONS.applicants(did), ids[1], ids[2], row)
+
+    def on_withdraw_application(self, msg):
+        me = self.division_me(msg, write=True, size=4)
+        if me is None:
+            return
+        DIVISIONS.withdraw(me)
+        self.reply(msg, b"")
+
+    def on_answer_application(self, msg):
+        me = self.division_me(msg, write=True)
+        ids = self.u32s(msg, 3)
+        if me is None:
+            return
+        if not ids or len(msg.body) < 13:
+            return self.reply(msg, result=ERR_PROTOCOL)
+        agree = msg.body[12] == 1
+        did = DIVISIONS.of(me)
+        # which of the two ids is the applicant: the one with an application to my division
+        applicant = next((i for i in ids[1:] if (DIVISIONS.application(i) or [None])[0] == did), ids[2])
+        error = DIVISIONS.answer(me, applicant, agree, time.time())
+        if error:
+            return self.reply(msg, result=error)
+        if agree:
+            self.push_division(applicant, did)
+        self.reply(msg, b"")
+
+    def on_confirm_application(self, msg):
+        me = self.division_me(msg, write=True, size=4)
+        if me is None:
+            return
+        did, error = DIVISIONS.confirm(me, time.time())
+        self.reply(msg, result=error) if error else self.reply(msg, struct.pack("<I", did))
+
+    def on_leave_division(self, msg):
+        me = self.division_me(msg, write=True, size=4)
+        if me is None:
+            return
+        error = DIVISIONS.leave(me)
+        self.reply(msg, result=error) if error else self.reply(msg, b"")
+
+    def on_dismiss_division(self, msg):
+        me = self.division_me(msg, write=True, size=8)
+        if me is None:
+            return
+        if self.u32s(msg, 1, 4)[0] != DIVISIONS.of(me):  # the request names the division: it must be yours
+            return self.reply(msg, result=ERR_NOT_LEADER)
+        name = (DIVISIONS.get(DIVISIONS.of(me)) or {}).get("name")
+        members, error = DIVISIONS.dismiss(me)
+        if error:
+            return self.reply(msg, result=error)
+        log(f"{self.account}: {self.character['name']} dismissed division {name!r}")
+        self.reply(msg, b"")
+        for cid in members:  # the client keeps its division id after a dismiss: every member hears it is gone
+            self.push_division(cid, 0)
+
+    def on_kick_division(self, msg):
+        me = self.division_me(msg, write=True)
+        ids = self.u32s(msg, 3)
+        if me is None or not ids:
+            return
+        error = DIVISIONS.kick(me, ids[2])
+        if error:
+            return self.reply(msg, result=error)
+        self.reply(msg, b"")
+        self.push_division(ids[2], 0)
+
+    def on_division_online(self, msg):
+        ids = self.u32s(msg, 1)
+        if not ids:
+            return
+        self.reply(msg, struct.pack("<I", len(self.online_ids() & set(DIVISIONS.members(ids[0])))))
+
+    def on_division_waiting(self, msg):
+        me = self.division_me(msg)
+        ids = self.u32s(msg, 1)
+        if me is None or not ids:
+            return
+        d = DIVISIONS.get(ids[0])
+        mine = d and d["leader"] == me
+        self.reply(msg, struct.pack("<I", len(DIVISIONS.applicants(ids[0])) if mine else 0))
+
     def on_login(self, msg):
         # body: u32 version | str8 account | str8 password | u32 region(10102) | u32 1 | str8 machine hash
         b = msg.body
@@ -2496,6 +2922,21 @@ HANDLERS = {
     (14, 14045): Session.on_reset_talents,       # CGS_ResetCharacterTalent
     (14, 14050): Session.on_all_contribution,    # CGS_GetCharacterAllBattleFrontContribution
     (14, 14051): Session.on_front_contribution,  # CGS_GetCharacterbattleFrontContributionByID
+    (15, 15003): Session.on_create_division,     # AddTeam
+    (15, 15005): Session.on_dismiss_division,    # DismissTeam
+    (15, 15011): Session.on_apply_division,      # SendJoinTeamRequest
+    (15, 15012): Session.on_my_division_application,  # MyJoinTeamApply
+    (15, 15013): Session.on_division_applicants,  # GetMyManageJoinTeamApply
+    (15, 15014): Session.on_withdraw_application,  # RemoveMyJoinTeamApply
+    (15, 15015): Session.on_answer_application,  # AgreeOrRefuseJoinTeamApply
+    (15, 15016): Session.on_confirm_application,  # ConfirmMyJoinTeamApply
+    (15, 15018): Session.on_leave_division,      # CORPS_QUITTEAM
+    (15, 15021): Session.on_division_list,       # UpdateTeamList
+    (15, 15023): Session.on_division_info,       # UpdateTeamInfo
+    (15, 15062): Session.on_division_online,     # UpdateTeamOnline
+    (15, 15066): Session.on_division_waiting,    # CheckHasUnhandledApply
+    (15, 15076): Session.on_kick_division,       # KickOffTeamMember
+    (13, 13031): Session.on_division_members,    # GetCharacterByTeamID
     (15, 15098): Session.on_rank_list,           # CS_CharacterExpRank (Ranking, Honor tab)
     (15, 15099): Session.on_my_rank,             # CS_OneCharacterExpRank
     (15, 15100): Session.on_rank_list,           # CS_CharacterKillRank (Shooting tab)

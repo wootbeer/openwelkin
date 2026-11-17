@@ -245,6 +245,7 @@ python -I server/tools/fuzz_game.py
 python server/tools/test_login.py
 python server/tools/test_match.py
 python server/tools/test_chat.py
+python server/tools/test_divisions.py
 python server/tools/test_db.py
 python server/tools/test_split.py
 python server/tools/test_failover.py
@@ -265,6 +266,15 @@ a line every half second, and control characters are removed. The sender's name 
 
 Each character has a friend list and a block list of up to 100 names, kept in `characters.db`. Lines from a blocked player
 do not reach you, and to them you look offline in private messages.
+
+## Divisions
+
+Players can make a division (the client's Team) from the hall's Division button: a name of 4 to 16 letters, digits,
+`_` or single spaces, and a short name of 2 to 5. Names are checked like character names, so none looks like a
+taken one or like staff. Players of the same nation apply from the list, and the leader takes or refuses them; a
+taken player joins at once. The leader can kick members or dismiss the division, and members can quit. A new
+division holds `MW_DIVISION_LIMIT` members (default 30). Divisions are kept in `characters.db`. Not tried with the
+real client yet; division chat, invites, titles and the tag before names in battle are not done.
 
 ## Load test
 

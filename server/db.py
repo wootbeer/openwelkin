@@ -47,6 +47,15 @@ CREATE TABLE IF NOT EXISTS event_log (
     kind INTEGER NOT NULL, text TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS event_log_character ON event_log (character_id, id);
 CREATE TABLE IF NOT EXISTS reports (boot TEXT PRIMARY KEY, seq INTEGER NOT NULL, at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS divisions (
+    id INTEGER PRIMARY KEY, name TEXT NOT NULL, name_key TEXT NOT NULL UNIQUE, short TEXT NOT NULL,
+    short_key TEXT NOT NULL UNIQUE, leader INTEGER NOT NULL REFERENCES characters (id), nation INTEGER NOT NULL,
+    created INTEGER NOT NULL, money INTEGER NOT NULL, points INTEGER NOT NULL, member_limit INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS division_members (
+    character_id INTEGER PRIMARY KEY REFERENCES characters (id),
+    division_id INTEGER NOT NULL REFERENCES divisions (id) ON DELETE CASCADE, state INTEGER NOT NULL,
+    since INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS division_members_division ON division_members (division_id);
 """
 
 
@@ -244,6 +253,41 @@ def ranking(con, stat, default=0, counter=None, current=None, everyone=False):
             "LEFT JOIN stats h ON h.character_id = c.id AND h.stat = 'honor' "
             "WHERE s.stat = ? AND s.value > 0", (stat,))
     return [(cid, name, honor or 0, value) for cid, name, honor, value in rows]
+
+
+DIVISION_FIELDS = ("id", "name", "short", "leader", "nation", "created", "money", "points", "limit")
+
+
+def load_divisions(con):
+    """({division id: division}, {character id: [division id, state, since]}): all of them, they are few."""
+    divisions = {row[0]: dict(zip(DIVISION_FIELDS, row)) for row in con.execute(
+        "SELECT id, name, short, leader, nation, created, money, points, member_limit FROM divisions")}
+    members = {cid: [did, state, since] for cid, did, state, since in con.execute("SELECT * FROM division_members")}
+    return divisions, members
+
+
+def write_division(con, d):
+    """Add or update a division (call inside a transaction)."""
+    con.execute("INSERT INTO divisions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET "
+                "leader = excluded.leader, money = excluded.money, points = excluded.points, "
+                "member_limit = excluded.member_limit",
+                (d["id"], d["name"], d["name"].casefold(), d["short"], d["short"].casefold(), d["leader"], d["nation"],
+                 d["created"], d["money"], d["points"], d["limit"]))
+
+
+def delete_division(con, did):
+    """Remove a division and every member and application row (call inside a transaction)."""
+    con.execute("DELETE FROM division_members WHERE division_id = ?", (did,))
+    con.execute("DELETE FROM divisions WHERE id = ?", (did,))
+
+
+def write_division_member(con, cid, row):
+    """row = [division id, state, since], or None to remove the character's row (call inside a transaction)."""
+    if row is None:
+        con.execute("DELETE FROM division_members WHERE character_id = ?", (cid,))
+    else:
+        con.execute("INSERT INTO division_members VALUES (?, ?, ?, ?) ON CONFLICT (character_id) DO UPDATE SET "
+                    "division_id = excluded.division_id, state = excluded.state, since = excluded.since", (cid, *row))
 
 
 def open_characters(path):

@@ -107,8 +107,23 @@ reply layout, and answer with real data.
       On by default (MW_HEAVY_ROBOTS=0 turns them off). Not tried: 1402, damage done by heavy weapons
 
 ## Corps / teams
+- [x] Divisions (the client's Team, "Division" in English; "Troop" is the Corp), 2026-11-17, offline: read from
+      Game.dll and made on the gate, kept in characters.db (divisions, division_members). Make one (15003), info
+      (15023), members (13,13031), list of your nation's (15021), apply (15011), my application (15012), the leader's
+      waiting list (15013) and agree / refuse (15015), withdraw (15014), confirm (15016), quit (15018), dismiss
+      (15005), kick (15076), online count (15062), waiting count (15066), TeamChange push (21,21074). CharacterOnline's
+      second u32 is the division id (0 = none): the hall's Division button opens the division window (0x7c) or the
+      join / make window (0x79). Names checked like character names (4-16, short 2-5, no look-alikes, no staff
+      words); the client's own error codes 15001..15069. tools/test_divisions.py. Not tried in game: do the hall
+      windows open and show the right lines, is members/limit the right way round, does an agreed applicant see
+      the division window at once
+- [ ] Division tag before nameplate names in battle: base info (19,30040) still sends team -1; the game server needs
+      the division id (battle ticket), and the client then asks (15,15023) for the short name. Ranking rows too
+- [ ] Division invites (15079 send, 15080 fetch, 15083 answer, 15085 / 15086 pushes), titles (13,13015 / 13017 /
+      13018), donating Crystal (15092), member limit upgrades (15093 / 15094), donation stats (15096), flags (15070 /
+      15074). Requests read 2026-11-17: 15079 u32 | u32 | u8, 15080 u32, 15083 u32 | u32 | u8, 15092 u32 | u32,
+      15094 u32 | u32, 15096 u32 | u32, (13,13015) u32 | u32 | u16 | u8 | u32, (13,13017) u32 | u32, (13,13018) u8 | u32
 - [ ] (15,15022) UpdateCorpInfo
-- [ ] (15,15023) UpdateTeamInfo
 - [ ] (15,15074) UpdateAllTeamFlag
 - [ ] (15,15093) GetAllUpGradeTeamMemberLimitPrice
 
@@ -366,7 +381,9 @@ reply layout, and answer with real data.
       client does not show its own line. Country reaches the player's side in its match: game servers report joins and leaves to the
       gate, because shown lines go out on the gate. (21,21211) did not show in the battle box
 - [ ] Team and Division chat. Real client 2026-11-03: the hall's Division Channel sends (21,21004) u16 2 | str (dropped:
-      there are no divisions yet). In battle the Team and Division tabs are greyed and do not open without a team or
+      divisions exist since 2026-11-17, but which pushed chat type shows in the Division tab is not known. The
+      client's chat receiver maps 21200 -> channel 1, 21201 -> 2, 21202 -> 4, 21203 -> 5, 21204 -> 6 (Country),
+      21211 -> 3, 21212 -> 11, 21514 -> 8; try 21201..21203 in game). In battle the Team and Division tabs are greyed and do not open without a team or
       division, so their channel numbers wait for teams. Whispers from the battle box are not tried. Enter in battle needs DirectInput: tools/vinput.py enter:0.2 sends a line
 - [ ] The client's own / commands, 2026-11-05 offline (ChatManager::SendMessage, 0x10386600). A chat line starting
       with / is a command. GM level 101..110 in CharacterOnline sets the GM byte (+0xb8); the emulator sends 101 for

@@ -65,7 +65,15 @@
   - [CGS\_CharacterQuickSuite](#m-14-14004) `(14,14004)`
   - [CGS\_SaveCharacterQuickSuite](#m-14-14005) `(14,14005)`
   - [GetCharacterHelpLog](#m-14-14059) `(14,14059)`
+  - [AddTeam (make a division)](#m-15-15003) `(15,15003)`
   - [UpdateTeamInfo](#m-15-15023) `(15,15023)`
+  - [GetCharacterByTeamID (members)](#m-13-13031) `(13,13031)`
+  - [UpdateTeamList](#m-15-15021) `(15,15021)`
+  - [SendJoinTeamRequest (apply)](#m-15-15011) `(15,15011)`
+  - [MyJoinTeamApply](#m-15-15012) `(15,15012)`
+  - [GetMyManageJoinTeamApply](#m-15-15013) `(15,15013)`
+  - [Quit division](#m-15-15018) `(15,15018)`
+  - [TeamChange](#m-21-21074) `(21,21074)`
   - [Task\_GetHoldTask](#m-20-20116) `(20,20116)`
   - [CS\_GetTaskServerAfficheList](#m-21-21048) `(21,21048)`
   - [GS\_RequestSuiteInSelling](#m-24-24028) `(24,24028)`
@@ -908,17 +916,107 @@ str log | u8 flag
 
 Help events already seen, each id followed by `|`: `10100|10101|`. A log starting with `|` or holding `||` hangs the client. With 10100 missing and rank level (+0x44) 1, the client opens the tutorial video. Nothing in Game.dll sends the save request (14,14060), so the emulator answers with an empty log.
 
+<a name="m-15-15003"></a>
+#### AddTeam (make a division) `(15,15003)`
+
+*S→C reply · partial*
+
+```text
+u32 division id
+```
+
+Request: `u32 character id | str name | str short name | str`. "Team" is "Division" in the English client; "Troop" is the Corp. The client asks for a name of at least 4 letters and a short name of at least 2, with no Chinese letters. On result 0 it sets its division (character +0x40), closes the window and asks for the members (13,13031) and the info (15,15023); any other result shows that error text (15001 name taken, 15056 name length, 15061 already in a division ...). The emulator also checks names like character names: letters, digits, \_ and single spaces, 4 to 16 long (short name 2 to 5), no look-alikes of a taken name, no staff words.
+
 <a name="m-15-15023"></a>
 #### UpdateTeamInfo `(15,15023)`
 
 *S→C reply · partial*
 
 ```text
-str name | u32 | u8 | u8 | u8 | str | str | u32 | str | u32 | u32 | str
-| str | u32 | u32 | u32 | u32 | u32 | u32
+str name | u32 id | u8 level | u8 | u8 | str | str created | u32 leader id
+| str leader name | u32 members | u32 online | str | str short name | u32 record
+| u32 member limit | u32 crystal | u32 | u32 | u32
 ```
 
-Request: `u32 team id`. At least 49 bytes. Fills the team name cache, and the player's own team when the id is theirs. Asked for any nonzero team id in ranking rows, so those send 0.
+Request: `u32 division id`. Fills the name cache (the "[short name]" before nameplate names) and, for the player's own division, the window's lines: full name, short name, "Create Time" (the date part of `YYYY-MM-DD hh:mm:ss`), Commanding Officer, Level, Record, Account, Online Member, "Division Total Member: members/limit". The leader id probably picks Dismiss or Quit. Asked for any nonzero team id in ranking rows, so those send 0.
+
+<a name="m-13-13031"></a>
+#### GetCharacterByTeamID (members) `(13,13031)`
+
+*S→C reply · partial*
+
+```text
+u32 total | u32 n | n x ( u32 character id | str name | u8 rank level | str joined | u8 online )
+```
+
+Request: `u32 division id | u32 first | u32 count` (the client asks 0, 100000). The member window shows Rank from the level; job, last online time and donations come from other messages not made yet. The emulator answers only for your own division.
+
+<a name="m-15-15021"></a>
+#### UpdateTeamList `(15,15021)`
+
+*S→C reply · partial*
+
+```text
+u32 total | u32 n | n x ( u32 id | str name | str short name | u32 | str leader name
+| u32 members | u32 limit | u32 record )
+```
+
+Request: `u32 | u32 first | u32 count`. The list to join: each row shows name, short name, leader, "members / limit" and a number (record). The emulator lists the divisions of your own nation, biggest first.
+
+<a name="m-15-15011"></a>
+#### SendJoinTeamRequest (apply) `(15,15011)`
+
+*S→C reply · partial*
+
+```text
+u32 division id | str division name
+```
+
+Request: `u32 character id | u32 division id | u8`. Errors: 15039 other nation, 15040 already applied, 15061 already in a division.
+
+<a name="m-15-15012"></a>
+#### MyJoinTeamApply `(15,15012)`
+
+*S→C reply · partial*
+
+```text
+u32 n | n x ( u32 division id | u32 character id | str division name | 5 x str | u8 state | u8 )
+```
+
+Request: `u32 character id`, sent by the hall's Division button when you have no division. State 0 shows that the application waits; 1 (taken) makes the client send (15,15016) ConfirmMyJoinTeamApply, whose reply `u32 division id` sets the division; 2 (refused) makes it send (15,15014) to remove it and show TeamListUI\_JoinTeamRefuse. Both requests are `u32 character id | u32 0`. The emulator joins a taken applicant at once instead (see TeamChange), so state 1 only shows up if that was missed.
+
+<a name="m-15-15013"></a>
+#### GetMyManageJoinTeamApply `(15,15013)`
+
+*S→C reply · partial*
+
+```text
+u32 total | u32 n | n x ( u32 character id | u32 division id | str name | str | str applied | u8 rank level )
+```
+
+Request: `u32 division id | u32 first | u32 count`. Applications waiting for the leader. Answer with (15,15015) `u32 character id | u32 | u32 applicant | u8 1 agree, 0 refuse`, empty reply. (15,15066) `u32 division id` asks how many wait (reply `u32`, "Wait to join").
+
+<a name="m-15-15018"></a>
+#### Quit division `(15,15018)`
+
+*S→C reply · partial*
+
+```text
+(empty)
+```
+
+Request: `u32 character id`. On result 0 the client sets its division to 0 itself. The leader can not quit (15047): it dismisses with (15,15005) `u32 character id | u32 division id`, after which the client does not clear its division; the emulator sends TeamChange 0. Kick: (15,15076) `u32 | u32 | u32 member id`, empty reply; the client then removes the member from its list and asks for the list again. Online members: (15,15062) `u32 division id`, reply `u32 count`.
+
+<a name="m-21-21074"></a>
+#### TeamChange `(21,21074)`
+
+*S→C · partial*
+
+```text
+u32 character id | u32 | u32 division id
+```
+
+Sets the character's division (+0x40). With 0 and the division window open, the client closes it and opens the "no division" window (0x79). The emulator sends it when an application is taken, a member is kicked, and to every member when the division is dismissed.
 
 <a name="m-20-20116"></a>
 #### Task\_GetHoldTask `(20,20116)`
@@ -1651,7 +1749,7 @@ Shown from (21,21200) as [Whisper]. The client also has code that sends (21,2103
 u16 channel | str text
 ```
 
-Channel 5 is the battle box's Country tab, shown from (21,21204) as [Country]. It reaches the sender's side in its match. Channel 2 is the hall's Division Channel (no divisions yet, so the emulator drops it). The battle box's Team and Division tabs stay greyed without a team. Team chat is (21,21063), not read yet. (21,21052) is in the client too, but (21,21211) did not show in the battle box.
+Channel 5 is the battle box's Country tab, shown from (21,21204) as [Country]. It reaches the sender's side in its match. Channel 2 is the hall's Division Channel (dropped: which chat type shows in the Division tab is not known yet). The battle box's Team and Division tabs stay greyed without a team. Team chat is (21,21063), not read yet. (21,21052) is in the client too, but (21,21211) did not show in the battle box.
 
 <a name="m-21-21522"></a>
 #### CHAT\_GetFriendListFormDB `(21,21522)`
