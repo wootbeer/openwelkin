@@ -216,6 +216,16 @@ async def scenario():
         except asyncio.TimeoutError:
             return None
 
+    async def chat_reply(gate):
+        try:
+            while True:
+                m = await asyncio.wait_for(gate.recv(), 3)
+                if m.type == 21200:
+                    name, off = ls.read_wstr(m.body, 4)
+                    return ls.read_wstr(m.body, off)[0]
+        except asyncio.TimeoutError:
+            return None
+
     await asyncio.sleep(2.5)
     p3 = Player()
     await p3.join("dave", res)
@@ -226,6 +236,10 @@ async def scenario():
     p3.gate.send(ls.Message(21, 21052, body=ls.wstr("hello match")))
     check("battle chat reaches a player on the same game server", await chat(same.gate, 3) is not None)
     check("but not the same match id on another game server", await chat(other.gate, 0.5) is None)
+    await asyncio.sleep(ls.CHAT_EVERY + 0.1)
+    p3.gate.send(ls.Message(21, 21052, body=ls.wstr("!order go")))  # neither side: the game server says no
+    told = await chat_reply(p3.gate)
+    check("!order reaches the player's game server", told and "commander" in told, str(told))
     p3.leave()
     await asyncio.sleep(0.5)
 

@@ -2418,12 +2418,30 @@ class Session:
         self.contact_remove(msg, "blocked")
 
     def gm_chat(self, line):
+        word, _, rest = line.partition(" ")
+        if word.lower() == "order":  # any player: only a side's commander gets through (give_order)
+            return self.order(rest)
         if ROLE != "gate":
             self.gm_reply(gm_command(self.account, line))
         elif UPLINK:
             UPLINK.send("gm", account=self.account, line=line)
         else:
             self.gm_reply("the login server does not answer")
+
+    def order(self, text):
+        muted = STORE.muted_until(self.character["id"])
+        where = self.match
+        if muted:
+            reply = f"You can not chat {fmt_until(muted)}"
+        elif not where:
+            reply = "You are not in a battle"
+        elif where[0] == "here":
+            reply = give_order(self.account, text)
+        else:
+            link = next((g for g in list(LINKS) if id(g) == where[0]), None)
+            reply = ask(link, "order", "The battle server does not answer", account=self.account, text=text)                 if link else "You are not in a battle"
+        if reply:
+            self.gm_reply(reply)
 
     def gm_reply(self, text):
         for row in text.splitlines()[:10]:
@@ -3632,6 +3650,8 @@ def on_gate_request(link, msg):
         leave_game_local(msg["account"], msg["reason"])
     elif kind == "goto":
         return teleport_local(msg["account"], tuple(msg["pos"]))
+    elif kind == "order":
+        return give_order(str(msg["account"]), str(msg["text"]))
     elif kind == "ipkick":
         ip_kick_game(msg["net"])
     elif kind == "bans":
@@ -3974,6 +3994,7 @@ class Match:
         self.over = False  # the round ended: the Record window is showing
         self.kill_mode = KILL_MODE and bool(self.bf.get("rounds"))
         self.side_kills = dict.fromkeys(NATIONS, 0)
+        self.orders = {}  # side -> its commander's last order (give_order)
         self.round_ends = 0.0
         self.targets = {}
         self.trails = {}  # robot id -> deque of (time, position), the last TRAIL_SECONDS of its moves
@@ -4332,6 +4353,11 @@ def join_match(server, peer):
             send_game_event(server, peer, 19, 52001, side_score_body(side, m.side_kills[side]))
         send_game_event(server, peer, 19, 49000, countdown_body(m))
     m.peers.append(peer)
+    side = nation_of(peer.cid)
+    if side:  # who commands the player's side (the player, if first there), and its last order
+        send_game_event(server, peer, 19, 30020, commander_body(side_commander(m, side)))
+        if side in m.orders:
+            send_game_event(server, peer, 19, 30030, wstr(m.orders[side]))
     tell_gate_match(peer, m.id)
     log(f"[game] {peer.name} (cid {peer.cid}) joined {m.bf['name']} (match {m.id}) as slot {slot}; "
         f"{len(m.peers)} player(s)")
@@ -4570,6 +4596,8 @@ def leave_match(peer):
     m = getattr(peer, "match", None)
     if not m or not m.peers or peer not in m.peers:
         return
+    side = nation_of(peer.cid)
+    commanded = side_commander(m, side) is peer
     m.peers.remove(peer)
     peer.match = None
     BATTLE_CHOICE.pop(peer.cid, None)
@@ -4587,6 +4615,10 @@ def leave_match(peer):
     if REMOVE_LEFT_PLAYERS:
         m.broadcast(19, 50002, struct.pack("<I", rid))
         m.broadcast(19, 30002, struct.pack("<I", peer.cid))
+    heir = side_commander(m, side) if commanded else None
+    if heir:
+        tell_side(m, side, 19, 30020, commander_body(heir))
+        log(f"[game] {heir.name} now commands their side in match {m.id}")
     if not m.peers:
         m.peers = None  # stops its timers and AI
         MATCHES.pop(m.id, None)
@@ -5236,6 +5268,54 @@ def report_enemy(server, peer, rid):
         for p in m.peers:
             if p is peer or (side and nation_of(p.cid) == side):
                 send_game_event(server, p, 19, 50176, body)
+
+
+ORDER_MAX, ORDER_EVERY = 100, 10.0  # characters in a commander's order; seconds between a commander's orders
+
+
+def side_commander(m, side):
+    """A side's commander in a match: the player of that side who has been in it longest. The client's own way to
+    name one (the corps windows and the battle Commander tab) is never created in this client, so this is the rule."""
+    return next((p for p in m.peers or () if nation_of(p.cid) == side), None) if side else None
+
+
+def commander_body(peer):
+    """GS_UpdateNationLeader (19,30020): u32 character id (-1 = none; then the client reads no more) | str name | u8.
+    GroupManager keeps it (+0x9c/+0xa0/+0xbc) and Robot::updateHeading puts the commander icon over the robot of that
+    character."""
+    return struct.pack("<I", peer.cid) + wstr(peer.name) + b"\0" if peer else struct.pack("<i", -1)
+
+
+def tell_side(m, side, catalog, type_, body):
+    for p in m.peers or ():
+        if nation_of(p.cid) == side:
+            send_game_event(m.server, p, catalog, type_, body)
+
+
+def give_order(account, text):
+    """A commander's order, typed in battle chat as !order <text> (the client's own Commander tab is never created):
+    GS_UpdateCorpCmd (19,30030) str order to the commander's side in their match. The client writes "Country Command"
+    and the order in chat and keeps it in the central info panel. Returns what to tell the player ("" = nothing)."""
+    text = clean_line(text)[:ORDER_MAX]
+    if not text:
+        return "Usage: !order <text>"
+    if GAME_SERVER is None:
+        return "You are not in a battle"
+    with GAME_LOCK:
+        peer = next((p for p in GAME_SERVER.peers.values() if getattr(p, "match", None)
+                     and STORE.account_of(getattr(p, "cid", None)) == account), None)
+        if peer is None:
+            return "You are not in a battle"
+        m, side, now = peer.match, nation_of(peer.cid), time.time()
+        if side_commander(m, side) is not peer:
+            return "Only your side's commander can give orders"
+        if now - getattr(peer, "ordered_at", 0.0) < ORDER_EVERY:
+            return f"One order every {ORDER_EVERY:.0f} seconds"
+        peer.ordered_at = now
+        m.orders[side] = text
+        tell_side(m, side, 19, 30030, wstr(text))
+    log(f"[game] {peer.name} orders: {text}")
+    return ""
 
 
 def gm_game_command(server, peer, body):

@@ -114,6 +114,8 @@
   - [GS\_Robot\_Skill](#m-19-50132) `(19,50132)`
   - [GS\_Robot\_Action (move)](#m-19-50100) `(19,50100)`
   - [GS\_Robot\_Action (jump)](#m-19-50102) `(19,50102)`
+  - [GS\_UpdateNationLeader](#m-19-30020) `(19,30020)`
+  - [GS\_UpdateCorpCmd](#m-19-30030) `(19,30030)`
   - [GS\_ReportPoint](#m-19-50176) `(19,50176)`
   - [GS\_Robot\_SystemPart (rebuild)](#m-19-50104) `(19,50104)`
   - [GS\_Robot\_SystemPart (switch weapon)](#m-19-50105) `(19,50105)`
@@ -1462,6 +1464,28 @@ u32 robot | u32 steer flags | vec3 position | vec3 facing
 ```
 
 Remote robots only (GS\_Robot\_Action\_ObjectObserver, 0x10265f70). Skipped while robot +0x194 is set. Sets the position and facing, then Robot::Move(flags) and Robot::Jump. The other actions in the same handler: 50101 vec3 facing (turn); 50103 u8 | vec3 | vec3 (sets robot +0x18c, then MoveTo); 50139 u8 on | vec3 | vec3 (robot state 2 on or off, then MoveTo).
+
+<a name="m-19-30020"></a>
+#### GS\_UpdateNationLeader `(19,30020)`
+
+*S→C · read, not tried*
+
+```text
+u32 commander character id (-1 = none: nothing more is read) | str name | u8
+```
+
+Names a side's commander. GroupManager keeps it (+0x9c, +0xa0, +0xbc) and raises (9,12101); Robot::updateHeading puts the commander icon over the robot whose character has that id. In this client the ways to pick a commander (the corps windows and the battle Commander tab) are never created, so the emulator makes the player of a side who has been in the match longest its commander, and sends this to that side when it changes and to each player who joins. The u8 is sent as 0.
+
+<a name="m-19-30030"></a>
+#### GS\_UpdateCorpCmd `(19,30030)`
+
+*S→C · read, not tried*
+
+```text
+str order
+```
+
+The side's order. The client keeps it (GroupManager +0xcc), writes "Country Command" and the order in chat and raises (9,10100) for the central info panel. The dead Commander tab sent orders as (9,10023) `f32 | str`; the emulator takes them from battle chat instead: the commander types `!order <text>` (cleaned, at most 100 characters, one every 10 seconds) and the order goes to their side in their match. A player who joins later gets the side's last order.
 
 <a name="m-19-50176"></a>
 #### GS\_ReportPoint `(19,50176)`

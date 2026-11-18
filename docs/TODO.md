@@ -167,6 +167,10 @@ reply layout, and answer with real data.
       - (15,15022) corps name lookups (see below); the client asks for corps 0 at every hall login
       - Not read: detachments (19,30500..30522), impeach (19,30080/30081), group orders (19,30050..30053), the
         hall corps orders (21,21058/21061, 9,10120). Comm. Credits and command levels belong here too
+      - Built 2026-11-18 (offline, tools/test_chat.py): each side's commander in a match is its player there longest
+        (30020 to that side on join and when the commander leaves), and the commander's `!order <text>` in battle
+        chat goes out as 30030 to the side (split servers: gate asks the game server, link message "order"). Not
+        tried in game: the commander icon and the "Country Command" line
 - [ ] Division flags (15,15070 UpdateTeamFlag / 15074 UpdateAllTeamFlag): read by GroupManager::UpdateTeamFlag and
       used only by OccupyIcon::Update (GetTeamFlagList), so they are the division banners on captured campaign
       points; they wait for the campaign map

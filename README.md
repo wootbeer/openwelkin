@@ -265,6 +265,11 @@ Country tab, which reaches only their own match. The client allows about one Lob
 division chat are not done yet. Lines are cut at 200 characters, one player can send
 a line every half second, and control characters are removed. The sender's name always comes from the server.
 
+In each match, the player of a side who has been there longest is that side's commander, and the game shows an icon over
+their robot. The commander can type `!order <text>` in battle chat (up to 100 characters, one every 10 seconds), and
+everyone on their side sees it as a "Country Command". The game's own commander window is not in this client, so this
+is the emulator's rule. When the commander leaves, the next player of that side takes over.
+
 Each character has a friend list and a block list of up to 100 names, kept in `characters.db`. Lines from a blocked player
 do not reach you, and to them you look offline in private messages.
 

@@ -45,18 +45,35 @@ async def heard(gate, seconds=1.5):
         return None
 
 
+class Recorder(ts.lt.Game):
+    """A fake battle client that keeps the commander (19,30020) and order (19,30030) events it gets."""
+    def __init__(self, *args):
+        super().__init__(*args)
+        self.events = []
+
+    def datagram_received(self, data, addr):
+        pkt = ts.fdp.Packet.parse(data)
+        if not pkt.system:
+            self.events += [(typ, raw[12:]) for raw, _, typ in ts.fdp.messages(pkt.payload) if typ in (30020, 30030)]
+        super().datagram_received(data, addr)
+
+    def last(self, typ):
+        return next((body for t, body in reversed(self.events) if t == typ), None)
+
+
 async def battle(gate, cid):
-    """Enter a battle as a fake client (it only needs to stay open while the test runs)."""
+    """Enter a battle as a fake client; returns it (it only needs to stay open while the test runs)."""
     r = await gate.request(18, 18000, struct.pack("<IIIH", cid, 1, 0, 0))
     _, _, port, ticket = struct.unpack_from("<IIHI", r.body)
     transport, game = await asyncio.get_running_loop().create_datagram_endpoint(
-        lambda: ts.lt.Game(False, collections.defaultdict(int)), remote_addr=("127.0.0.1", port))
+        lambda: Recorder(False, collections.defaultdict(int)), remote_addr=("127.0.0.1", port))
     stream = struct.pack("<III", ticket, 9, ticket)
     transport.sendto(ts.fdp.Packet(0x07, 1, 9, 12, ts.fdp.SPLIT_SYN, 0, 0, struct.pack("<I", len(stream)) + stream).pack())
     await asyncio.wait_for(asyncio.shield(game.syn_ack), 3)
     game.send(40851, bytes(4), reliable=True)
     await asyncio.sleep(0.2)
     game.send(30050, bytes(4), reliable=True)
+    return game
 
 
 async def scenario():
@@ -95,6 +112,7 @@ async def scenario():
     say(eve, "federal only", 21004, struct.pack("<H", 5))
     check("Country does not reach the other side", await heard(dan, 0.4) is None)
     check("but comes back to the sender", await heard(eve) == (21204, eve_id, "eve", "federal only"))
+    await commanders(amy, cara)
     await asyncio.sleep(ls.CHAT_EVERY + 0.1)
     say(amy, "no such tab", 21004, struct.pack("<H", 9))
     check("an unknown channel is dropped", await heard(ben, 0.3) is None)
@@ -444,6 +462,44 @@ async def scenario():
     line = await from_server(amy)
     check("an IP ban says why", line and line[3].startswith("Your address was banned until ") and line[3].endswith(": bots"),
           str(line))
+
+
+async def commanders(amy, cara):
+    """The first player of a side in a match commands it; !order in battle chat reaches only that side."""
+    def leader(body):
+        return body and (struct.unpack_from("<i", body)[0], ls.read_wstr(body, 4)[0] if len(body) > 4 else None)
+
+    kim, kim_id = await player("kim", ls.ALLIANCE)
+    lou, lou_id = await player("lou", ls.ALLIANCE)
+    kim_game = await battle(kim, kim_id)
+    await asyncio.sleep(0.3)
+    lou_game = await battle(lou, lou_id)  # MW_MATCH_PLAYERS is 2: a match of their own, one side
+    await asyncio.sleep(0.5)
+    check("the first player of a side commands it", leader(kim_game.last(30020)) == (kim_id, "kim"))
+    check("the next one is told who commands", leader(lou_game.last(30020)) == (kim_id, "kim"))
+    say(lou, "!order charge", 21052)
+    check("only the commander gives orders", (await heard(lou))[3] == "Only your side's commander can give orders")
+    say(kim, "!order hold the  bridge", 21004, struct.pack("<H", 5))
+    await asyncio.sleep(0.5)
+    want = ls.wstr("hold the bridge")
+    check("an order reaches the commander's side, cleaned", kim_game.last(30030) == want and lou_game.last(30030) == want)
+    check("and is not also a chat line", await heard(lou, 0.3) is None)
+    await asyncio.sleep(ls.CHAT_EVERY + 0.1)
+    say(kim, "!order " + "x" * 300, 21052)
+    check("orders are rate-limited", (await heard(kim))[3].startswith("One order every"))
+    await asyncio.sleep(ls.CHAT_EVERY + 0.1)
+    say(amy, "!ORDER go", 21052)
+    check("a player of neither side commands nobody", (await heard(amy))[3] == "Only your side's commander can give orders")
+    await asyncio.sleep(ls.CHAT_EVERY + 0.1)
+    say(cara, "!order go")
+    check("no orders from the hall", (await heard(cara))[3] == "You are not in a battle")
+    kim.close()  # logs out: out of the battle too
+    await asyncio.sleep(1.0)
+    check("when the commander leaves, the next player commands", leader(lou_game.last(30020)) == (lou_id, "lou"))
+    await asyncio.sleep(ls.CHAT_EVERY + 0.1)
+    say(lou, "!order " + "y" * 300, 21052)
+    await asyncio.sleep(0.5)
+    check("an order is cut to ORDER_MAX", lou_game.last(30030) == ls.wstr("y" * ls.ORDER_MAX))
 
 
 def main():
