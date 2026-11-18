@@ -7,6 +7,7 @@ import copy
 import re
 import os
 import random
+import struct
 import sys
 import traceback
 
@@ -27,6 +28,11 @@ ls.login_throttled = lambda ip, failed=False: False
 # a test account with one character, so "own character" paths run too
 acct = "fuzzacct"
 cid = ls.STORE.create(acct, "Fuzzer", gender=1, model=1, state=1, raw="")
+# ...who leads a division with an officer in it, so the division handlers get past "who are you"
+mate = ls.STORE.create("fuzzmate", "Fuzzmate", gender=1, model=1, state=1, raw="")
+did = ls.DIVISIONS.create(cid, "Fuzz Corps", "FZZC", 0, 0)[0]
+ls.DIVISIONS.join(mate, did, 0)
+ls.DIVISIONS.set_title(cid, mate, 7)
 
 
 class FakeSession(ls.Session):
@@ -34,6 +40,7 @@ class FakeSession(ls.Session):
         super().__init__(None, ("fuzz", 0))
         self.account = account
         self.sent = []
+        self.character = ls.STORE.by_id(cid) if account == acct else None
 
     def send_message(self, msg):
         self.sent.append(msg)
@@ -50,6 +57,9 @@ def bodies(rng):
     yield cid.to_bytes(4, "little") + b"\x00\x01" + (1).to_bytes(4, "little")       # buy goods 1
     yield cid.to_bytes(4, "little") + (5).to_bytes(4, "little")                     # learn talent / activate
     yield b"\x80" * 40                                                              # endless varint
+    yield struct.pack("<IIHBI", cid, mate, rng.choice((0, 4, 6, 7, 0xFFFF)), 3, did)  # appoint
+    yield struct.pack("<II", cid, rng.choice((cid, mate, 0)))                          # remove a title
+    yield struct.pack("<BI", 3, did)                                                  # list titles
     yield rng.randbytes(5000)
 
 

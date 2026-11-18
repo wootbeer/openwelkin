@@ -136,12 +136,15 @@ reply layout, and answer with real data.
       2026-11-17: donating works (balance and Account update). The "add members" button (control 6 of the division
       window, CTeamListUI::ClickAddBtn) is the Upgrade button: it shows "30 to 50 need 10000 crystal" from 15093
       and checks the division's Crystal itself ("Crystal is not enough to expand."), so 15094 with enough is untried
-- [ ] Division titles: (13,13018) is answered (the leader only, as C.O.); setting and removing them (13,13015 /
-      13017, "Assign Officials") is not done. Titles are DUTYTYPE_<n>: 0 Recruit, 1 S.C., 2 C.O., 3 Troop Personnel
-      Officer, 4 Personnel Officer, 5 D.C., 6 D.C.O., 7 Staff Officer; the appoint window's slots are 6, 4 and 7.
-      Requests read 2026-11-17: (13,13015) u32 | u32 | u16 | u8 | u32, (13,13017) u32 | u32. Flags (15070 / 15074)
+- [x] Division titles, 2026-11-18, offline: the leader appoints (13,13015) a D.C.O. (6), Personnel Officers (4) and
+      Staff Officers (7), at most 1, 2 and 3 (the last three numbers of 15023, which turn the appoint buttons off when
+      full; 0 turns them all off), one title per member; (13,13017) takes one away (the leader, or the officer itself);
+      (13,13018) lists them. D.C.O. and Personnel Officers may invite (the friend list offers it to 2, 4, 6). Kept in
+      division_members.title. tools/test_divisions.py. Not tried in game: the appoint window (where it opens from)
+- [ ] Division flags (15,15070 UpdateTeamFlag / 15074 UpdateAllTeamFlag): read by GroupManager::UpdateTeamFlag and
+      used only by OccupyIcon::Update (GetTeamFlagList), so they are the division banners on captured campaign
+      points; they wait for the campaign map
 - [ ] (15,15022) UpdateCorpInfo
-- [ ] (15,15074) UpdateAllTeamFlag
 
 ## Battlefield / campaign
 - [ ] (17,17079) BF_UpdateMyHeadQuarter / UpdateCorpBasement

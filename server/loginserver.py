@@ -1045,8 +1045,13 @@ DONATE_MIN, DIVISION_STEP, DIVISION_MAX = 100, 20, 500
 DIVISION_STEP_CRYSTAL = min(max(int(os.environ.get("MW_DIVISION_STEP_CRYSTAL", "10000") or 10000), 0), 10 ** 9)
 ERR_DIVISION_POOR, ERR_DONATION, ERR_NO_PRICE, ERR_CRYSTAL = 15062, 15063, 15064, 24010
 CRYSTAL_MAX = 2 ** 31 - 1  # the client shows Crystal as a signed 32-bit number
-# (13,13018) titles: kind 3 is a division; title 2 is C.O. (the leader), which lets the friend list offer "Invite".
+# Titles (13,13015 / 13017 / 13018), the DUTYTYPE_<n> texts: kind 3 is a division. The leader is C.O. (2); it
+# appoints members as D.C.O. (6), Personnel Officer (4) or Staff Officer (7), at most TITLE_LIMITS of each (sent in
+# the division info, they turn the appoint window's buttons off when full). The friend list offers "Invite" to 2, 4, 6.
 DIVISION_KIND, TITLE_CO = 3, 2
+TITLE_LIMITS = {6: 1, 4: 2, 7: 3}
+INVITE_TITLES = {TITLE_CO, 4, 6}
+ERR_HAS_TITLE, ERR_NO_TITLE, ERR_NO_TITLE_ROW, ERR_TITLES_FULL = 13006, 13007, 13008, 15020
 
 
 def division_name_error(name, short):
@@ -1119,7 +1124,7 @@ class Divisions:
             d = dict(id=did, name=name, short=short, leader=cid, nation=nation, created=int(now), money=0, points=0,
                      limit=DIVISION_LIMIT)
             self.by_id[did] = d
-            self.rows[cid] = [did, D_MEMBER, int(now)]
+            self.rows[cid] = [did, D_MEMBER, int(now), 0, 0]
             self.taken |= {name_skeleton(name), name_skeleton(short)}
             self.write((db.write_division, d), (db.write_division_member, cid, self.rows[cid]))
             return did, 0
@@ -1136,7 +1141,7 @@ class Divisions:
                 return ERR_DIVISION_NATION
             if row and row[1] in (D_APPLIED, D_ACCEPTED):
                 return ERR_ALREADY_APPLIED
-            self.rows[cid] = [did, D_APPLIED, int(now)]
+            self.rows[cid] = [did, D_APPLIED, int(now), 0, 0]
             self.write((db.write_division_member, cid, self.rows[cid]))
             return 0
 
@@ -1158,7 +1163,7 @@ class Divisions:
         d = self.by_id[did]
         if len(self.members(did)) >= d["limit"]:
             return ERR_DIVISION_FULL
-        self.rows[cid] = [did, D_MEMBER, int(now)]
+        self.rows[cid] = [did, D_MEMBER, int(now), 0, 0]
         self.write((db.write_division_member, cid, self.rows[cid]))
         return 0
 
@@ -1199,14 +1204,53 @@ class Divisions:
                 return ERR_CRYSTAL
             d["money"] += amount
             row = self.rows[cid]
-            row[3:] = [self.donated(cid) + amount]
+            row[3] += amount
             self.write((db.write_division, d), (db.write_division_member, cid, row))
             return 0
 
     def donated(self, cid):
         """Crystal the character gave its division since it joined."""
         row = self.rows.get(cid)
-        return row[3] if row and len(row) > 3 and row[1] == D_MEMBER else 0
+        return row[3] if row and row[1] == D_MEMBER else 0
+
+    def title(self, cid):
+        """The character's title in its division: TITLE_CO for the leader, 0 (Recruit) for none."""
+        did = self.of(cid)
+        return 0 if not did else TITLE_CO if self.by_id[did]["leader"] == cid else self.rows[cid][4]
+
+    def titles(self, did):
+        """[(character id, title)] of a division's members who have one, the leader first."""
+        return [(cid, t) for cid in self.members(did) for t in [self.title(cid)] if t]
+
+    def set_title(self, leader, cid, title):
+        """The leader appoints a member who has no title yet. 0 or an error code."""
+        with STORE.lock:
+            did = self.of(leader)
+            if not did or self.by_id[did]["leader"] != leader:
+                return ERR_NOT_LEADER
+            if self.of(cid) != did or cid == leader:
+                return ERR_NOT_YOUR_DIVISION
+            if title not in TITLE_LIMITS:
+                return ERR_NO_TITLE
+            if self.rows[cid][4]:
+                return ERR_HAS_TITLE
+            if sum(t == title for _, t in self.titles(did)) >= TITLE_LIMITS[title]:
+                return ERR_TITLES_FULL
+            self.rows[cid][4] = title
+            self.write((db.write_division_member, cid, self.rows[cid]))
+            return 0
+
+    def remove_title(self, me, cid):
+        """The leader takes a member's title away, or a member gives up its own. 0 or an error code."""
+        with STORE.lock:
+            did = self.of(me)
+            if not did or (me != cid and self.by_id[did]["leader"] != me):
+                return ERR_NOT_LEADER
+            if self.of(cid) != did or self.by_id[did]["leader"] == cid or not self.rows[cid][4]:
+                return ERR_NO_TITLE_ROW
+            self.rows[cid][4] = 0
+            self.write((db.write_division_member, cid, self.rows[cid]))
+            return 0
 
     def upgrade(self, leader, add):
         """The leader buys DIVISION_STEP more member places with the division's Crystal. 0 or an error code."""
@@ -1225,11 +1269,12 @@ class Divisions:
             return 0
 
     def invite(self, leader, cid, nation, now):
-        """The leader invites a character of its nation who is in no division. 0 or an error code."""
+        """The leader (or a D.C.O. or Personnel Officer) invites a character of its nation who is in no division. 0 or
+        an error code."""
         with STORE.lock:
             did = self.of(leader)
             d = self.by_id.get(did)
-            if not d or d["leader"] != leader:
+            if not d or self.title(leader) not in INVITE_TITLES:
                 return ERR_NOT_LEADER
             if not STORE.by_id(cid):
                 return ERR_NO_CHARACTER
@@ -2663,7 +2708,7 @@ class Session:
         body = (wstr(d["name"]) + struct.pack("<IBBB", d["id"], 1, 0, 0) + wstr("") + wstr(created)
                 + struct.pack("<I", d["leader"]) + wstr(leader.get("name", ""))
                 + struct.pack("<II", len(members), len(self.online_ids() & set(members))) + wstr("") + wstr(d["short"])
-                + struct.pack("<IIIIII", d["points"], d["limit"], d["money"], 0, 0, 0))
+                + struct.pack("<IIIIII", d["points"], d["limit"], d["money"], *TITLE_LIMITS.values()))
         self.reply(msg, body)
 
     def page(self, msg, rows, first, count, row):
@@ -2689,16 +2734,40 @@ class Session:
 
     def on_division_titles(self, msg):
         """(13,13018) GetTitleByOrganiseType, asked right after the members list: u8 kind (3 = division) | u32 id ->
-        u32 n | n x (u32 division | u32 character | u16 title | u8). Titles are the DUTYTYPE_<n> texts: 2 C.O., 4
-        Personnel Officer, 6 D.C.O., 7 Staff Officer. The friend list offers "Invite" only to titles 2, 4 and 6, and
-        a member with none is a Recruit. Only the leader has one here (C.O.), and only for your own division."""
+        u32 n | n x (u32 title id | u32 character | u16 title | u8). The title id is what (13,13017) sends to take it
+        away; here it is the character id. A member with no row is a Recruit. Only for your own division."""
         me = self.division_me(msg, size=5)
         if me is None:
             return
         kind, did = struct.unpack_from("<BI", msg.body)
-        d = DIVISIONS.get(did) if kind == DIVISION_KIND and did == DIVISIONS.of(me) else None
-        rows = [(did, d["leader"], TITLE_CO)] if d else []
-        self.reply(msg, struct.pack("<I", len(rows)) + b"".join(struct.pack("<IIHB", *r, 0) for r in rows))
+        rows = DIVISIONS.titles(did) if kind == DIVISION_KIND and did == DIVISIONS.of(me) else []
+        self.reply(msg, struct.pack("<I", len(rows)) + b"".join(struct.pack("<IIHB", c, c, t, 0) for c, t in rows))
+
+    def on_set_title(self, msg):
+        """(13,13015) SetTeamTitle, the appoint window: u32 character | u32 member | u16 title | u8 kind | u32
+        division -> empty (the client then asks 13018 again)."""
+        me = self.division_me(msg, write=True, size=15)
+        if me is None:
+            return
+        cid, title, kind, did = struct.unpack_from("<IHBI", msg.body, 4)
+        if kind != DIVISION_KIND or did != DIVISIONS.of(me):
+            return self.reply(msg, result=ERR_NOT_YOUR_DIVISION)
+        error = DIVISIONS.set_title(me, cid, title)
+        if error:
+            return self.reply(msg, result=error)
+        log(f"{self.account}: {self.character['name']} gave title {title} to {cid}")
+        self.reply(msg)
+
+    def on_remove_title(self, msg):
+        """(13,13017) DeleteTeamTitle, "Remove Position": u32 character | u32 title id (13018's, the character id
+        here) -> empty."""
+        me = self.division_me(msg, write=True, size=8)
+        if me is None:
+            return
+        error = DIVISIONS.remove_title(me, struct.unpack_from("<I", msg.body, 4)[0])
+        if error:
+            return self.reply(msg, result=error)
+        self.reply(msg)
 
     def on_create_division(self, msg):
         me = self.division_me(msg, write=True)
@@ -3180,6 +3249,8 @@ HANDLERS = {
     (15, 15080): Session.on_division_invites,    # FetchTeamInvite
     (15, 15083): Session.on_answer_division_invite,  # TeamInviteAnswer
     (13, 13031): Session.on_division_members,    # GetCharacterByTeamID
+    (13, 13015): Session.on_set_title,           # SetTeamTitle
+    (13, 13017): Session.on_remove_title,        # DeleteTeamTitle
     (13, 13018): Session.on_division_titles,     # GetTitleByOrganiseType
     (15, 15098): Session.on_rank_list,           # CS_CharacterExpRank (Ranking, Honor tab)
     (15, 15099): Session.on_my_rank,             # CS_OneCharacterExpRank

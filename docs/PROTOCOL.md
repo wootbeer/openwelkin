@@ -68,6 +68,8 @@
   - [AddTeam (make a division)](#m-15-15003) `(15,15003)`
   - [UpdateTeamInfo](#m-15-15023) `(15,15023)`
   - [GetTitleByOrganiseType (division titles)](#m-13-13018) `(13,13018)`
+  - [SetTeamTitle (appoint an officer)](#m-13-13015) `(13,13015)`
+  - [DeleteTeamTitle (Remove Position)](#m-13-13017) `(13,13017)`
   - [GetCharacterByTeamID (members)](#m-13-13031) `(13,13031)`
   - [UpdateTeamList](#m-15-15021) `(15,15021)`
   - [SendJoinTeamRequest (apply)](#m-15-15011) `(15,15011)`
@@ -939,10 +941,11 @@ Request: `u32 character id | str name | str short name | str`. "Team" is "Divisi
 ```text
 str name | u32 id | u8 level | u8 | u8 | str | str created | u32 leader id
 | str leader name | u32 members | u32 online | str | str short name | u32 record
-| u32 member limit | u32 crystal | u32 | u32 | u32
+| u32 member limit | u32 crystal | u32 max D.C.O. | u32 max Personnel Officers
+| u32 max Staff Officers
 ```
 
-Request: `u32 division id`. Fills the name cache (the "[short name]" before nameplate names) and, for the player's own division, the window's lines: full name, short name, "Create Time" (the date part of `YYYY-MM-DD hh:mm:ss`), Commanding Officer, Level, Record, Account, Online Member, "Division Total Member: members/limit". The leader id probably picks Dismiss or Quit. Asked for any nonzero team id in ranking rows and base info; the emulator sends the division id in both (0 and -1 = none).
+Request: `u32 division id`. Fills the name cache (the "[short name]" before nameplate names) and, for the player's own division, the window's lines: full name, short name, "Create Time" (the date part of `YYYY-MM-DD hh:mm:ss`), Commanding Officer, Level, Record, Account, Online Member, "Division Total Member: members/limit". The leader id probably picks Dismiss or Quit. The last three numbers go to MyTeamInfo +0x94/+0x98/+0x9c (GroupManager +0x35c..+0x364): how many members may hold titles 6, 4 and 7. CTeamAppointUI::CheckManager turns an appoint button off when that many already have it, so 0 turns them all off; the emulator sends 1, 2 and 3. Asked for any nonzero team id in ranking rows and base info; the emulator sends the division id in both (0 and -1 = none).
 
 <a name="m-13-13018"></a>
 #### GetTitleByOrganiseType (division titles) `(13,13018)`
@@ -950,10 +953,32 @@ Request: `u32 division id`. Fills the name cache (the "[short name]" before name
 *S→C reply · partial*
 
 ```text
-u32 n | n × (u32 division | u32 character | u16 title | u8)
+u32 n | n × (u32 title id | u32 character | u16 title | u8)
 ```
 
-Request: `u8 kind (3 = division) | u32 division id`, sent at login and right after the members list (13,13031). GetTitleByOrganiseTypeObserver puts each title into that member (TeamMember +0x5c). Titles are the DUTYTYPE\_&lt;n> texts: 0 Recruit, 1 S.C., 2 C.O., 3 Troop Personnel Officer, 4 Personnel Officer, 5 D.C., 6 D.C.O., 7 Staff Officer. The friend list right-click menu offers "Invite to division." only when your own title is 2, 4 or 6 (CFriendListUI::MsgProc). The emulator sends the leader as C.O., for your own division only. Real client 2026-11-18.
+Request: `u8 kind (3 = division) | u32 division id`, sent at login and right after the members list (13,13031). GetTitleByOrganiseTypeObserver puts each title into that member (TeamMember +0x5c). Titles are the DUTYTYPE\_&lt;n> texts: 0 Recruit, 1 S.C., 2 C.O., 3 Troop Personnel Officer, 4 Personnel Officer, 5 D.C., 6 D.C.O., 7 Staff Officer. The friend list right-click menu offers "Invite to division." only when your own title is 2, 4 or 6 (CFriendListUI::MsgProc). The title id (TeamManagerInfo +0) is what (13,13017) sends back to take the title away; the emulator uses the character id. It sends the leader as C.O. and every officer, for your own division only. Real client 2026-11-18 (the leader's C.O.).
+
+<a name="m-13-13015"></a>
+#### SetTeamTitle (appoint an officer) `(13,13015)`
+
+*S→C reply · from the code*
+
+```text
+(empty)
+```
+
+Request (GroupManager::request\_SetTeamTitle, from the appoint window CTeamAppointUI): `u32 character id | u32 member id | u16 title | u8 kind (3) | u32 division id`. The player types the member's name; the client looks it up in its members list ("Unable to find the player." if it is not there). On success SetTeamTitleObserver asks (13,13018) again; on an error it shows the error text. The emulator lets only the leader appoint, only titles 6 D.C.O., 4 Personnel Officer and 7 Staff Officer, one title per member, up to the limits in (15,15023). Errors: 13006 already has a title, 13007 no such title, 15020 that title is full, 15027 not in your division, 15060 not the leader.
+
+<a name="m-13-13017"></a>
+#### DeleteTeamTitle (Remove Position) `(13,13017)`
+
+*S→C reply · from the code*
+
+```text
+(empty)
+```
+
+Request (GroupManager::request\_DeleteTeamTitle, from the members window and the appoint window's "Remove Position"): `u32 character id | u32 title id` (the first number of the member's (13,13018) row). On success DeleteTeamTitleObserver asks (13,13018) again and refreshes the open windows. The emulator lets the leader take any officer's title and an officer give up its own; the leader's C.O. stays. Errors: 13008 no such title, 15060 not the leader.
 
 <a name="m-13-13031"></a>
 #### GetCharacterByTeamID (members) `(13,13031)`

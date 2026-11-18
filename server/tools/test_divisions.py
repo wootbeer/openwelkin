@@ -43,9 +43,10 @@ def info(r):
     members, online = struct.unpack_from("<II", r.body, off)
     _, off = ls.read_wstr(r.body, off + 8)
     short, off = ls.read_wstr(r.body, off)
-    points, limit, money = struct.unpack_from("<III", r.body, off)
+    points, limit, money, *title_limits = struct.unpack_from("<IIIIII", r.body, off)
     return dict(name=name, id=did, leader=leader, leader_name=leader_name, members=members, online=online,
-                short=short, limit=limit, money=money, created=created, end=off + 24 == len(r.body))
+                short=short, limit=limit, money=money, created=created, end=off + 24 == len(r.body),
+                title_limits=title_limits)
 
 
 def ids_of(r, first_field=True):
@@ -249,7 +250,7 @@ async def scenario():
           == (2, []))
     r = await amy.request(13, 13018, struct.pack("<BI", ls.DIVISION_KIND, did))
     check("titles: only the leader has one, C.O. (the friend list then offers Invite)",
-          r.result == 0 and r.body == struct.pack("<IIIHB", 1, did, amy_id, ls.TITLE_CO, 0), r.body.hex())
+          r.result == 0 and r.body == struct.pack("<IIIHB", 1, amy_id, amy_id, ls.TITLE_CO, 0), r.body.hex())
     check("a member sees the same titles", (await ben.request(13, 13018, struct.pack("<BI", ls.DIVISION_KIND, did))).body
           == r.body)
     check("titles of a division you are not in are empty",
@@ -334,6 +335,46 @@ async def scenario():
     check("the leader hears yes", b is not None and b[-1] == 1, b)
     check("the player is in it at the next login", await division_of(ben, ben_id) == did)
     check("its invites are gone after joining", invite_rows((await ben.request(15, 15080, U32.pack(ben_id))).body) == ([], True))
+
+    # --- titles: the leader appoints officers ("Assign Officials") and takes the titles away ---
+    def appoint(gate, me, cid, title, kind=ls.DIVISION_KIND, d=did):
+        return act(gate, 13015, struct.pack("<IIHBI", me, cid, title, kind, d), catalog=13)
+
+    def unappoint(gate, me, title_id):
+        return act(gate, 13017, struct.pack("<II", me, title_id), catalog=13)
+
+    async def titles():
+        r = await amy.request(13, 13018, struct.pack("<BI", ls.DIVISION_KIND, did))
+        n = U32.unpack_from(r.body)[0]
+        return [struct.unpack_from("<IIH", r.body, 4 + 11 * i) for i in range(n)]
+    check("the division info carries how many of each title it may have",
+          info(await amy.request(15, 15023, U32.pack(did)))["title_limits"] == list(ls.TITLE_LIMITS.values()))
+    check("a member can not appoint", (await appoint(ben, ben_id, ben_id, 7)).result == ls.ERR_NOT_LEADER)
+    for title in (0, ls.TITLE_CO, 5, 0xFFFF):
+        check(f"title {title} can not be given", (await appoint(amy, amy_id, ben_id, title)).result == ls.ERR_NO_TITLE)
+    check("no title for a player of another division",
+          (await appoint(amy, amy_id, cara_id, 7)).result == ls.ERR_NOT_YOUR_DIVISION)
+    check("the leader can not appoint itself", (await appoint(amy, amy_id, amy_id, 7)).result == ls.ERR_NOT_YOUR_DIVISION)
+    check("no title in another kind of group", (await appoint(amy, amy_id, ben_id, 7, kind=1)).result
+          == ls.ERR_NOT_YOUR_DIVISION)
+    check("no title in another division", (await appoint(amy, amy_id, ben_id, 7, d=other)).result
+          == ls.ERR_NOT_YOUR_DIVISION)
+    r = await appoint(amy, amy_id, ben_id, 7)
+    check("the leader makes a member Staff Officer", r.result == 0 and r.body == b"", r.result)
+    check("the titles list has both", await titles() == [(amy_id, amy_id, ls.TITLE_CO), (ben_id, ben_id, 7)])
+    check("one title at a time", (await appoint(amy, amy_id, ben_id, 6)).result == ls.ERR_HAS_TITLE)
+    check("a Staff Officer can not invite", (await invite(ben, ben_id, cara_id)).result == ls.ERR_NOT_LEADER)
+    check("a member can not take the leader's title", (await unappoint(ben, ben_id, amy_id)).result == ls.ERR_NOT_LEADER)
+    check("the leader's own title can not go", (await unappoint(amy, amy_id, amy_id)).result == ls.ERR_NO_TITLE_ROW)
+    check("an officer gives up its title", (await unappoint(ben, ben_id, ben_id)).result == 0
+          and await titles() == [(amy_id, amy_id, ls.TITLE_CO)])
+    check("a title nobody has can not go", (await unappoint(amy, amy_id, ben_id)).result == ls.ERR_NO_TITLE_ROW)
+    check("no taking titles in another division", (await unappoint(amy, amy_id, cara_id)).result == ls.ERR_NO_TITLE_ROW)
+    await appoint(amy, amy_id, ben_id, 4)
+    check("a Personnel Officer may invite (the leader-only check passes)",
+          (await invite(ben, ben_id, cara_id)).result == ls.ERR_THEY_ARE_IN_DIVISION)
+    check("the leader takes the title away", (await unappoint(amy, amy_id, ben_id)).result == 0
+          and await titles() == [(amy_id, amy_id, ls.TITLE_CO)])
     check("a member can not invite", (await invite(ben, ben_id, cara_id)).result == ls.ERR_NOT_LEADER)
     await act(ben, 15018, U32.pack(ben_id))
 
@@ -372,7 +413,7 @@ async def scenario():
     stranger = await ts.gate_session((await ts.login("nochar"))[1])
     check("a player with no character can not make one",
           (await stranger.request(15, 15003, U32.pack(amy_id) + ls.wstr("Sneaky") + ls.wstr("SN"))).result == ls.ERR_UNKNOWN)
-    for type_, catalog in ((15003, 15), (15011, 15), (15015, 15), (15076, 15), (15005, 15), (15023, 15), (13031, 13), (13018, 13),
+    for type_, catalog in ((15003, 15), (15011, 15), (15015, 15), (15076, 15), (15005, 15), (15023, 15), (13031, 13), (13018, 13), (13015, 13), (13017, 13),
                            (15021, 15), (15013, 15), (15062, 15), (15066, 15), (15012, 15), (15016, 15), (15014, 15),
                            (15079, 15), (15080, 15), (15083, 15), (15092, 15), (15094, 15), (15096, 15)):
         await asyncio.sleep(ls.CHAT_EVERY + 0.05)

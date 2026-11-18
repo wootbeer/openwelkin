@@ -281,6 +281,26 @@ def importing():
         check("a broken old file stops the server and stays", os.path.exists(os.path.join(bad, "characters.json")))
 
 
+def old_divisions():
+    """A characters.db made before members had the donated and title columns gets them, and they are kept."""
+    import sqlite3
+    path = os.path.join(root, "olddiv.db")
+    con = sqlite3.connect(path)
+    con.executescript("CREATE TABLE division_members (character_id INTEGER PRIMARY KEY, division_id INTEGER NOT NULL, "
+                      "state INTEGER NOT NULL, since INTEGER NOT NULL); "
+                      "CREATE TABLE divisions (id INTEGER PRIMARY KEY, name TEXT, name_key TEXT, short TEXT, "
+                      "short_key TEXT, leader INTEGER, nation INTEGER, created INTEGER, money INTEGER, points INTEGER, "
+                      "member_limit INTEGER); INSERT INTO division_members VALUES (7, 1, 3, 100);")
+    _, members = db.load_divisions(con)
+    check("old member rows get donated and title 0", members == {7: [1, 3, 100, 0, 0]}, members)
+    with con:
+        db.write_division_member(con, 7, [1, 3, 100, 250, 6])
+        db.write_division_member(con, 8, [1, 0, 200])
+    check("donated and title are saved; rows without them start at 0",
+          db.load_divisions(con)[1] == {7: [1, 3, 100, 250, 6], 8: [1, 0, 200, 0, 0]}, db.load_divisions(con)[1])
+    con.close()
+
+
 def main():
     try:
         characters()
@@ -289,6 +309,7 @@ def main():
         rollback()
         loading()
         importing()
+        old_divisions()
     finally:
         ls.STORE.con.close()
         ls.STORE.reader.close()
