@@ -1016,6 +1016,10 @@ ERR_DIVISION_FULL, ERR_NOT_YOUR_DIVISION, ERR_IN_DIVISION = 15020, 15027, 15061
 ERR_DIVISION_NATION, ERR_ALREADY_APPLIED, ERR_LEADER_STAYS = 15039, 15040, 15047
 ERR_DIVISION_NAME_LEN, ERR_DIVISION_SHORT_LEN, ERR_NOT_LEADER = 15056, 15057, 15060
 ERR_DIVISION_NAME, ERR_DIVISION_NAME_WORD, ERR_DIVISION_SHORT_WORD = 15065, 15068, 15069
+ERR_NO_CHARACTER, ERR_THEY_ARE_IN_DIVISION, ERR_ALREADY_INVITED, ERR_NO_INVITE = 15004, 15032, 15050, 15051
+# Invites the leader sends are kept in memory only (a restart forgets them), each for INVITE_TTL seconds; a player
+# holds at most INVITES_KEPT of them, the oldest dropped first.
+INVITE_TTL, INVITES_KEPT = 24 * 3600, 20
 
 
 def division_name_error(name, short):
@@ -1041,6 +1045,7 @@ class Divisions:
         self.con = con
         self.by_id, self.rows = db.load_divisions(con) if con is not None else ({}, {})
         self.taken = {name_skeleton(d[k]) for d in self.by_id.values() for k in ("name", "short")}
+        self.invites = {}  # invited character id -> {division id: (inviter id, time sent)}
 
     def write(self, *changes):
         """Save (fn, args...) changes in one transaction (call with the lock held)."""
@@ -1152,6 +1157,60 @@ class Divisions:
             error = self.join(cid, row[0], now)
             return (None, error) if error else (row[0], 0)
 
+    def invite(self, leader, cid, nation, now):
+        """The leader invites a character of its nation who is in no division. 0 or an error code."""
+        with STORE.lock:
+            did = self.of(leader)
+            d = self.by_id.get(did)
+            if not d or d["leader"] != leader:
+                return ERR_NOT_LEADER
+            if not STORE.by_id(cid):
+                return ERR_NO_CHARACTER
+            if self.of(cid):
+                return ERR_THEY_ARE_IN_DIVISION
+            if d["nation"] != nation:
+                return ERR_DIVISION_NATION
+            if len(self.members(did)) >= d["limit"]:
+                return ERR_DIVISION_FULL
+            held = self.invites.setdefault(cid, {})
+            if did in held and held[did][1] + INVITE_TTL > now:
+                return ERR_ALREADY_INVITED
+            held[did] = (leader, int(now))
+            for old in sorted(held, key=lambda k: held[k][1])[:-INVITES_KEPT]:
+                del held[old]
+            return 0
+
+    def invites_for(self, cid, now):
+        """[(division id, inviter id)] a character may still take, oldest first; old ones are forgotten."""
+        with STORE.lock:
+            held = self.invites.get(cid, {})
+            for did in [k for k, (_, t) in held.items() if t + INVITE_TTL <= now or k not in self.by_id]:
+                del held[did]
+            if not held:
+                self.invites.pop(cid, None)
+            return [(did, who) for did, (who, t) in sorted(held.items(), key=lambda x: x[1][1])]
+
+    def answer_invite(self, cid, did, agree, now):
+        """The invited character joins or says no. (inviter id, 0) or (None, error code). Joining forgets its other
+        invites, and replaces any application of its own."""
+        if not any(k == did for k, _ in self.invites_for(cid, now)):
+            return None, ERR_NO_INVITE
+        with STORE.lock:
+            held = self.invites.get(cid, {})
+            if did not in held:  # taken by another answer meanwhile
+                return None, ERR_NO_INVITE
+            inviter = held[did][0]
+            if not agree:
+                del held[did]
+                return inviter, 0
+            if self.of(cid):
+                return None, ERR_IN_DIVISION
+            error = self.join(cid, did, now)
+            if error:
+                return None, error
+            self.invites.pop(cid, None)
+            return inviter, 0
+
     def leave(self, cid):
         with STORE.lock:
             did = self.of(cid)
@@ -1184,6 +1243,8 @@ class Divisions:
             members = self.members(did)
             for cid in [cid for cid, r in self.rows.items() if r[0] == did]:
                 del self.rows[cid]
+            for held in self.invites.values():  # a new division could get the same id
+                held.pop(did, None)
             del self.by_id[did]
             self.taken -= {name_skeleton(d["name"]), name_skeleton(d["short"])}
             self.write((db.delete_division, did))
@@ -2458,6 +2519,13 @@ class Session:
     #   (15,15018) leave: u32 character -> empty (the client sets its division to 0 itself)
     #   (15,15005) dismiss: u32 character | u32 division -> empty; (15,15076) kick: u32 | u32 | u32 member -> empty
     #   (15,15062) online / (15,15066) waiting applications: u32 division -> u32 count
+    #   (15,15079) invite: u32 character | u32 invited character | u8 -> empty ("Invitation has been sent!")
+    #   (15,15080) my invites: u32 character -> u32 n | n x (u32 division | u32 inviter | str division name | u32
+    #     | str inviter name | str | str)  (FetchTeamInviteObserver 0x1039c2e0)
+    #   (15,15083) answer an invite: u32 character | u32 division | u8 1 join, 0 no -> u32 division when joined
+    # Pushed: (15,15085) an invite: u32 inviter | str division name | u32 division | u32 | str inviter name (the
+    # client pops up "<inviter> invites you to join <division>" and answers with 15083); (15,15086) to the inviter:
+    # u32 character | str its name | u8 1 joined, 0 said no.
     # (21,21074) TeamChange, pushed: u32 character | u32 | u32 division id (0: back to the "no division" window).
     def division_me(self, msg, write=False, size=0):
         """This session's character id, or None (answered with an error) when there is none, the request is shorter
@@ -2483,13 +2551,17 @@ class Session:
             return {s.character["id"] for s in ONLINE.values() if s.character}
 
     @staticmethod
-    def push_division(cid, did):
-        """Tell an online character its division changed (TeamChange)."""
+    def push_to(cid, catalog, type_, body):
+        """Send a message to a character if it is online on this server."""
         with ONLINE_LOCK:
             s = next((s for s in ONLINE.values() if s.character and s.character["id"] == cid), None)
         if s:
-            s.outbox.append(Message(21, 21074, flags=MSG_MULTI1, multi=0, body=struct.pack("<III", cid, 0, did)))
+            s.outbox.append(Message(catalog, type_, flags=MSG_MULTI1, multi=0, body=body))
             s.outbox_ready.set()
+
+    def push_division(self, cid, did):
+        """Tell an online character its division changed (TeamChange)."""
+        self.push_to(cid, 21, 21074, struct.pack("<III", cid, 0, did))
 
     def on_division_info(self, msg):
         ids = self.u32s(msg, 1)
@@ -2670,6 +2742,40 @@ class Session:
         d = DIVISIONS.get(ids[0])
         mine = d and d["leader"] == me
         self.reply(msg, struct.pack("<I", len(DIVISIONS.applicants(ids[0])) if mine else 0))
+
+    def on_send_division_invite(self, msg):
+        me = self.division_me(msg, write=True, size=8)
+        if me is None:
+            return
+        cid = self.u32s(msg, 1, 4)[0]
+        error = DIVISIONS.invite(me, cid, nation_of(cid), time.time())
+        if error:
+            return self.reply(msg, result=error)
+        self.reply(msg, b"")
+        did = DIVISIONS.of(me)
+        self.push_to(cid, 15, 15085, struct.pack("<I", me) + wstr(DIVISIONS.get(did)["name"])
+                     + struct.pack("<II", did, 0) + wstr(self.character["name"]))
+
+    def on_division_invites(self, msg):
+        me = self.division_me(msg)
+        if me is None:
+            return
+        rows = DIVISIONS.invites_for(me, time.time())
+        body = b"".join(struct.pack("<II", did, who) + wstr((DIVISIONS.get(did) or {}).get("name", ""))
+                        + struct.pack("<I", 0) + wstr((STORE.by_id(who) or {}).get("name", "")) + wstr("") * 2
+                        for did, who in rows)
+        self.reply(msg, struct.pack("<I", len(rows)) + body)
+
+    def on_answer_division_invite(self, msg):
+        me = self.division_me(msg, write=True, size=9)
+        if me is None:
+            return
+        did, agree = self.u32s(msg, 1, 4)[0], msg.body[8] == 1
+        inviter, error = DIVISIONS.answer_invite(me, did, agree, time.time())
+        if error:
+            return self.reply(msg, result=error)
+        self.reply(msg, struct.pack("<I", did) if agree else b"")
+        self.push_to(inviter, 15, 15086, struct.pack("<I", me) + wstr(self.character["name"]) + struct.pack("<B", agree))
 
     def on_login(self, msg):
         # body: u32 version | str8 account | str8 password | u32 region(10102) | u32 1 | str8 machine hash
@@ -2938,6 +3044,9 @@ HANDLERS = {
     (15, 15062): Session.on_division_online,     # UpdateTeamOnline
     (15, 15066): Session.on_division_waiting,    # CheckHasUnhandledApply
     (15, 15076): Session.on_kick_division,       # KickOffTeamMember
+    (15, 15079): Session.on_send_division_invite,  # SendTeamInvite
+    (15, 15080): Session.on_division_invites,    # FetchTeamInvite
+    (15, 15083): Session.on_answer_division_invite,  # TeamInviteAnswer
     (13, 13031): Session.on_division_members,    # GetCharacterByTeamID
     (15, 15098): Session.on_rank_list,           # CS_CharacterExpRank (Ranking, Honor tab)
     (15, 15099): Session.on_my_rank,             # CS_OneCharacterExpRank

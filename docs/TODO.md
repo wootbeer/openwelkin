@@ -121,10 +121,13 @@ reply layout, and answer with real data.
       character to the game server, base info (19,30040) carries it (-1 = none) and ranking rows too (0 = none); the
       client asks the gate (15,15023) for the short name. A change during a battle shows from the next one. Not tried
       in game (tools/test_match.py checks the bytes)
-- [ ] Division invites (15079 send, 15080 fetch, 15083 answer, 15085 / 15086 pushes), titles (13,13015 / 13017 /
-      13018), donating Crystal (15092), member limit upgrades (15093 / 15094), donation stats (15096), flags (15070 /
-      15074). Requests read 2026-11-17: 15079 u32 | u32 | u8, 15080 u32, 15083 u32 | u32 | u8, 15092 u32 | u32,
-      15094 u32 | u32, 15096 u32 | u32, (13,13015) u32 | u32 | u16 | u8 | u32, (13,13017) u32 | u32, (13,13018) u8 | u32
+- [x] Division invites, 2026-11-17, offline: the leader invites (15079), the player is asked at once (push 15085) or
+      sees them in its list (15080), answers (15083), and the leader hears the answer (push 15086). Kept in memory for
+      a day, at most 20 per player. tools/test_divisions.py. Not tried in game: where the client shows the invite list,
+      and which menus send 15079 (friend list "Divi.Invite", chat name menu "Invite to division")
+- [ ] Division titles (13,13015 / 13017 / 13018), donating Crystal (15092), member limit upgrades (15093 / 15094),
+      donation stats (15096), flags (15070 / 15074). Requests read 2026-11-17: 15092 u32 | u32, 15094 u32 | u32,
+      15096 u32 | u32, (13,13015) u32 | u32 | u16 | u8 | u32, (13,13017) u32 | u32, (13,13018) u8 | u32
 - [ ] (15,15022) UpdateCorpInfo
 - [ ] (15,15074) UpdateAllTeamFlag
 - [ ] (15,15093) GetAllUpGradeTeamMemberLimitPrice

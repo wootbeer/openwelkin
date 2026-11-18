@@ -73,6 +73,8 @@
   - [MyJoinTeamApply](#m-15-15012) `(15,15012)`
   - [GetMyManageJoinTeamApply](#m-15-15013) `(15,15013)`
   - [Quit division](#m-15-15018) `(15,15018)`
+  - [Division invites](#m-15-15080) `(15,15080)`
+  - [ReceiveTeamInvite](#m-15-15085) `(15,15085)`
   - [TeamChange](#m-21-21074) `(21,21074)`
   - [Task\_GetHoldTask](#m-20-20116) `(20,20116)`
   - [CS\_GetTaskServerAfficheList](#m-21-21048) `(21,21048)`
@@ -1006,6 +1008,28 @@ Request: `u32 division id | u32 first | u32 count`. Applications waiting for the
 ```
 
 Request: `u32 character id`. On result 0 the client sets its division to 0 itself. The leader can not quit (15047): it dismisses with (15,15005) `u32 character id | u32 division id`, after which the client does not clear its division; the emulator sends TeamChange 0. Kick: (15,15076) `u32 | u32 | u32 member id`, empty reply; the client then removes the member from its list and asks for the list again. Online members: (15,15062) `u32 division id`, reply `u32 count`.
+
+<a name="m-15-15080"></a>
+#### Division invites `(15,15080)`
+
+*S→C reply · partial*
+
+```text
+u32 n | n × (u32 division id | u32 inviter id | str division name | u32 | str inviter name | str | str)
+```
+
+Request: `u32 character id`. Read by FetchTeamInviteObserver (0x1039c2e0) into the GroupManager invite list (+0x244). The leader invites with (15,15079) `u32 character id | u32 invited character id | u8`, empty reply ("Invitation has been sent!"). The invited player answers with (15,15083) `u32 character id | u32 division id | u8 1 join, 0 no`; the reply is `u32 division id` when it joined, and on a yes the client empties its invite list. Errors: 15004 no such character, 15032 already in a division, 15039 other nation, 15050 already invited, 15051 no such invite, 15060 not the leader. The emulator keeps invites in memory for a day, at most 20 per player.
+
+<a name="m-15-15085"></a>
+#### ReceiveTeamInvite `(15,15085)`
+
+*S→C · partial*
+
+```text
+u32 inviter id | str division name | u32 division id | u32 | str inviter name
+```
+
+Handler 0x1039c190 (AddTeamInvite): pops up "&lt;inviter> invites you to join &lt;division>" (GUITEXT\_TEAMINVITE); Accept and Refuse send (15,15083) with the division id. The inviter then gets (15,15086) TeamInviteRes `u32 character id | str name | u8 1 joined, 0 said no` (handler 0x10395180), shown in chat as "&lt;name>Officially joined the division!" or "&lt;name>Refuse to join the division!".
 
 <a name="m-21-21074"></a>
 #### TeamChange `(21,21074)`

@@ -272,9 +272,11 @@ do not reach you, and to them you look offline in private messages.
 Players can make a division (the client's Team) from the hall's Division button: a name of 4 to 16 letters, digits,
 `_` or single spaces, and a short name of 2 to 5. Names are checked like character names, so none looks like a
 taken one or like staff. Players of the same nation apply from the list, and the leader takes or refuses them; a
-taken player joins at once. The leader can kick members or dismiss the division, and members can quit. A new
-division holds `MW_DIVISION_LIMIT` members (default 30). Divisions are kept in `characters.db`. Not tried with the
-real client yet; division chat, invites, titles and the tag before names in battle are not done.
+taken player joins at once. The leader can also invite a player of the same nation, who says yes or no; invites
+last a day and are forgotten at a restart. The leader can kick members or dismiss the division, and members can
+quit. A new division holds `MW_DIVISION_LIMIT` members (default 30). Divisions are kept in `characters.db`, and
+members show the division's short name before their name in battle. Not tried with the real client yet; division
+chat, titles and donations are not done.
 
 ## Load test
 

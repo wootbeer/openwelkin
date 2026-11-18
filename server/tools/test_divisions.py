@@ -1,7 +1,7 @@
 # MarsWar server emulator. Copyright (C) 2026 the MarsWar emulator contributors.
 # Licensed under the GNU Affero General Public License v3 or later; see LICENSE.
 """test_divisions.py -- start a server in a temporary folder with fake players and walk through divisions (the
-client's Team): make one, apply, agree, refuse, kick, leave, dismiss. Names a player types are checked like character
+client's Team): make one, apply, agree, refuse, invite, kick, leave, dismiss. Names a player types are checked like character
 names, only the leader may manage, only the right side may join, and divisions are still there after a restart."""
 import asyncio
 import os
@@ -92,6 +92,39 @@ async def pushed(gate, seconds=1.5):
                 return did
     except asyncio.TimeoutError:
         return None
+
+
+async def push_of(gate, type_, seconds=1.5):
+    """The body of the next (15, type_) push, or None."""
+    try:
+        while True:
+            m = await asyncio.wait_for(gate.recv(), seconds)
+            if (m.catalog, m.type) == (15, type_):
+                return m.body
+    except asyncio.TimeoutError:
+        return None
+
+
+def invite_push(b):
+    """(15,15085): u32 inviter | str division name | u32 division | u32 | str inviter name, read to the end."""
+    inviter = U32.unpack_from(b)[0]
+    name, off = ls.read_wstr(b, 4)
+    did, _ = struct.unpack_from("<II", b, off)
+    who, off = ls.read_wstr(b, off + 8)
+    return inviter, name, did, who, off == len(b)
+
+
+def invite_rows(b):
+    """(15,15080) reply: [(division, inviter, division name, inviter name)], and whether it reads to the end."""
+    n, off, out = U32.unpack_from(b)[0], 4, []
+    for _ in range(n):
+        did, who = struct.unpack_from("<II", b, off)
+        name, off = ls.read_wstr(b, off + 8)
+        inviter, off = ls.read_wstr(b, off + 4)
+        _, off = ls.read_wstr(b, off)
+        _, off = ls.read_wstr(b, off)
+        out.append((did, who, name, inviter))
+    return out, off == len(b)
 
 
 async def application(gate, cid):
@@ -228,12 +261,57 @@ async def scenario():
           and await division_of(ben, ben_id) == 0)
     check("the leader can not leave", (await act(amy, 15018, U32.pack(amy_id))).result == ls.ERR_LEADER_STAYS)
 
+    # --- invites: the leader asks a player, who says yes or no ---
+    def invite(gate, me, cid):
+        return act(gate, 15079, struct.pack("<IIB", me, cid, 0))
+
+    def answer(gate, me, d, agree):
+        return act(gate, 15083, struct.pack("<IIB", me, d, agree))
+    check("a player in no division can not invite", (await invite(ben, ben_id, cara_id)).result == ls.ERR_NOT_LEADER)
+    check("the other side can not be invited", (await invite(amy, amy_id, dan_id)).result == ls.ERR_DIVISION_NATION)
+    check("a member of another division can not be invited",
+          (await invite(amy, amy_id, cara_id)).result == ls.ERR_THEY_ARE_IN_DIVISION)
+    check("the leader can not invite itself", (await invite(amy, amy_id, amy_id)).result == ls.ERR_THEY_ARE_IN_DIVISION)
+    check("no invite for a character that does not exist",
+          (await invite(amy, amy_id, 0x7FFFFFF0)).result == ls.ERR_NO_CHARACTER)
+    r = await invite(amy, amy_id, ben_id)
+    check("the leader invites a player", r.result == 0 and r.body == b"", r.result)
+    b = await push_of(ben, 15085)
+    check("the invited player is asked at once", b is not None and invite_push(b) == (amy_id, "Red Wolves", did, "amy", True),
+          b and invite_push(b))
+    check("inviting twice is refused", (await invite(amy, amy_id, ben_id)).result == ls.ERR_ALREADY_INVITED)
+    r = await ben.request(15, 15080, U32.pack(ben_id))
+    check("the invite is in the player's list", r.result == 0 and invite_rows(r.body) == ([(did, amy_id, "Red Wolves", "amy")], True),
+          invite_rows(r.body))
+    check("nobody else has it", invite_rows((await cara.request(15, 15080, U32.pack(cara_id))).body) == ([], True))
+    check("no answer to an invite never sent", (await answer(cara, cara_id, did, 1)).result == ls.ERR_NO_INVITE
+          and await division_of(cara, cara_id) == other)
+    r = await answer(ben, ben_id, did, 0)
+    check("the player says no", r.result == 0 and r.body == b"", r.result)
+    b = await push_of(amy, 15086)
+    check("the leader hears no", b is not None and U32.unpack_from(b)[0] == ben_id and ls.read_wstr(b, 4) == ("ben", len(b) - 1)
+          and b[-1] == 0, b)
+    check("a refused invite is gone", invite_rows((await ben.request(15, 15080, U32.pack(ben_id))).body) == ([], True)
+          and (await answer(ben, ben_id, did, 1)).result == ls.ERR_NO_INVITE)
+    check("the player is still in no division", await division_of(ben, ben_id) == 0)
+    await invite(amy, amy_id, ben_id)
+    await push_of(ben, 15085)
+    r = await answer(ben, ben_id, did, 1)
+    check("the player says yes and joins", r.result == 0 and r.body == U32.pack(did), r.result)
+    b = await push_of(amy, 15086)
+    check("the leader hears yes", b is not None and b[-1] == 1, b)
+    check("the player is in it at the next login", await division_of(ben, ben_id) == did)
+    check("its invites are gone after joining", invite_rows((await ben.request(15, 15080, U32.pack(ben_id))).body) == ([], True))
+    check("a member can not invite", (await invite(ben, ben_id, cara_id)).result == ls.ERR_NOT_LEADER)
+    await act(ben, 15018, U32.pack(ben_id))
+
     # --- bad requests: short bodies and unknown players get an error, never a crash ---
     stranger = await ts.gate_session((await ts.login("nochar"))[1])
     check("a player with no character can not make one",
           (await stranger.request(15, 15003, U32.pack(amy_id) + ls.wstr("Sneaky") + ls.wstr("SN"))).result == ls.ERR_UNKNOWN)
     for type_, catalog in ((15003, 15), (15011, 15), (15015, 15), (15076, 15), (15005, 15), (15023, 15), (13031, 13),
-                           (15021, 15), (15013, 15), (15062, 15), (15066, 15), (15012, 15), (15016, 15), (15014, 15)):
+                           (15021, 15), (15013, 15), (15062, 15), (15066, 15), (15012, 15), (15016, 15), (15014, 15),
+                           (15079, 15), (15080, 15), (15083, 15)):
         await asyncio.sleep(ls.CHAT_EVERY + 0.05)
         amy.send(ls.Message(catalog, type_, token=900, flags=ls.MSG_REQUEST, body=b"\x01"))
     await asyncio.sleep(0.3)
