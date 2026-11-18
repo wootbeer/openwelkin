@@ -125,12 +125,13 @@ reply layout, and answer with real data.
       sees them in its list (15080), answers (15083), and the leader hears the answer (push 15086). Kept in memory for
       a day, at most 20 per player. tools/test_divisions.py. Not tried in game: where the client shows the invite list,
       and which menus send 15079 (friend list "Divi.Invite", chat name menu "Invite to division")
-- [ ] Division titles (13,13015 / 13017 / 13018), donating Crystal (15092), member limit upgrades (15093 / 15094),
-      donation stats (15096), flags (15070 / 15074). Requests read 2026-11-17: 15092 u32 | u32, 15094 u32 | u32,
-      15096 u32 | u32, (13,13015) u32 | u32 | u16 | u8 | u32, (13,13017) u32 | u32, (13,13018) u8 | u32
+- [x] Division Crystal, 2026-11-17, offline: members donate (15092, at least 100), see what they gave (15096), the
+      leader buys 20 more member places (15093 prices, 15094), up to the client's 500. The amount given is kept per
+      member (division_members.donated, added to older databases by itself). tools/test_divisions.py. Not tried in game
+- [ ] Division titles (13,13015 / 13017 / 13018), flags (15070 / 15074). Requests read 2026-11-17:
+      (13,13015) u32 | u32 | u16 | u8 | u32, (13,13017) u32 | u32, (13,13018) u8 | u32
 - [ ] (15,15022) UpdateCorpInfo
 - [ ] (15,15074) UpdateAllTeamFlag
-- [ ] (15,15093) GetAllUpGradeTeamMemberLimitPrice
 
 ## Battlefield / campaign
 - [ ] (17,17079) BF_UpdateMyHeadQuarter / UpdateCorpBasement

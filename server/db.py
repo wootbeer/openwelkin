@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS divisions (
 CREATE TABLE IF NOT EXISTS division_members (
     character_id INTEGER PRIMARY KEY REFERENCES characters (id),
     division_id INTEGER NOT NULL REFERENCES divisions (id) ON DELETE CASCADE, state INTEGER NOT NULL,
-    since INTEGER NOT NULL);
+    since INTEGER NOT NULL, donated INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX IF NOT EXISTS division_members_division ON division_members (division_id);
 """
 
@@ -259,10 +259,15 @@ DIVISION_FIELDS = ("id", "name", "short", "leader", "nation", "created", "money"
 
 
 def load_divisions(con):
-    """({division id: division}, {character id: [division id, state, since]}): all of them, they are few."""
+    """({division id: division}, {character id: [division id, state, since, crystal donated]}): all of them, they
+    are few."""
+    if "donated" not in {r[1] for r in con.execute("PRAGMA table_info(division_members)")}:  # made before 2026-11-17
+        with con:
+            con.execute("ALTER TABLE division_members ADD COLUMN donated INTEGER NOT NULL DEFAULT 0")
     divisions = {row[0]: dict(zip(DIVISION_FIELDS, row)) for row in con.execute(
         "SELECT id, name, short, leader, nation, created, money, points, member_limit FROM divisions")}
-    members = {cid: [did, state, since] for cid, did, state, since in con.execute("SELECT * FROM division_members")}
+    members = {cid: [did, state, since, donated] for cid, did, state, since, donated in con.execute(
+        "SELECT character_id, division_id, state, since, donated FROM division_members")}
     return divisions, members
 
 
@@ -282,12 +287,14 @@ def delete_division(con, did):
 
 
 def write_division_member(con, cid, row):
-    """row = [division id, state, since], or None to remove the character's row (call inside a transaction)."""
+    """row = [division id, state, since(, crystal donated)], or None to remove the character's row (call inside a
+    transaction). A row without the donated part starts again at 0."""
     if row is None:
         con.execute("DELETE FROM division_members WHERE character_id = ?", (cid,))
     else:
-        con.execute("INSERT INTO division_members VALUES (?, ?, ?, ?) ON CONFLICT (character_id) DO UPDATE SET "
-                    "division_id = excluded.division_id, state = excluded.state, since = excluded.since", (cid, *row))
+        con.execute("INSERT INTO division_members VALUES (?, ?, ?, ?, ?) ON CONFLICT (character_id) DO UPDATE SET "
+                    "division_id = excluded.division_id, state = excluded.state, since = excluded.since, "
+                    "donated = excluded.donated", (cid, *row[:3], row[3] if len(row) > 3 else 0))
 
 
 def open_characters(path):

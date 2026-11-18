@@ -45,7 +45,7 @@ def info(r):
     short, off = ls.read_wstr(r.body, off)
     points, limit, money = struct.unpack_from("<III", r.body, off)
     return dict(name=name, id=did, leader=leader, leader_name=leader_name, members=members, online=online,
-                short=short, limit=limit, created=created, end=off + 24 == len(r.body))
+                short=short, limit=limit, money=money, created=created, end=off + 24 == len(r.body))
 
 
 def ids_of(r, first_field=True):
@@ -125,6 +125,16 @@ def invite_rows(b):
         _, off = ls.read_wstr(b, off)
         out.append((did, who, name, inviter))
     return out, off == len(b)
+
+
+async def crystal(gate, cid):
+    """The player's own Crystal (24,24019)."""
+    return U32.unpack((await gate.request(24, 24019, U32.pack(cid))).body)[0]
+
+
+async def gave(gate, cid, did):
+    """Crystal the player gave its division (15,15096)."""
+    return U32.unpack((await gate.request(15, 15096, struct.pack("<II", cid, did))).body)[0]
 
 
 async def application(gate, cid):
@@ -305,13 +315,44 @@ async def scenario():
     check("a member can not invite", (await invite(ben, ben_id, cara_id)).result == ls.ERR_NOT_LEADER)
     await act(ben, 15018, U32.pack(ben_id))
 
+    # --- Crystal: members give it, the leader buys more member places with it ---
+    def donate(gate, me, amount):
+        return act(gate, 15092, struct.pack("<II", me, amount))
+
+    def upgrade(gate, me, add):
+        return act(gate, 15094, struct.pack("<II", me, add))
+    check("a player in no division can not give", (await donate(ben, ben_id, 1000)).result == ls.ERR_NOT_YOUR_DIVISION)
+    for amount in (0, ls.DONATE_MIN - 1):
+        check(f"giving {amount} is refused", (await donate(amy, amy_id, amount)).result == ls.ERR_DONATION)
+    before = await crystal(amy, amy_id)
+    check("giving more than you have is refused", (await donate(amy, amy_id, before + 1)).result == ls.ERR_CRYSTAL
+          and await crystal(amy, amy_id) == before)
+    check("giving 2^32-1 is refused", (await donate(amy, amy_id, 0xFFFFFFFF)).result == ls.ERR_DONATION)
+    r = await donate(amy, amy_id, 1000)
+    check("a member gives 1000", r.result == 0 and r.body == b"", r.result)
+    check("it left the player's Crystal", await crystal(amy, amy_id) == before - 1000)
+    check("the division has it", info(await amy.request(15, 15023, U32.pack(did)))["money"] == 1000)
+    check("the player's total given is 1000", await gave(amy, amy_id, did) == 1000)
+    check("a player in no division gave nothing", await gave(ben, ben_id, did) == 0)
+    r = await amy.request(15, 15093)
+    check("the price list has one step", r.body == struct.pack("<III", 1, ls.DIVISION_STEP, ls.DIVISION_STEP_CRYSTAL), r.body)
+    check("only the client's step can be bought", (await upgrade(amy, amy_id, 5)).result == ls.ERR_NO_PRICE)
+    check("not enough division Crystal", (await upgrade(amy, amy_id, ls.DIVISION_STEP)).result == ls.ERR_DIVISION_POOR)
+    check("a non-member can not upgrade", (await upgrade(ben, ben_id, ls.DIVISION_STEP)).result == ls.ERR_NOT_LEADER)
+    await donate(amy, amy_id, ls.DIVISION_STEP_CRYSTAL)
+    check("the leader upgrades", (await upgrade(amy, amy_id, ls.DIVISION_STEP)).result == 0)
+    i = info(await amy.request(15, 15023, U32.pack(did)))
+    check("the limit went up and the price came off", (i["limit"], i["money"])
+          == (ls.DIVISION_LIMIT + ls.DIVISION_STEP, 1000), i)
+    check("the player's total counts both gifts", await gave(amy, amy_id, did) == 1000 + ls.DIVISION_STEP_CRYSTAL)
+
     # --- bad requests: short bodies and unknown players get an error, never a crash ---
     stranger = await ts.gate_session((await ts.login("nochar"))[1])
     check("a player with no character can not make one",
           (await stranger.request(15, 15003, U32.pack(amy_id) + ls.wstr("Sneaky") + ls.wstr("SN"))).result == ls.ERR_UNKNOWN)
     for type_, catalog in ((15003, 15), (15011, 15), (15015, 15), (15076, 15), (15005, 15), (15023, 15), (13031, 13),
                            (15021, 15), (15013, 15), (15062, 15), (15066, 15), (15012, 15), (15016, 15), (15014, 15),
-                           (15079, 15), (15080, 15), (15083, 15)):
+                           (15079, 15), (15080, 15), (15083, 15), (15092, 15), (15094, 15), (15096, 15)):
         await asyncio.sleep(ls.CHAT_EVERY + 0.05)
         amy.send(ls.Message(catalog, type_, token=900, flags=ls.MSG_REQUEST, body=b"\x01"))
     await asyncio.sleep(0.3)
@@ -329,6 +370,10 @@ async def scenario():
           and await division_of(amy, amy_id) == 0)
     r = await create(amy, amy_id, "Red Wolves", "RW")
     check("its name is free again", r.result == 0, r.result)
+    check("a new division starts with no Crystal and nothing given",
+          info(await amy.request(15, 15023, U32.pack(U32.unpack(r.body)[0])))["money"] == 0
+          and await gave(amy, amy_id, U32.unpack(r.body)[0]) == 0)
+    await act(amy, 15092, struct.pack("<II", amy_id, 500))
     return U32.unpack(r.body)[0], other, amy_id, cara_id
 
 
@@ -345,8 +390,9 @@ async def after_restart(did, other, amy_id, cara_id):
     check("after a restart the leader is still in it", await division_of(amy, amy_id) == did)
     check("and the other division's leader too", await division_of(cara, cara_id) == other)
     i = info(await amy.request(15, 15023, U32.pack(did)))
-    check("after a restart the info is the same", (i["name"], i["short"], i["leader"], i["members"])
-          == ("Red Wolves", "RW", amy_id, 1), i)
+    check("after a restart the info is the same", (i["name"], i["short"], i["leader"], i["members"], i["money"])
+          == ("Red Wolves", "RW", amy_id, 1, 500), i)
+    check("after a restart what the leader gave is kept", await gave(amy, amy_id, did) == 500)
     check("after a restart names are still taken", (await create(amy, amy_id, "Blue Hawks", "BH")).result
           in (ls.ERR_DIVISION_TAKEN, ls.ERR_IN_DIVISION))
 

@@ -73,6 +73,7 @@
   - [MyJoinTeamApply](#m-15-15012) `(15,15012)`
   - [GetMyManageJoinTeamApply](#m-15-15013) `(15,15013)`
   - [Quit division](#m-15-15018) `(15,15018)`
+  - [Donate Crystal to the division](#m-15-15092) `(15,15092)`
   - [Division invites](#m-15-15080) `(15,15080)`
   - [ReceiveTeamInvite](#m-15-15085) `(15,15085)`
   - [TeamChange](#m-21-21074) `(21,21074)`
@@ -1008,6 +1009,17 @@ Request: `u32 division id | u32 first | u32 count`. Applications waiting for the
 ```
 
 Request: `u32 character id`. On result 0 the client sets its division to 0 itself. The leader can not quit (15047): it dismisses with (15,15005) `u32 character id | u32 division id`, after which the client does not clear its division; the emulator sends TeamChange 0. Kick: (15,15076) `u32 | u32 | u32 member id`, empty reply; the client then removes the member from its list and asks for the list again. Online members: (15,15062) `u32 division id`, reply `u32 count`.
+
+<a name="m-15-15092"></a>
+#### Donate Crystal to the division `(15,15092)`
+
+*S→C reply · partial*
+
+```text
+(empty)
+```
+
+Request: `u32 character id | u32 Crystal` (CTeamListUI donate box; the client asks for at least 100). On result 0 the client asks for its balance, the division info and (15,15096) `u32 character id | u32 division id`, reply `u32 Crystal given` ("Total Donate"). Member places: (15,15093) has an empty request and replies `u32 n | n × (u32 places added | u32 Crystal)`; the upgrade button looks up 20 and the client stops at 500. (15,15094) `u32 character id | u32 places added` buys them with the division's Crystal, empty reply, then the client asks for the info again. Errors: 15062 the division has too little Crystal, 15063 bad amount, 15064 no price for that step, 24010 the player has too little Crystal. The emulator: leader only for upgrades, 20 places for `MW_DIVISION_STEP_CRYSTAL` (default 10000).
 
 <a name="m-15-15080"></a>
 #### Division invites `(15,15080)`

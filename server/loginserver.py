@@ -885,6 +885,21 @@ class Store:
             self.tops[(stat, period)] = (now, rows)
             return rows
 
+    def pay(self, cid, amount):
+        """Take amount Crystal from the character, saved at once. False if it has not that much."""
+        with self.lock:
+            c = self.by_id(cid)
+            if not c or amount < 0:
+                return False
+            st = c.setdefault("stats", {})
+            have = st.get("money", START_MONEY)
+            if have < amount:
+                return False
+            st["money"] = have - amount
+            self.mark_dirty(cid, stats={"money"})
+            self.save()
+            return True
+
     def reset_talents(self, cid):
         """Forget all talents for crystal. 0, or the client's error code. The client checks the price and the wait too,
         but it must not be trusted."""
@@ -1020,6 +1035,12 @@ ERR_NO_CHARACTER, ERR_THEY_ARE_IN_DIVISION, ERR_ALREADY_INVITED, ERR_NO_INVITE =
 # Invites the leader sends are kept in memory only (a restart forgets them), each for INVITE_TTL seconds; a player
 # holds at most INVITES_KEPT of them, the oldest dropped first.
 INVITE_TTL, INVITES_KEPT = 24 * 3600, 20
+# Members give the division Crystal (at least DONATE_MIN at a time); the leader spends it on DIVISION_STEP more member
+# places for DIVISION_STEP_CRYSTAL, up to DIVISION_MAX (the client's own limit).
+DONATE_MIN, DIVISION_STEP, DIVISION_MAX = 100, 20, 500
+DIVISION_STEP_CRYSTAL = min(max(int(os.environ.get("MW_DIVISION_STEP_CRYSTAL", "10000") or 10000), 0), 10 ** 9)
+ERR_DIVISION_POOR, ERR_DONATION, ERR_NO_PRICE, ERR_CRYSTAL = 15062, 15063, 15064, 24010
+CRYSTAL_MAX = 2 ** 31 - 1  # the client shows Crystal as a signed 32-bit number
 
 
 def division_name_error(name, short):
@@ -1156,6 +1177,44 @@ class Divisions:
                 return None, ERR_NO_APPLICATION
             error = self.join(cid, row[0], now)
             return (None, error) if error else (row[0], 0)
+
+    def donate(self, cid, amount):
+        """A member gives the division Crystal from its own. 0 or an error code."""
+        with STORE.lock:
+            did = self.of(cid)
+            if not did:
+                return ERR_NOT_YOUR_DIVISION
+            d = self.by_id[did]
+            if amount < DONATE_MIN or d["money"] + amount > CRYSTAL_MAX:
+                return ERR_DONATION
+            if not STORE.pay(cid, amount):
+                return ERR_CRYSTAL
+            d["money"] += amount
+            row = self.rows[cid]
+            row[3:] = [self.donated(cid) + amount]
+            self.write((db.write_division, d), (db.write_division_member, cid, row))
+            return 0
+
+    def donated(self, cid):
+        """Crystal the character gave its division since it joined."""
+        row = self.rows.get(cid)
+        return row[3] if row and len(row) > 3 and row[1] == D_MEMBER else 0
+
+    def upgrade(self, leader, add):
+        """The leader buys DIVISION_STEP more member places with the division's Crystal. 0 or an error code."""
+        with STORE.lock:
+            did = self.of(leader)
+            d = self.by_id.get(did)
+            if not d or d["leader"] != leader:
+                return ERR_NOT_LEADER
+            if add != DIVISION_STEP or d["limit"] + add > DIVISION_MAX:
+                return ERR_NO_PRICE
+            if d["money"] < DIVISION_STEP_CRYSTAL:
+                return ERR_DIVISION_POOR
+            d["money"] -= DIVISION_STEP_CRYSTAL
+            d["limit"] += add
+            self.write((db.write_division, d))
+            return 0
 
     def invite(self, leader, cid, nation, now):
         """The leader invites a character of its nation who is in no division. 0 or an error code."""
@@ -2523,6 +2582,10 @@ class Session:
     #   (15,15080) my invites: u32 character -> u32 n | n x (u32 division | u32 inviter | str division name | u32
     #     | str inviter name | str | str)  (FetchTeamInviteObserver 0x1039c2e0)
     #   (15,15083) answer an invite: u32 character | u32 division | u8 1 join, 0 no -> u32 division when joined
+    #   (15,15092) donate: u32 character | u32 Crystal -> empty (the client then asks for its balance, the division
+    #     info and 15096); (15,15096) what I gave: u32 character | u32 division -> u32 Crystal
+    #   (15,15093) prices: empty -> u32 n | n x (u32 places added | u32 Crystal); the upgrade button looks up 20
+    #   (15,15094) upgrade: u32 character | u32 places added (20) -> empty (the client asks for the info again)
     # Pushed: (15,15085) an invite: u32 inviter | str division name | u32 division | u32 | str inviter name (the
     # client pops up "<inviter> invites you to join <division>" and answers with 15083); (15,15086) to the inviter:
     # u32 character | str its name | u8 1 joined, 0 said no.
@@ -2742,6 +2805,32 @@ class Session:
         d = DIVISIONS.get(ids[0])
         mine = d and d["leader"] == me
         self.reply(msg, struct.pack("<I", len(DIVISIONS.applicants(ids[0])) if mine else 0))
+
+    def on_donate_division(self, msg):
+        me = self.division_me(msg, write=True, size=8)
+        if me is None:
+            return
+        amount = self.u32s(msg, 1, 4)[0]
+        error = DIVISIONS.donate(me, amount)
+        if error:
+            return self.reply(msg, result=error)
+        log(f"{self.account}: {self.character['name']} gave division {DIVISIONS.of(me)} {amount} Crystal")
+        self.reply(msg, b"")
+
+    def on_my_donations(self, msg):
+        me = self.division_me(msg)
+        if me is not None:
+            self.reply(msg, struct.pack("<I", DIVISIONS.donated(me)))
+
+    def on_division_prices(self, msg):
+        self.reply(msg, struct.pack("<III", 1, DIVISION_STEP, DIVISION_STEP_CRYSTAL))
+
+    def on_upgrade_division(self, msg):
+        me = self.division_me(msg, write=True, size=8)
+        if me is None:
+            return
+        error = DIVISIONS.upgrade(me, self.u32s(msg, 1, 4)[0])
+        self.reply(msg, result=error) if error else self.reply(msg, b"")
 
     def on_send_division_invite(self, msg):
         me = self.division_me(msg, write=True, size=8)
@@ -3045,6 +3134,10 @@ HANDLERS = {
     (15, 15066): Session.on_division_waiting,    # CheckHasUnhandledApply
     (15, 15076): Session.on_kick_division,       # KickOffTeamMember
     (15, 15079): Session.on_send_division_invite,  # SendTeamInvite
+    (15, 15092): Session.on_donate_division,     # CharacterContributeMoneyToTeam
+    (15, 15093): Session.on_division_prices,     # GetAllUpGradeTeamMemberLimitPrice
+    (15, 15094): Session.on_upgrade_division,    # UpGradeTeamMemberLimit
+    (15, 15096): Session.on_my_donations,        # GetTeamContributeMoneyStatByCharacterID
     (15, 15080): Session.on_division_invites,    # FetchTeamInvite
     (15, 15083): Session.on_answer_division_invite,  # TeamInviteAnswer
     (13, 13031): Session.on_division_members,    # GetCharacterByTeamID

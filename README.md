@@ -274,9 +274,10 @@ Players can make a division (the client's Team) from the hall's Division button:
 taken one or like staff. Players of the same nation apply from the list, and the leader takes or refuses them; a
 taken player joins at once. The leader can also invite a player of the same nation, who says yes or no; invites
 last a day and are forgotten at a restart. The leader can kick members or dismiss the division, and members can
-quit. A new division holds `MW_DIVISION_LIMIT` members (default 30). Divisions are kept in `characters.db`, and
+quit. A new division holds `MW_DIVISION_LIMIT` members (default 30). Members can give the division Crystal, and the
+leader spends it on 20 more places at a time (`MW_DIVISION_STEP_CRYSTAL`, default 10000), up to 500. Divisions are kept in `characters.db`, and
 members show the division's short name before their name in battle. Not tried with the real client yet; division
-chat, titles and donations are not done.
+chat and titles are not done.
 
 ## Load test
 
