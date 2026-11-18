@@ -140,7 +140,13 @@ reply layout, and answer with real data.
       Staff Officers (7), at most 1, 2 and 3 (the last three numbers of 15023, which turn the appoint buttons off when
       full; 0 turns them all off), one title per member; (13,13017) takes one away (the leader, or the officer itself);
       (13,13018) lists them. D.C.O. and Personnel Officers may invite (the friend list offers it to 2, 4, 6). Kept in
-      division_members.title. tools/test_divisions.py. Not tried in game: the appoint window (where it opens from)
+      division_members.title. tools/test_divisions.py. Real client 2026-11-18: the Division window's "Assign Officials"
+      opens the appoint window with all three buttons on, but its name prompt (CTextInputUI, dialog 0x19) hides itself
+      before it sends Ok, and CTeamAppointUI::TeamAppointEvent only acts while the prompt is visible, so this client
+      never sends 13015 (Enter does not confirm either). Admins give titles instead (admin command `title`). The
+      members list shows "Staff Officer"; the officer's row in the appoint window has a button (its label is the
+      wrong text, "Unable to find the player.") that sends 13017, and the title goes. Not tried: the friend-list invite
+      by a Personnel Officer
 - [ ] Division flags (15,15070 UpdateTeamFlag / 15074 UpdateAllTeamFlag): read by GroupManager::UpdateTeamFlag and
       used only by OccupyIcon::Update (GetTeamFlagList), so they are the division banners on captured campaign
       points; they wait for the campaign map

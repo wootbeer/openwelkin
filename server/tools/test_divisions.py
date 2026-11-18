@@ -375,6 +375,16 @@ async def scenario():
           (await invite(ben, ben_id, cara_id)).result == ls.ERR_THEY_ARE_IN_DIVISION)
     check("the leader takes the title away", (await unappoint(amy, amy_id, ben_id)).result == 0
           and await titles() == [(amy_id, amy_id, ls.TITLE_CO)])
+    # the game's appoint window never sends 13015 (its name prompt hides before the window reads it), so admins can
+    check("an admin makes a member Staff Officer", "ben is now staff" in ts.admin("title ben staff")
+          and await titles() == [(amy_id, amy_id, ls.TITLE_CO), (ben_id, ben_id, 7)])
+    check("an admin can not change the leader's title", "leads its division" in ts.admin("title amy dco"))
+    check("an admin title needs a division", "in no division" in ts.admin("title dan staff"))
+    check("an admin title needs a character", "no character" in ts.admin("title nobody staff"))
+    check("an admin title must be one of the officer titles", "usage" in ts.admin("title ben boss")
+          and "usage" in ts.admin("title ben"))
+    check("an admin takes the title away", "ben is now none" in ts.admin("title ben none")
+          and await titles() == [(amy_id, amy_id, ls.TITLE_CO)])
     check("a member can not invite", (await invite(ben, ben_id, cara_id)).result == ls.ERR_NOT_LEADER)
     await act(ben, 15018, U32.pack(ben_id))
 

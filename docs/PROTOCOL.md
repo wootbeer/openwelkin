@@ -967,18 +967,18 @@ Request: `u8 kind (3 = division) | u32 division id`, sent at login and right aft
 (empty)
 ```
 
-Request (GroupManager::request\_SetTeamTitle, from the appoint window CTeamAppointUI): `u32 character id | u32 member id | u16 title | u8 kind (3) | u32 division id`. The player types the member's name; the client looks it up in its members list ("Unable to find the player." if it is not there). On success SetTeamTitleObserver asks (13,13018) again; on an error it shows the error text. The emulator lets only the leader appoint, only titles 6 D.C.O., 4 Personnel Officer and 7 Staff Officer, one title per member, up to the limits in (15,15023). Errors: 13006 already has a title, 13007 no such title, 15020 that title is full, 15027 not in your division, 15060 not the leader.
+Request (GroupManager::request\_SetTeamTitle, from the appoint window CTeamAppointUI): `u32 character id | u32 member id | u16 title | u8 kind (3) | u32 division id`. The player types the member's name; the client looks it up in its members list ("Unable to find the player." if it is not there). On success SetTeamTitleObserver asks (13,13018) again; on an error it shows the error text. Real client 2026-11-18: this is never sent. The name prompt (CTextInputUI, dialog 0x19) hides itself and then sends its Ok event, and TeamAppointEvent goes on only while that prompt is visible, so the request is dropped. The emulator's admin command `title` gives titles instead. The emulator lets only the leader appoint, only titles 6 D.C.O., 4 Personnel Officer and 7 Staff Officer, one title per member, up to the limits in (15,15023). Errors: 13006 already has a title, 13007 no such title, 15020 that title is full, 15027 not in your division, 15060 not the leader.
 
 <a name="m-13-13017"></a>
 #### DeleteTeamTitle (Remove Position) `(13,13017)`
 
-*S→C reply · from the code*
+*S→C reply · verified*
 
 ```text
 (empty)
 ```
 
-Request (GroupManager::request\_DeleteTeamTitle, from the members window and the appoint window's "Remove Position"): `u32 character id | u32 title id` (the first number of the member's (13,13018) row). On success DeleteTeamTitleObserver asks (13,13018) again and refreshes the open windows. The emulator lets the leader take any officer's title and an officer give up its own; the leader's C.O. stays. Errors: 13008 no such title, 15060 not the leader.
+Request (GroupManager::request\_DeleteTeamTitle, from the members window and the button on an officer's row in the appoint window, whose label shows the wrong text "Unable to find the player."): `u32 character id | u32 title id` (the first number of the member's (13,13018) row). On success DeleteTeamTitleObserver asks (13,13018) again and refreshes the open windows. The emulator lets the leader take any officer's title and an officer give up its own; the leader's C.O. stays. Errors: 13008 no such title, 15060 not the leader. Real client 2026-11-18: works.
 
 <a name="m-13-13031"></a>
 #### GetCharacterByTeamID (members) `(13,13031)`

@@ -1240,6 +1240,21 @@ class Divisions:
             self.write((db.write_division_member, cid, self.rows[cid]))
             return 0
 
+    def give_title(self, cid, title):
+        """Admin: set a member's title (0 takes it away), whoever leads. 0 or an error code."""
+        with STORE.lock:
+            did = self.of(cid)
+            if not did:
+                return ERR_NOT_YOUR_DIVISION
+            if self.by_id[did]["leader"] == cid or (title and title not in TITLE_LIMITS):
+                return ERR_NO_TITLE
+            if title and title != self.rows[cid][4] and (
+                    sum(t == title for _, t in self.titles(did)) >= TITLE_LIMITS[title]):
+                return ERR_TITLES_FULL
+            self.rows[cid][4] = title
+            self.write((db.write_division_member, cid, self.rows[cid]))
+            return 0
+
     def remove_title(self, me, cid):
         """The leader takes a member's title away, or a member gives up its own. 0 or an error code."""
         with STORE.lock:
@@ -1495,7 +1510,7 @@ CHAT_MAX, CHAT_EVERY, CHAT_QUEUE = 200, 0.5, 100  # characters in a line, second
 GM_COMMANDS = {"who", "matches", "aim", "kick", "ban", "unban", "bans", "goto", "tell", "mute", "unmute"}
 GOTO_LIMIT = 100000.0  # goto refuses positions farther out than this
 GM_LEVEL = {"player": 0, "gm": 101, "admin": 110}  # sent in CharacterOnline; 101..110 makes the client a GM
-ROLE_COMMANDS = {"player": set(), "gm": GM_COMMANDS, "admin": GM_COMMANDS | {"ipban", "unipban", "role", "backup", "notice"}}
+ROLE_COMMANDS = {"player": set(), "gm": GM_COMMANDS, "admin": GM_COMMANDS | {"ipban", "unipban", "role", "backup", "notice", "title"}}
 ONLINE_LOCK = threading.Lock()
 LOGIN_FAILS = {}  # ip -> [failure times]
 LOGIN_FAILS_LOCK = threading.Lock()
@@ -3575,6 +3590,8 @@ def on_login_message(link, msg):
         return mute_here(msg["name"], msg["until"])
     if kind == "goto":
         return teleport(msg["account"], tuple(msg["pos"]))
+    if kind == "title":
+        return title_here(str(msg["name"]), int(msg["title"]))
     if kind == "gm_reply":
         with ONLINE_LOCK:
             session = ONLINE.get(msg["account"])
@@ -5309,6 +5326,7 @@ ADMIN_HELP = """commands:
   unipban <address or network>
   bans                                   list bans
   role <account> [player|gm|admin]       show or set an account's role
+  title <character> dco|personnel|staff|none   a division officer title (the game's appoint window can not send it)
   backup                                 copy the databases into backups/ while the server runs
   help"""
 
@@ -5503,6 +5521,30 @@ def cmd_goto(args, actor):
     return f"moved {args[0]} to {pos[0]:g} {pos[1]:g} {pos[2]:g}"
 
 
+TITLE_WORDS = {"dco": 6, "personnel": 4, "staff": 7, "none": 0}
+
+
+def title_here(name, title):
+    """Set a character's division title on the server that keeps divisions. A reply line, None if there is no such
+    character here."""
+    cid = STORE.id_of_name(name)
+    if cid is None:
+        return None
+    error = DIVISIONS.give_title(cid, title)
+    return {0: f"{name} is now {next(w for w, t in TITLE_WORDS.items() if t == title)}",
+            ERR_NOT_YOUR_DIVISION: f"{name} is in no division", ERR_NO_TITLE: f"{name} leads its division",
+            ERR_TITLES_FULL: f"{name}'s division has as many of those as it may"}[error]
+
+
+def cmd_title(args, actor):
+    if len(args) != 2 or args[1].lower() not in TITLE_WORDS:
+        return "usage: title <character> dco|personnel|staff|none"
+    title = TITLE_WORDS[args[1].lower()]
+    replies = [ask(g, "title", None, name=args[0], title=title) for g in list(LINKS)] if ROLE == "login" else [
+        title_here(args[0], title)]
+    return next((r for r in replies if r), f"no character {args[0][:32]!r}")
+
+
 def cmd_ban(args, actor):
     if not args:
         return "usage: ban <account> [time] [reason]"
@@ -5619,7 +5661,7 @@ def cmd_role(args, actor):
 
 ADMIN_COMMANDS = {"who": cmd_who, "matches": cmd_matches, "aim": cmd_aim, "kick": cmd_kick, "ban": cmd_ban, "unban": cmd_unban,
                   "ipban": cmd_ipban, "unipban": cmd_unipban, "bans": cmd_bans, "role": cmd_role, "backup": cmd_backup, "notice": cmd_notice,
-                  "goto": cmd_goto, "tell": cmd_tell, "mute": cmd_mute,
+                  "goto": cmd_goto, "tell": cmd_tell, "mute": cmd_mute, "title": cmd_title,
                   "unmute": cmd_unmute, "help": lambda args, actor: ADMIN_HELP}
 
 

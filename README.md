@@ -176,6 +176,7 @@ python server/tools/admin.py who
 | `unipban <address or network>` | |
 | `bans` | List bans |
 | `role <account> [player\|gm\|admin]` | Show or set an account's role |
+| `title <character> dco\|personnel\|staff\|none` | Give or take a division officer title (the game's own appoint window can not) |
 | `backup` | Copy the databases into `backups/` while the server runs |
 | `notice <text>` | Tell everyone online: a Broadcast line from Server in the hall, big red text in battles |
 
@@ -279,8 +280,10 @@ Members can give the division Crystal, and the leader spends it on 20 more place
 (`MW_DIVISION_STEP_CRYSTAL`, default 10000), up to 500. Members talk in the hall's Division Channel (the client labels
 those lines "[Team]"), and show the division's short name before their name in battle. Divisions are kept in
 `characters.db`. Making a division, its window, donating, inviting (from the friend list), dismissing and division
-chat are tried with the real client. The leader shows as C.O. and can appoint a D.C.O. (1), Personnel Officers (2) and
-Staff Officers (3); the first two may invite too. Appointing is not tried in game yet.
+chat are tried with the real client. The leader shows as C.O.; a division may have a D.C.O. (1), Personnel Officers
+(2) and Staff Officers (3), and the first two may invite too. The game's Assign Officials window can not appoint
+anyone (a bug in the client: its name prompt closes before the window reads it), so an admin gives titles with the
+`title` command; the leader takes them away in that window ("Remove Position").
 
 ## Load test
 
