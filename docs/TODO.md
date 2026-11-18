@@ -71,11 +71,17 @@ reply layout, and answer with real data.
       marks it "Respawn Here"; the map's Respawn button sends (9,40331) and the respawn happens at the platform
       (button fired through Frida: the death dialog covered it in our window)
 - [x] (14,14010) CG_Character_Get_Exploit
-- [ ] (14,14034) UpdateRankUpgrade
+- [ ] (14,14034) UpdateRankUpgrade: asked by the own-corps (Troop) window. Waits for corps; the zeroed reply is an
+      empty list
 - [x] (14,14040) CGS_GetAllMilitaryRank
 - [x] (14,14050) CGS_GetCharacterAllBattleFrontContribution and (14,14051): contribution = honor from kills on that
       front. Real client 2026-11-02: the Total Contribution column and Battle Joined show it; after one kill on Northern Front both show 10
-- [ ] (14,14054) CGS_CGSManager_CommandGradeTable
+- [ ] (14,14054) CGS_CGSManager_CommandGradeTable, 2026-11-18, offline: asked once at hall login. Reply
+      u32 n | n x (u8 grade | u32 Comm. Credits needed), kept at the client's manager +0x274. The Info window
+      (CInfomationUI::UpdateBaseInfo) shows "Comm. Lvl" (character +0xbc) and "Comm. Credit" (+0xc0), both from
+      (14,14010)'s last two fields, with a bar and "To lvl up needed %d Comm. Credits." when the level is below the
+      table's length. Nothing earns Comm. Credits in the emulator yet (commanding is not known), so we send level 0
+      and an empty table: the bar is not drawn
 - [x] (14,14057) CGS_GetCharacterTodayMilitary
 - [ ] (14,14059) GetCharacterHelpLog: help events seen, "10100|10101|". Nothing in Game.dll sends the save
       (14,14060), so it stays empty. An empty log at rank level 1 opens the tutorial video; if that shows at
@@ -150,7 +156,11 @@ reply layout, and answer with real data.
 - [ ] Division flags (15,15070 UpdateTeamFlag / 15074 UpdateAllTeamFlag): read by GroupManager::UpdateTeamFlag and
       used only by OccupyIcon::Update (GetTeamFlagList), so they are the division banners on captured campaign
       points; they wait for the campaign map
-- [ ] (15,15022) UpdateCorpInfo
+- [ ] (15,15022) UpdateCorpInfo, 2026-11-18, offline: request u32 corps id, sent by GroupManager::GetCorpName /
+      GetCorpInfo when the client has no name for that corps yet (hall map's held points, battlefield detail,
+      corps select list, corps commands). Reply: str name | u32 | u8 | u8 | u8 (kept, CorpInfo +0x1c) | u8 | str |
+      str | str | u32 | str | u32 | u32; only the name and that u8 are kept. Waits for corps (and the campaign
+      map); the zeroed reply gives an empty name
 
 ## Battlefield / campaign
 - [ ] (17,17079) BF_UpdateMyHeadQuarter / UpdateCorpBasement
