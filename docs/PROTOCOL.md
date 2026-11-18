@@ -67,6 +67,7 @@
   - [GetCharacterHelpLog](#m-14-14059) `(14,14059)`
   - [AddTeam (make a division)](#m-15-15003) `(15,15003)`
   - [UpdateTeamInfo](#m-15-15023) `(15,15023)`
+  - [GetTitleByOrganiseType (division titles)](#m-13-13018) `(13,13018)`
   - [GetCharacterByTeamID (members)](#m-13-13031) `(13,13031)`
   - [UpdateTeamList](#m-15-15021) `(15,15021)`
   - [SendJoinTeamRequest (apply)](#m-15-15011) `(15,15011)`
@@ -942,6 +943,17 @@ str name | u32 id | u8 level | u8 | u8 | str | str created | u32 leader id
 ```
 
 Request: `u32 division id`. Fills the name cache (the "[short name]" before nameplate names) and, for the player's own division, the window's lines: full name, short name, "Create Time" (the date part of `YYYY-MM-DD hh:mm:ss`), Commanding Officer, Level, Record, Account, Online Member, "Division Total Member: members/limit". The leader id probably picks Dismiss or Quit. Asked for any nonzero team id in ranking rows and base info; the emulator sends the division id in both (0 and -1 = none).
+
+<a name="m-13-13018"></a>
+#### GetTitleByOrganiseType (division titles) `(13,13018)`
+
+*S→C reply · partial*
+
+```text
+u32 n | n × (u32 division | u32 character | u16 title | u8)
+```
+
+Request: `u8 kind (3 = division) | u32 division id`, sent at login and right after the members list (13,13031). GetTitleByOrganiseTypeObserver puts each title into that member (TeamMember +0x5c). Titles are the DUTYTYPE\_&lt;n> texts: 0 Recruit, 1 S.C., 2 C.O., 3 Troop Personnel Officer, 4 Personnel Officer, 5 D.C., 6 D.C.O., 7 Staff Officer. The friend list right-click menu offers "Invite to division." only when your own title is 2, 4 or 6 (CFriendListUI::MsgProc). The emulator sends the leader as C.O., for your own division only. Real client 2026-11-18.
 
 <a name="m-13-13031"></a>
 #### GetCharacterByTeamID (members) `(13,13031)`

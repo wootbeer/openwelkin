@@ -125,15 +125,21 @@ reply layout, and answer with real data.
       in game (tools/test_match.py checks the bytes)
 - [x] Division invites, 2026-11-17, offline: the leader invites (15079), the player is asked at once (push 15085) or
       sees them in its list (15080), answers (15083), and the leader hears the answer (push 15086). Kept in memory for
-      a day, at most 20 per player. tools/test_divisions.py. Not tried in game: where the client shows the invite list,
-      and which menus send 15079 (friend list "Divi.Invite", chat name menu "Invite to division")
+      a day, at most 20 per player. tools/test_divisions.py. Real client 2026-11-18, two clients: the friend list's
+      right-click menu offers "Invite to division." only when your own title (13,13018) is 2, 4 or 6, so the server
+      now answers 13018 with the leader as C.O. (2). The invited player gets the "Divi.Invite" popup, Join adds them
+      and the leader sees "<name> Officially joined the division!". The chat name menu has no invite entry. A Recruit
+      (rank 0) member's Division button stays grey
 - [x] Division Crystal, 2026-11-17, offline: members donate (15092, at least 100), see what they gave (15096), the
       leader buys 20 more member places (15093 prices, 15094), up to the client's 500. The amount given is kept per
       member (division_members.donated, added to older databases by itself). tools/test_divisions.py. Real client
       2026-11-17: donating works (balance and Account update). The "add members" button (control 6 of the division
-      window, CTeamListUI::ClickAddBtn) was not found on screen in the English window, so 15094 is untried
-- [ ] Division titles (13,13015 / 13017 / 13018), flags (15070 / 15074). Requests read 2026-11-17:
-      (13,13015) u32 | u32 | u16 | u8 | u32, (13,13017) u32 | u32, (13,13018) u8 | u32
+      window, CTeamListUI::ClickAddBtn) is the Upgrade button: it shows "30 to 50 need 10000 crystal" from 15093
+      and checks the division's Crystal itself ("Crystal is not enough to expand."), so 15094 with enough is untried
+- [ ] Division titles: (13,13018) is answered (the leader only, as C.O.); setting and removing them (13,13015 /
+      13017, "Assign Officials") is not done. Titles are DUTYTYPE_<n>: 0 Recruit, 1 S.C., 2 C.O., 3 Troop Personnel
+      Officer, 4 Personnel Officer, 5 D.C., 6 D.C.O., 7 Staff Officer; the appoint window's slots are 6, 4 and 7.
+      Requests read 2026-11-17: (13,13015) u32 | u32 | u16 | u8 | u32, (13,13017) u32 | u32. Flags (15070 / 15074)
 - [ ] (15,15022) UpdateCorpInfo
 - [ ] (15,15074) UpdateAllTeamFlag
 

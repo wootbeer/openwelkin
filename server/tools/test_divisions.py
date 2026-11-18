@@ -247,6 +247,15 @@ async def scenario():
     check("a player in no division sends it nowhere", await heard(amy, 0.5) is None and await heard(ben, 0.5) is None)
     check("a list page past the end is empty", ids_of(await amy.request(13, 13031, struct.pack("<III", did, 5, 9)))
           == (2, []))
+    r = await amy.request(13, 13018, struct.pack("<BI", ls.DIVISION_KIND, did))
+    check("titles: only the leader has one, C.O. (the friend list then offers Invite)",
+          r.result == 0 and r.body == struct.pack("<IIIHB", 1, did, amy_id, ls.TITLE_CO, 0), r.body.hex())
+    check("a member sees the same titles", (await ben.request(13, 13018, struct.pack("<BI", ls.DIVISION_KIND, did))).body
+          == r.body)
+    check("titles of a division you are not in are empty",
+          (await cara.request(13, 13018, struct.pack("<BI", ls.DIVISION_KIND, did))).body == U32.pack(0))
+    check("titles of another kind are empty",
+          (await amy.request(13, 13018, struct.pack("<BI", 1, did))).body == U32.pack(0))
 
     # --- refuse ---
     await act(cara, 15011, struct.pack("<IIB", cara_id, did, 0))
@@ -363,7 +372,7 @@ async def scenario():
     stranger = await ts.gate_session((await ts.login("nochar"))[1])
     check("a player with no character can not make one",
           (await stranger.request(15, 15003, U32.pack(amy_id) + ls.wstr("Sneaky") + ls.wstr("SN"))).result == ls.ERR_UNKNOWN)
-    for type_, catalog in ((15003, 15), (15011, 15), (15015, 15), (15076, 15), (15005, 15), (15023, 15), (13031, 13),
+    for type_, catalog in ((15003, 15), (15011, 15), (15015, 15), (15076, 15), (15005, 15), (15023, 15), (13031, 13), (13018, 13),
                            (15021, 15), (15013, 15), (15062, 15), (15066, 15), (15012, 15), (15016, 15), (15014, 15),
                            (15079, 15), (15080, 15), (15083, 15), (15092, 15), (15094, 15), (15096, 15)):
         await asyncio.sleep(ls.CHAT_EVERY + 0.05)

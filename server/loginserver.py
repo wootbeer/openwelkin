@@ -1045,6 +1045,8 @@ DONATE_MIN, DIVISION_STEP, DIVISION_MAX = 100, 20, 500
 DIVISION_STEP_CRYSTAL = min(max(int(os.environ.get("MW_DIVISION_STEP_CRYSTAL", "10000") or 10000), 0), 10 ** 9)
 ERR_DIVISION_POOR, ERR_DONATION, ERR_NO_PRICE, ERR_CRYSTAL = 15062, 15063, 15064, 24010
 CRYSTAL_MAX = 2 ** 31 - 1  # the client shows Crystal as a signed 32-bit number
+# (13,13018) titles: kind 3 is a division; title 2 is C.O. (the leader), which lets the friend list offer "Invite".
+DIVISION_KIND, TITLE_CO = 3, 2
 
 
 def division_name_error(name, short):
@@ -2685,6 +2687,19 @@ class Session:
                     + wstr(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(since))) + struct.pack("<B", cid in online))
         self.page(msg, DIVISIONS.members(ids[0]), ids[1], ids[2], row)
 
+    def on_division_titles(self, msg):
+        """(13,13018) GetTitleByOrganiseType, asked right after the members list: u8 kind (3 = division) | u32 id ->
+        u32 n | n x (u32 division | u32 character | u16 title | u8). Titles are the DUTYTYPE_<n> texts: 2 C.O., 4
+        Personnel Officer, 6 D.C.O., 7 Staff Officer. The friend list offers "Invite" only to titles 2, 4 and 6, and
+        a member with none is a Recruit. Only the leader has one here (C.O.), and only for your own division."""
+        me = self.division_me(msg, size=5)
+        if me is None:
+            return
+        kind, did = struct.unpack_from("<BI", msg.body)
+        d = DIVISIONS.get(did) if kind == DIVISION_KIND and did == DIVISIONS.of(me) else None
+        rows = [(did, d["leader"], TITLE_CO)] if d else []
+        self.reply(msg, struct.pack("<I", len(rows)) + b"".join(struct.pack("<IIHB", *r, 0) for r in rows))
+
     def on_create_division(self, msg):
         me = self.division_me(msg, write=True)
         if me is None:
@@ -3165,6 +3180,7 @@ HANDLERS = {
     (15, 15080): Session.on_division_invites,    # FetchTeamInvite
     (15, 15083): Session.on_answer_division_invite,  # TeamInviteAnswer
     (13, 13031): Session.on_division_members,    # GetCharacterByTeamID
+    (13, 13018): Session.on_division_titles,     # GetTitleByOrganiseType
     (15, 15098): Session.on_rank_list,           # CS_CharacterExpRank (Ranking, Honor tab)
     (15, 15099): Session.on_my_rank,             # CS_OneCharacterExpRank
     (15, 15100): Session.on_rank_list,           # CS_CharacterKillRank (Shooting tab)

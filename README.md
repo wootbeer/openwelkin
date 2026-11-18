@@ -278,8 +278,8 @@ or dismiss the division, and members can quit. A new division holds `MW_DIVISION
 Members can give the division Crystal, and the leader spends it on 20 more places at a time
 (`MW_DIVISION_STEP_CRYSTAL`, default 10000), up to 500. Members talk in the hall's Division Channel (the client labels
 those lines "[Team]"), and show the division's short name before their name in battle. Divisions are kept in
-`characters.db`. Making a division, its window, donating, dismissing and division chat are tried with the real
-client; titles are not done.
+`characters.db`. Making a division, its window, donating, inviting (from the friend list), dismissing and division
+chat are tried with the real client. The leader shows as C.O.; other titles are not done.
 
 ## Load test
 
