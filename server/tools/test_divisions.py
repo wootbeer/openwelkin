@@ -14,7 +14,7 @@ import threading
 import time
 
 import test_split as ts
-from test_chat import player
+from test_chat import heard, player
 
 import loginserver as ls  # noqa: E402
 
@@ -157,8 +157,10 @@ async def scenario():
 
     # --- make one ---
     check("no division at first", await division_of(amy, amy_id) == 0)
+    before = await crystal(amy, amy_id)
     r = await create(amy, amy_id, "Red Wolves", "RW")
     check("a division is made", r.result == 0 and len(r.body) == 4, r.result)
+    check("making it cost the price", await crystal(amy, amy_id) == before - ls.DIVISION_PRICE)
     did = U32.unpack(r.body)[0]
     check("the maker is in it at the next login", await division_of(amy, amy_id) == did)
     r = await amy.request(15, 15023, U32.pack(did))
@@ -178,13 +180,14 @@ async def scenario():
            "Rеd Wolves": ls.ERR_DIVISION_NAME,  # Cyrillic е among Latin letters
            "abc": ls.ERR_DIVISION_NAME_LEN, "x" * 17: ls.ERR_DIVISION_NAME_LEN,
            "x'); DROP TABLE divisions;--": ls.ERR_DIVISION_NAME_LEN, "Bad;Name": ls.ERR_DIVISION_NAME,
-           "Two  Spaces": ls.ERR_DIVISION_NAME, " Lead": ls.ERR_DIVISION_NAME, "Tab\tName": ls.ERR_DIVISION_NAME,
+           "Two  Spaces": ls.ERR_DIVISION_NAME, " Leader": ls.ERR_DIVISION_NAME, "Tab\tName": ls.ERR_DIVISION_NAME,
            "Admin Corps": ls.ERR_DIVISION_NAME_WORD, "Server": ls.ERR_DIVISION_NAME_WORD,
-           "Ｗｉｄｅ Name": ls.ERR_DIVISION_NAME, "ᅟᅟᅟᅟ": ls.ERR_DIVISION_NAME}
+           "Ｗｉｄｅ Name": ls.ERR_DIVISION_NAME, "ᅟᅟᅟᅟᅟᅟ": ls.ERR_DIVISION_NAME,
+           "Short": ls.ERR_DIVISION_NAME_LEN}
     for name, code in bad.items():
         r = await create(ben, ben_id, name, "BN")
         check(f"name {name!r} is refused with {code}", r.result == code, r.result)
-    for short, code in {"RW": ls.ERR_DIVISION_TAKEN, "R": ls.ERR_DIVISION_SHORT_LEN, "TOOLONG": ls.ERR_DIVISION_SHORT_LEN,
+    for short, code in {"RW": ls.ERR_DIVISION_TAKEN, "R": ls.ERR_DIVISION_SHORT_LEN, "RWLFX": ls.ERR_DIVISION_SHORT_LEN,
                         "A'B": ls.ERR_DIVISION_NAME, "GM": ls.ERR_DIVISION_SHORT_WORD}.items():
         r = await create(ben, ben_id, "Blue Hawks", short)
         check(f"short name {short!r} is refused with {code}", r.result == code, r.result)
@@ -232,6 +235,16 @@ async def scenario():
     r = await amy.request(13, 13031, struct.pack("<III", did, 0, 100000))
     check("the member list has both, the leader first", ids_of(r) == (2, [amy_id, ben_id]), ids_of(r))
     check("both are online", U32.unpack((await amy.request(15, 15062, U32.pack(did))).body)[0] == 2)
+    await asyncio.sleep(ls.CHAT_EVERY + 0.05)
+    amy.send(ls.Message(21, 21004, body=struct.pack("<H", 2) + ls.wstr("hi team")))
+    line = await heard(ben)
+    check("a member hears division chat", line == (ls.DIVISION_CHAT, amy_id, "amy", "hi team"), line)
+    check("the sender gets its own line back (the client does not show it otherwise)",
+          await heard(amy) == (ls.DIVISION_CHAT, amy_id, "amy", "hi team"))
+    check("others do not hear it", await heard(cara, 0.5) is None and await heard(dan, 0.5) is None)
+    await asyncio.sleep(ls.CHAT_EVERY + 0.05)
+    cara.send(ls.Message(21, 21004, body=struct.pack("<H", 2) + ls.wstr("anyone?")))
+    check("a player in no division sends it nowhere", await heard(amy, 0.5) is None and await heard(ben, 0.5) is None)
     check("a list page past the end is empty", ids_of(await amy.request(13, 13031, struct.pack("<III", did, 5, 9)))
           == (2, []))
 

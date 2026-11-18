@@ -269,15 +269,17 @@ do not reach you, and to them you look offline in private messages.
 
 ## Divisions
 
-Players can make a division (the client's Team) from the hall's Division button: a name of 4 to 16 letters, digits,
-`_` or single spaces, and a short name of 2 to 5. Names are checked like character names, so none looks like a
-taken one or like staff. Players of the same nation apply from the list, and the leader takes or refuses them; a
-taken player joins at once. The leader can also invite a player of the same nation, who says yes or no; invites
-last a day and are forgotten at a restart. The leader can kick members or dismiss the division, and members can
-quit. A new division holds `MW_DIVISION_LIMIT` members (default 30). Members can give the division Crystal, and the
-leader spends it on 20 more places at a time (`MW_DIVISION_STEP_CRYSTAL`, default 10000), up to 500. Divisions are kept in `characters.db`, and
-members show the division's short name before their name in battle. Not tried with the real client yet; division
-chat and titles are not done.
+Players can make a division (the client's Team) from the hall's Division button for 100 Crystal: a name of 6 to 16
+letters, digits, `_` or single spaces, and a short name of 2 to 4 (the English client asks for exactly 4). Names are
+checked like character names, so none looks like a taken one or like staff. Players of the same nation apply from
+the list, and the leader takes or refuses them; a taken player joins at once. The leader can also invite a player of
+the same nation, who says yes or no; invites last a day and are forgotten at a restart. The leader can kick members
+or dismiss the division, and members can quit. A new division holds `MW_DIVISION_LIMIT` members (default 30).
+Members can give the division Crystal, and the leader spends it on 20 more places at a time
+(`MW_DIVISION_STEP_CRYSTAL`, default 10000), up to 500. Members talk in the hall's Division Channel (the client labels
+those lines "[Team]"), and show the division's short name before their name in battle. Divisions are kept in
+`characters.db`. Making a division, its window, donating, dismissing and division chat are tried with the real
+client; titles are not done.
 
 ## Load test
 

@@ -113,10 +113,12 @@ reply layout, and answer with real data.
       waiting list (15013) and agree / refuse (15015), withdraw (15014), confirm (15016), quit (15018), dismiss
       (15005), kick (15076), online count (15062), waiting count (15066), TeamChange push (21,21074). CharacterOnline's
       second u32 is the division id (0 = none): the hall's Division button opens the division window (0x7c) or the
-      join / make window (0x79). Names checked like character names (4-16, short 2-5, no look-alikes, no staff
-      words); the client's own error codes 15001..15069. tools/test_divisions.py. Not tried in game: do the hall
-      windows open and show the right lines, is members/limit the right way round, does an agreed applicant see
-      the division window at once
+      join / make window (0x79). Names checked like character names (6-16, short 2-4, no look-alikes, no staff
+      words); making one costs 100 Crystal; the client's own error codes 15001..15069. tools/test_divisions.py.
+      Real client 2026-11-17: make (the English client wants 6-16 and a short name of exactly 4, and says "Need to pay
+      100 Crystals"), the division window with info, member list and "1/30", dismiss, and a restart all work. The
+      client does not ask for its balance after making one, so the shown balance is 100 too high until the next
+      refresh. Not tried: applying and agreeing with a second client
 - [x] Division tag before nameplate names in battle, 2026-11-17, offline: the gate sends the division id with the
       character to the game server, base info (19,30040) carries it (-1 = none) and ranking rows too (0 = none); the
       client asks the gate (15,15023) for the short name. A change during a battle shows from the next one. Not tried
@@ -127,7 +129,9 @@ reply layout, and answer with real data.
       and which menus send 15079 (friend list "Divi.Invite", chat name menu "Invite to division")
 - [x] Division Crystal, 2026-11-17, offline: members donate (15092, at least 100), see what they gave (15096), the
       leader buys 20 more member places (15093 prices, 15094), up to the client's 500. The amount given is kept per
-      member (division_members.donated, added to older databases by itself). tools/test_divisions.py. Not tried in game
+      member (division_members.donated, added to older databases by itself). tools/test_divisions.py. Real client
+      2026-11-17: donating works (balance and Account update). The "add members" button (control 6 of the division
+      window, CTeamListUI::ClickAddBtn) was not found on screen in the English window, so 15094 is untried
 - [ ] Division titles (13,13015 / 13017 / 13018), flags (15070 / 15074). Requests read 2026-11-17:
       (13,13015) u32 | u32 | u16 | u8 | u32, (13,13017) u32 | u32, (13,13018) u8 | u32
 - [ ] (15,15022) UpdateCorpInfo
@@ -386,11 +390,13 @@ reply layout, and answer with real data.
       are (21,21051), not 21032. The battle box's Country tab is (21,21004): u16 5 | str, shown from (21,21204), and the
       client does not show its own line. Country reaches the player's side in its match: game servers report joins and leaves to the
       gate, because shown lines go out on the gate. (21,21211) did not show in the battle box
-- [ ] Team and Division chat. Real client 2026-11-03: the hall's Division Channel sends (21,21004) u16 2 | str (dropped:
-      divisions exist since 2026-11-17, but which pushed chat type shows in the Division tab is not known. The
-      client's chat receiver maps 21200 -> channel 1, 21201 -> 2, 21202 -> 4, 21203 -> 5, 21204 -> 6 (Country),
-      21211 -> 3, 21212 -> 11, 21514 -> 8; try 21201..21203 in game). In battle the Team and Division tabs are greyed and do not open without a team or
-      division, so their channel numbers wait for teams. Whispers from the battle box are not tried. Enter in battle needs DirectInput: tools/vinput.py enter:0.2 sends a line
+- [x] Division chat, real client 2026-11-17: the hall's Division Channel sends (21,21004) u16 2 | str; the emulator
+      sends (21,21201) to the online members of the sender's division, the sender too (the client does not show its own
+      line). It shows labelled CHATMESSAGEUI_TEAM, "[Team]" in English. Seen in game for every type: 21201 [Team] green,
+      21202 [Division] cyan (CHATMESSAGEUI_GROUP: the battle squad, mistranslated), 21203 and 21204 no label, 21212
+      [GM], 21514 [Broadcast]; 21200 and 21211 did not show in the hall. Hall chat Enter needs DirectInput too
+      (tools/vinput.py enter:0.2)
+- [ ] Battle squad (Group) chat and the battle box's Team / Division tabs: they stay greyed without a squad. Whispers from the battle box are not tried. Enter in battle needs DirectInput: tools/vinput.py enter:0.2 sends a line
 - [ ] The client's own / commands, 2026-11-05 offline (ChatManager::SendMessage, 0x10386600). A chat line starting
       with / is a command. GM level 101..110 in CharacterOnline sets the GM byte (+0xb8); the emulator sends 101 for
       gm and 110 for admin (the gate gets it in the signed session key; a role change counts from the next login).

@@ -1024,7 +1024,8 @@ atexit.register(STORE.flush)
 # client's texts is the Corp, a bigger group not made yet. Error codes are the client's (Language/ErrorInfoENG.xml).
 DIVISION_LIMIT = min(max(int(os.environ.get("MW_DIVISION_LIMIT", "30") or 30), 2), 200)  # members a new one may have
 DIVISION_NAME_RE = re.compile(r"[^\W]+(?: [^\W]+)*")  # letters, digits and _, single spaces between words
-DIVISION_NAME_LEN, DIVISION_SHORT_LEN = (4, 16), (2, 5)  # the client asks for at least 4 and 2
+DIVISION_NAME_LEN, DIVISION_SHORT_LEN = (6, 16), (2, 4)  # the English client asks for 6-16 and exactly 4
+DIVISION_PRICE = 100  # Crystal to make one ("Need to pay 100 Crystals." in the client's window)
 D_APPLIED, D_ACCEPTED, D_REFUSED, D_MEMBER = 0, 1, 2, 3  # a character's row: an application in its states, or member
 ERR_DIVISION_TAKEN, ERR_NO_DIVISION, ERR_NO_APPLICATION = 15001, 15003, 15014
 ERR_DIVISION_FULL, ERR_NOT_YOUR_DIVISION, ERR_IN_DIVISION = 15020, 15027, 15061
@@ -1035,6 +1036,9 @@ ERR_NO_CHARACTER, ERR_THEY_ARE_IN_DIVISION, ERR_ALREADY_INVITED, ERR_NO_INVITE =
 # Invites the leader sends are kept in memory only (a restart forgets them), each for INVITE_TTL seconds; a player
 # holds at most INVITES_KEPT of them, the oldest dropped first.
 INVITE_TTL, INVITES_KEPT = 24 * 3600, 20
+# Division chat: the hall's Division Channel sends (21,21004) channel 2, and lines of type 21201 show in it, labelled
+# CHATMESSAGEUI_TEAM, "[Team]" in English (real client 2026-11-17; 21202 is "[Division]" = the battle squad, not this).
+DIVISION_CHAT = 21201
 # Members give the division Crystal (at least DONATE_MIN at a time); the leader spends it on DIVISION_STEP more member
 # places for DIVISION_STEP_CRYSTAL, up to DIVISION_MAX (the client's own limit).
 DONATE_MIN, DIVISION_STEP, DIVISION_MAX = 100, 20, 500
@@ -1107,6 +1111,8 @@ class Divisions:
                 return None, error
             if name_skeleton(name) in self.taken or name_skeleton(short) in self.taken:
                 return None, ERR_DIVISION_TAKEN
+            if not STORE.pay(cid, DIVISION_PRICE):
+                return None, ERR_CRYSTAL
             did = max(self.by_id, default=0) + 1
             d = dict(id=did, name=name, short=short, leader=cid, nation=nation, created=int(now), money=0, points=0,
                      limit=DIVISION_LIMIT)
@@ -2238,8 +2244,26 @@ class Session:
         """The battle chat box (21,21004): u16 channel | str text. Channel 5 is its Country tab, seen in game. The client
         does not show its own line. Country reaches the players of the sender's side in its match (real client
         2026-11-17: an Alliance player got a Federal player's line before this)."""
-        if len(msg.body) >= 2 and struct.unpack_from("<H", msg.body)[0] == 5:
+        channel = struct.unpack_from("<H", msg.body)[0] if len(msg.body) >= 2 else 0
+        if channel == 5:
             self.chat_to_all(msg, 21204, True, same_match=True, off=2, same_side=True)
+        elif channel == 2:
+            self.chat_division(msg, off=2)
+
+    def chat_division(self, msg, off):
+        """Division channel: the line goes to the online members of the sender's division."""
+        line = self.chat_text(msg, off)
+        did = DIVISIONS.of(self.character["id"]) if line else 0
+        if not did:
+            return
+        if line[0].startswith("!"):
+            return self.gm_chat(line[0][1:])
+        name, members = self.character["name"], set(DIVISIONS.members(did))
+        log(f"[division {did}] {name}: {line[0]}")
+        with ONLINE_LOCK:
+            sessions = [s for s in ONLINE.values() if s.character and s.character["id"] in members and not s.blocks(self)]
+        for s in sessions:
+            s.chat_line(DIVISION_CHAT, name, line[0], self.character["id"])
 
     def on_chat_private(self, msg):
         try:
