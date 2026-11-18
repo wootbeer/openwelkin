@@ -153,6 +153,20 @@ reply layout, and answer with real data.
       members list shows "Staff Officer"; the officer's row in the appoint window has a button (its label is the
       wrong text, "Unable to find the player.") that sends 13017, and the title goes. Not tried: the friend-list invite
       by a Personnel Officer
+- [ ] Corps, 2026-11-18, offline (Game.dll). Most of it is cut from this client: the corps windows (enlist
+      CHallInSoldier, CSelectCorpListUI, the hall corps panel CHallCorpInfoUI) are never created, and the battle
+      tab frame MultiDlgFrame (Create, UpdateInBattle, UpdateInHall are never called) with its Commander tab
+      (MFCommander: publish orders, bind the side's respawn point), squad and detachment tabs is dead too. So no
+      player can join a corps or publish an order from the game's own windows. Still live:
+      - (19,30020) UpdateNationLeader: u32 commander character id (-1 = none) | str name | u8, sets GroupManager
+        +0x9c/+0xa0/+0xbc and raises (9,12101). Robot::updateHeading puts the commander icon over the robot whose
+        character id it is
+      - (19,30030) UpdateCorpCmd: str order. The client keeps it, writes "Country Command" + the order in chat and
+        raises (9,10100) for the central info panel (CCentralInfoUI). The dead tab sent orders as (9,10023)
+        f32 | str (its Ok handler, unlike the appoint window's, reads the prompt without the visible check)
+      - (15,15022) corps name lookups (see below); the client asks for corps 0 at every hall login
+      - Not read: detachments (19,30500..30522), impeach (19,30080/30081), group orders (19,30050..30053), the
+        hall corps orders (21,21058/21061, 9,10120). Comm. Credits and command levels belong here too
 - [ ] Division flags (15,15070 UpdateTeamFlag / 15074 UpdateAllTeamFlag): read by GroupManager::UpdateTeamFlag and
       used only by OccupyIcon::Update (GetTeamFlagList), so they are the division banners on captured campaign
       points; they wait for the campaign map
