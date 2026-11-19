@@ -5241,6 +5241,8 @@ def on_game_message(server, peer, raw):
         squad_join(peer, body[4], create=msg.type == 10401)
     elif key == (9, 10403):
         squad_leave(peer)
+    elif key == (9, 10404):
+        squad_apply_leader(peer)
     elif key == (9, 40110):
         suicide(server, peer)
     elif key in ((9, 40314), (9, 40333)):
@@ -5365,6 +5367,31 @@ def squad_link(a, b, joined):
         send_game_event(a.match.server, a, 19, 30501, struct.pack("<II", a.detachment, b.cid))
 
 
+def squad_leader(a, leader, name=""):
+    """Tell a's client who leads its own detachment. UpdateDetachmentLeader (19,30503): u32 detachment id | u32 leader
+    character id | str name -> GroupManager::SetDetachmentLeader (Game.dll 0x10390730) keeps the id (+0x28; 0 becomes
+    -1), raises (9,12101) and writes its own chat line: "%s become squadron commander!" (GUITEXT_NEW_DETACHMENTLEADER),
+    or with id 0 "%s is no longer a squadron commander!" (GUITEXT_DETACHMENTLEADER_EXIT)."""
+    body = struct.pack("<II", a.detachment, leader.cid if leader else 0) + wstr(leader.name if leader else name)
+    send_game_event(a.match.server, a, 19, 30503, body)
+
+
+def squad_apply_leader(peer):
+    """/l in the battle chat box (9,10404, f32 only, GroupManager::RequestApplyLeader): ask to lead the squad. A squad
+    here is always led by the player in it longest, so this only says who that is."""
+    with GAME_LOCK:
+        m = getattr(peer, "match", None)
+        if not m or peer not in (m.peers or ()) or m.now - getattr(peer, "squad_at", -SQUAD_EVERY) < SQUAD_EVERY:
+            return
+        peer.squad_at = m.now
+        members = m.squads.get(getattr(peer, "squad", None) or ())
+        if not members:
+            return tell_player(peer, "You are not in a squad")
+        if members[0] is peer:
+            return tell_player(peer, f"You lead squad {peer.squad[1]}")
+        tell_player(peer, f"{members[0].name} leads squad {peer.squad[1]}; the player in it longest leads")
+
+
 def squad_join(peer, number, create):
     """The battle chat box's squad commands (the client calls squads detachments), sent when the player has no GM
     byte: /a N (9,10401) and /e N (9,10402), each f32 | u8 N. /a makes squad N of the player's side, or joins it if
@@ -5398,6 +5425,7 @@ def squad_join(peer, number, create):
             tell_player(other, f"{peer.name} joined squad {number}")
         members.append(peer)
         peer.squad = key
+        squad_leader(peer, members[0])
         if len(members) == 1:
             tell_player(peer, f"You made squad {number} and lead it. /L leaves it")
         else:
@@ -5434,6 +5462,10 @@ def squad_quit(m, peer, gone=False):
         if not gone:
             squad_link(peer, other, False)
         tell_player(other, f"{peer.name} left squad {key[1]}" + (f"; {members[0].name} leads it now" if led else ""))
+        if led:
+            squad_leader(other, members[0])
+    if led and not gone:
+        squad_leader(peer, None, peer.name)  # "<name> is no longer a squadron commander!"
     if not members:
         del m.squads[key]
 

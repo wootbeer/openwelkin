@@ -55,7 +55,7 @@ class Recorder(ts.lt.Game):
     def datagram_received(self, data, addr):
         pkt = ts.fdp.Packet.parse(data)
         if not pkt.system:
-            self.events += [(typ, raw[12:]) for raw, _, typ in ts.fdp.messages(pkt.payload) if typ in (30020, 30030, 30500, 30501)]
+            self.events += [(typ, raw[12:]) for raw, _, typ in ts.fdp.messages(pkt.payload) if typ in (30020, 30030, 30500, 30501, 30503)]
         super().datagram_received(data, addr)
 
     def last(self, typ):
@@ -67,6 +67,8 @@ class Recorder(ts.lt.Game):
                    and struct.unpack_from("<I", b, 4)[0] == cid)
         have = []
         for t, b in self.events:
+            if t not in (30500, 30501):
+                continue
             det, who = struct.unpack_from("<II", b)
             if det == own and who != cid:
                 have = [c for c in have if c != who] + ([who] if t == 30500 else [])
@@ -495,6 +497,17 @@ async def squads(kim, kim_id, kim_game, lou, lou_id, lou_game):
     check("/e joins it", (await told(lou) or "").startswith("You joined squad 3, led by kim (2 players)"))
     check("the squad hears who joined", await told(kim) == "lou joined squad 3")
     await asyncio.sleep(0.3)
+
+    def leader(game, cid):
+        body = game.last(30503)
+        return body and (struct.unpack_from("<I", body)[0] == game.members(cid)[0],
+                         struct.unpack_from("<I", body, 4)[0], ls.read_wstr(body, 8)[0])
+
+    check("the client is told who leads its squad",
+          leader(kim_game, kim_id) == (True, kim_id, "kim") and leader(lou_game, lou_id) == (True, kim_id, "kim"))
+    await asyncio.sleep(gap)
+    lou_game.squad(10404, None)
+    check("/l says who leads", await told(lou) == "kim leads squad 3; the player in it longest leads")
     check("each sees the other in their own detachment",
           kim_game.members(kim_id)[1] == [lou_id] and lou_game.members(lou_id)[1] == [kim_id],
           f"{kim_game.members(kim_id)} {lou_game.members(lou_id)}")
@@ -522,6 +535,9 @@ async def squads(kim, kim_id, kim_game, lou, lou_id, lou_game):
     kim_game.squad(10403, None)
     await told(kim)
     check("when the leader leaves, the next one leads", await told(lou) == "kim left squad 3; lou leads it now")
+    await asyncio.sleep(0.3)
+    check("and both clients are told", leader(lou_game, lou_id) == (True, lou_id, "lou")
+          and leader(kim_game, kim_id) == (True, 0, "kim"))
     await asyncio.sleep(gap)
     lou_game.squad(10403, None)
     await told(lou)

@@ -396,8 +396,9 @@ reply layout, and answer with real data.
       player's own character: Robot::UpdateHUD reads the own detachment every frame without a null check. Members
       feed CSelfCorpUI (dialog 0x10, made at start) and the radar code; the squad radar marks come from the dead
       CMFDetachmentInfo window. Not tried in game: whether the client shows the members anywhere, and whether the
-      battle box's Team tab opens. Not read: 30502..30522 (member update, leader, zones, name, list, orders,
-      impeach), /l and /t
+      battle box's Team tab opens. Leader: (19,30503) u32 id | u32 leader (0 = none) | str name; the client writes
+      "%s become squadron commander!" itself; /l is (9,10404) f32 and gets told who leads. Not read: 30502,
+      30504..30522 (member update, zones, name, list, orders, impeach), /t
 - [ ] Teams within a side, respawn point choice. Needs a client session: without knowing what
       sets the nation, players could not tell the sides apart, so nothing is built yet. Client's Kill arena, read from Game.dll, not
       tried: arena logic 5 in (19,40050), then init data u8 nation | u8 nation | f32. (19,49000) f32 seconds | u8 | f32
