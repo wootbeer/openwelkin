@@ -585,7 +585,14 @@ reply layout, and answer with real data.
       they are on disk (every 5 s), and send them again on a new link. characters.db keeps the last number of each
       game server run, so the gate skips any it already has. Tested by killing the gate before its save
 - [ ] Web site
-- [ ] MariaDB for a server too big for SQLite on one disk (db.py is the only file that would change much)
+- [x] MariaDB for a server too big for SQLite on one disk, 2026-11-19: MW_ACCOUNTS_DB / MW_CHARACTERS_DB =
+      mariadb://user@host/db, password in MW_DB_PASSWORD (refused in the address), MW_DB_SSL_CA for TLS, PyMySQL.
+      db.py keeps the SQLite queries and translates the few SQLite-only words; utf8mb4_bin so names compare as in
+      SQLite; strict mode; a dropped connection is made again outside a transaction; rankings on a read-only
+      connection. tools/to_mariadb.py moves an SQLite file into an empty MariaDB database. Tested on MariaDB 11.8:
+      test_db.py (all of it, plus reconnect, rollback, read-only and moving), test_match and test_chat on MariaDB
+      (only the file backup check differs: the backup command says to use mariadb-dump). Still one gate per login
+      server: the gate caches characters and hands out ids itself
 
 ## Storage (2026-10-30, tested offline)
 - [x] db.py: SQLite. accounts.db (accounts, bans) only on login, characters.db only on the gate, none on game servers

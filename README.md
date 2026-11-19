@@ -98,6 +98,31 @@ To back up while the server runs, use the admin command `backup`. It saves pendi
 Old `accounts.json`, `bans.json` and `characters.json` files are imported on the first start, then renamed to
 `*.imported`. You can keep those as a backup or delete them.
 
+### MariaDB
+
+SQLite is fine for most servers. For one too big for a single disk, either database can live in MariaDB instead
+(needs `pip install PyMySQL`). Make one database for each, and a MariaDB user that can use only those:
+
+```
+MW_ACCOUNTS_DB=mariadb://mwlogin@db.example:3306/mw_accounts      # login server (or the one-program server)
+MW_CHARACTERS_DB=mariadb://mwgate@db.example:3306/mw_characters   # gate (or the one-program server)
+MW_DB_PASSWORD=...                                                 # never put the password in the address
+MW_DB_SSL_CA=/path/to/ca.pem                                       # optional: use TLS to MariaDB
+```
+
+The server makes its tables on the first start. Keep MariaDB on a private network or behind a firewall, and give the
+login server's user no access to the characters database and the gate's none to the accounts database, so each
+server still sees only its own data. To move an existing server, stop it and copy each file once:
+
+```
+MW_DB_PASSWORD=... python server/tools/to_mariadb.py accounts.db mariadb://mwlogin@db.example/mw_accounts
+MW_DB_PASSWORD=... python server/tools/to_mariadb.py characters.db mariadb://mwgate@db.example/mw_characters
+```
+
+It copies into an empty database only, in one go, and only reads the file. With MariaDB the `backup` command does not
+copy that database: back it up with `mariadb-dump --single-transaction`. Still one gate per login server: a gate keeps
+loaded characters in memory and hands out character ids itself.
+
 ## Split servers
 
 By default one program does everything. For more players, run login, gate and game servers as separate programs:
@@ -253,6 +278,10 @@ python server/tools/test_split.py
 python server/tools/test_failover.py
 python server/tools/test_webadmin.py
 ```
+
+`test_db.py` runs on SQLite. To run its checks on MariaDB too, give it two empty test databases (their tables are
+dropped first, so the names must contain "test"): `MW_TEST_ACCOUNTS_DB`, `MW_TEST_CHARACTERS_DB` and
+`MW_DB_PASSWORD`, as in the MariaDB section above.
 
 ## Rounds and chat
 

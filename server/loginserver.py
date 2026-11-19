@@ -597,7 +597,7 @@ def read_wstr(b, off):
 class Store:
     """Accounts and their characters, saved to characters.db (gate only). Every character's id, account and name are
     in memory; the rest is loaded when its account is used, and dropped again a while after."""
-    path = os.path.join(STATE_DIR, "characters.db")
+    path = os.environ.get("MW_CHARACTERS_DB") or os.path.join(STATE_DIR, "characters.db")  # or mariadb:// (db.py)
     lock = threading.RLock()
     indexed = None  # the data the character id index was built from
     con = None
@@ -1406,7 +1406,7 @@ def clean_line(text):
 
 class Accounts:
     """Account names and salted password hashes, kept apart from game data (accounts.db, login server only)."""
-    path = os.path.join(STATE_DIR, "accounts.db")
+    path = os.environ.get("MW_ACCOUNTS_DB") or os.path.join(STATE_DIR, "accounts.db")  # or mariadb:// (db.py)
     lock = threading.Lock()
     ROLES = ("player", "gm", "admin")
 
@@ -1461,7 +1461,7 @@ class Accounts:
 class Bans:
     """Account and IP bans (in memory, saved to accounts.db): key -> {until (0 = permanent), reason, by, at}. IP keys
     are networks (1.2.3.4/32 for one address). Expired bans are ignored and stay saved until unbanned."""
-    path = os.path.join(STATE_DIR, "accounts.db")
+    path = os.environ.get("MW_ACCOUNTS_DB") or os.path.join(STATE_DIR, "accounts.db")  # or mariadb:// (db.py)
     lock = threading.Lock()
 
     def __init__(self):

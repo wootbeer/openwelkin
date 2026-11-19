@@ -1,15 +1,29 @@
 # MarsWar server emulator. Copyright (C) 2026 the MarsWar emulator contributors.
 # Licensed under the GNU Affero General Public License v3 or later; see LICENSE.
-"""db.py -- the two SQLite databases. accounts.db (accounts, bans) belongs to the login server, characters.db to the
-gate; a server never opens the other's file, and game servers open neither.
+"""db.py -- the two databases. accounts (accounts, bans) belongs to the login server, characters to the gate; a
+server never opens the other's, and game servers open neither. Each is an SQLite file (accounts.db, characters.db)
+or, for a server too big for one disk, a MariaDB database: MW_ACCOUNTS_DB / MW_CHARACTERS_DB =
+mariadb://user@host:port/database, the password in MW_DB_PASSWORD (never in the address, so it is never logged),
+and MW_DB_SSL_CA = a CA file to make the link to MariaDB use TLS. MariaDB needs PyMySQL (pip install PyMySQL).
 
 Every value goes into a query as a bound parameter (?), never into the SQL text: nothing a player types can change a
-query. Old JSON save files are imported once, into an empty database, and renamed to *.imported."""
+query. Queries are written for SQLite; translate() turns the few SQLite-only words into MariaDB's. Old JSON save
+files are imported once, into an empty database, and renamed to *.imported."""
+import functools
 import json
 import os
+import re
 import sqlite3
+import time
+import urllib.parse
 
-Error = sqlite3.Error
+try:
+    import pymysql
+except ImportError:  # only needed for MariaDB
+    pymysql = None
+
+Error = (sqlite3.Error,) + ((pymysql.Error,) if pymysql else ())
+MARIADB = "mariadb://"
 
 ACCOUNTS = """
 CREATE TABLE IF NOT EXISTS accounts (
@@ -59,8 +73,177 @@ CREATE INDEX IF NOT EXISTS division_members_division ON division_members (divisi
 """
 
 
+# The same tables for MariaDB: text keys need a length, the event log an AUTO_INCREMENT id, and every text compares
+# byte for byte (utf8mb4_bin), as in SQLite. `key` is a reserved word there.
+MARIADB_TABLES = " ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+MARIADB_ACCOUNTS = """
+CREATE TABLE IF NOT EXISTS accounts (
+    name VARCHAR(64) PRIMARY KEY, salt VARCHAR(64) NOT NULL, hash VARCHAR(128) NOT NULL, created BIGINT NOT NULL,
+    role VARCHAR(16) NOT NULL DEFAULT 'player')%(t)s;
+CREATE TABLE IF NOT EXISTS bans (
+    kind VARCHAR(16) NOT NULL, target VARCHAR(100) NOT NULL, until BIGINT NOT NULL, reason TEXT NOT NULL,
+    banned_by VARCHAR(100) NOT NULL, banned_at BIGINT NOT NULL, PRIMARY KEY (kind, target))%(t)s;
+""" % {"t": MARIADB_TABLES}
+
+MARIADB_CHARACTERS = """
+CREATE TABLE IF NOT EXISTS characters (
+    id BIGINT PRIMARY KEY, account VARCHAR(64) NOT NULL, name VARCHAR(64) NOT NULL, name_key VARCHAR(64) NOT NULL UNIQUE,
+    gender INT NOT NULL, model INT NOT NULL, state INT NOT NULL, raw MEDIUMTEXT NOT NULL, robot BIGINT,
+    INDEX characters_account (account))%(t)s;
+CREATE TABLE IF NOT EXISTS stats (
+    character_id BIGINT NOT NULL, stat VARCHAR(64) NOT NULL, value DOUBLE NOT NULL,
+    PRIMARY KEY (character_id, stat), INDEX stats_by_stat (stat, value),
+    FOREIGN KEY (character_id) REFERENCES characters (id))%(t)s;
+CREATE TABLE IF NOT EXISTS items (
+    character_id BIGINT NOT NULL, slot INT NOT NULL, goods BIGINT, item BIGINT NOT NULL, days BIGINT NOT NULL,
+    expires BIGINT NOT NULL, active INT NOT NULL, equipped INT NOT NULL, PRIMARY KEY (character_id, slot),
+    FOREIGN KEY (character_id) REFERENCES characters (id))%(t)s;
+CREATE TABLE IF NOT EXISTS talents (
+    character_id BIGINT NOT NULL, talent VARCHAR(64) NOT NULL, level INT NOT NULL, PRIMARY KEY (character_id, talent),
+    FOREIGN KEY (character_id) REFERENCES characters (id))%(t)s;
+CREATE TABLE IF NOT EXISTS contacts (
+    character_id BIGINT NOT NULL, kind VARCHAR(16) NOT NULL, other_id BIGINT NOT NULL,
+    PRIMARY KEY (character_id, kind, other_id), FOREIGN KEY (character_id) REFERENCES characters (id))%(t)s;
+CREATE TABLE IF NOT EXISTS texts (
+    character_id BIGINT NOT NULL, `key` VARCHAR(64) NOT NULL, text TEXT NOT NULL, PRIMARY KEY (character_id, `key`),
+    FOREIGN KEY (character_id) REFERENCES characters (id))%(t)s;
+CREATE TABLE IF NOT EXISTS event_log (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT, character_id BIGINT NOT NULL, at BIGINT NOT NULL, kind INT NOT NULL,
+    text TEXT NOT NULL, INDEX event_log_character (character_id, id),
+    FOREIGN KEY (character_id) REFERENCES characters (id))%(t)s;
+CREATE TABLE IF NOT EXISTS reports (boot VARCHAR(100) PRIMARY KEY, seq BIGINT NOT NULL, at BIGINT NOT NULL)%(t)s;
+CREATE TABLE IF NOT EXISTS divisions (
+    id BIGINT PRIMARY KEY, name VARCHAR(64) NOT NULL, name_key VARCHAR(64) NOT NULL UNIQUE, short VARCHAR(16) NOT NULL,
+    short_key VARCHAR(16) NOT NULL UNIQUE, leader BIGINT NOT NULL, nation INT NOT NULL, created BIGINT NOT NULL,
+    money BIGINT NOT NULL, points BIGINT NOT NULL, member_limit INT NOT NULL,
+    FOREIGN KEY (leader) REFERENCES characters (id))%(t)s;
+CREATE TABLE IF NOT EXISTS division_members (
+    character_id BIGINT PRIMARY KEY, division_id BIGINT NOT NULL, state INT NOT NULL, since BIGINT NOT NULL,
+    donated BIGINT NOT NULL DEFAULT 0, title INT NOT NULL DEFAULT 0, INDEX division_members_division (division_id),
+    FOREIGN KEY (character_id) REFERENCES characters (id),
+    FOREIGN KEY (division_id) REFERENCES divisions (id) ON DELETE CASCADE)%(t)s;
+""" % {"t": MARIADB_TABLES}
+
+
+@functools.lru_cache(maxsize=512)
+def translate(sql):
+    """An SQLite query in MariaDB's words: ? -> %s, INSERT OR REPLACE -> REPLACE, ON CONFLICT ... DO UPDATE SET
+    x = excluded.x -> ON DUPLICATE KEY UPDATE x = VALUES(x). Only the query text changes; values stay bound."""
+    sql = sql.replace("INSERT OR REPLACE INTO", "REPLACE INTO")
+    m = re.search(r" ON CONFLICT(?: \([^)]*\))? DO UPDATE SET ", sql)
+    if m:
+        sql = sql[:m.start()] + " ON DUPLICATE KEY UPDATE " + re.sub(r"excluded\.(\w+)", r"VALUES(\1)", sql[m.end():])
+    return sql.replace("%", "%%").replace("?", "%s")
+
+
+class MariaDB:
+    """A MariaDB connection that works like the sqlite3 one the server uses: execute / executemany / executescript
+    return a cursor, and `with con:` is one transaction. Outside a transaction every statement commits at once, so a
+    long-lived connection never reads old data. A connection idle for a while is checked first and made again if
+    MariaDB dropped it."""
+    IDLE = 60.0  # seconds
+
+    def __init__(self, url, read_only=False):
+        if pymysql is None:
+            raise RuntimeError("MariaDB needs PyMySQL: pip install PyMySQL")
+        u = urllib.parse.urlsplit(url)
+        if u.password is not None:
+            raise ValueError("put the MariaDB password in MW_DB_PASSWORD, not in the address")
+        if not u.path.strip("/"):
+            raise ValueError(f"no database name in {url}")
+        self.args = dict(host=u.hostname or "127.0.0.1", port=u.port or 3306,
+                         user=urllib.parse.unquote(u.username or ""), password=os.environ.get("MW_DB_PASSWORD", ""),
+                         database=urllib.parse.unquote(u.path.strip("/")), charset="utf8mb4", collation="utf8mb4_bin",
+                         autocommit=True, connect_timeout=5, read_timeout=60, write_timeout=60,
+                         client_flag=pymysql.constants.CLIENT.FOUND_ROWS)  # rowcount = rows matched, as in SQLite
+        if os.environ.get("MW_DB_SSL_CA"):
+            self.args["ssl"] = {"ca": os.environ["MW_DB_SSL_CA"]}
+        self.read_only, self.depth, self.con = read_only, 0, None
+        self.open()
+
+    def open(self):
+        if self.con is not None:
+            try:
+                self.con.close()
+            except Error:
+                pass
+        self.con = pymysql.connect(**self.args)
+        with self.con.cursor() as cur:
+            cur.execute("SET SESSION sql_mode = 'STRICT_ALL_TABLES,NO_ENGINE_SUBSTITUTION,NO_ZERO_DATE'")
+            cur.execute("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
+            if self.read_only:
+                cur.execute("SET SESSION TRANSACTION READ ONLY")
+        self.used = time.monotonic()
+
+    def ready(self):
+        """Outside a transaction, check a connection that was idle (and make it again if it was dropped)."""
+        if self.depth == 0 and time.monotonic() - self.used > self.IDLE:
+            try:
+                self.con.ping(reconnect=False)
+            except Error:
+                self.open()
+
+    def run(self, call, sql, params):
+        self.ready()
+        cur = self.con.cursor()
+        try:
+            call(cur, translate(sql), params)
+        except pymysql.err.OperationalError:
+            if self.depth:  # inside a transaction: the caller's rollback handles it
+                raise
+            self.open()  # the link dropped between two statements: once more on a new connection
+            cur = self.con.cursor()
+            call(cur, translate(sql), params)
+        self.used = time.monotonic()
+        return cur
+
+    def execute(self, sql, params=()):
+        return self.run(lambda cur, q, p: cur.execute(q, p), sql, tuple(params))
+
+    def executemany(self, sql, rows):
+        return self.run(lambda cur, q, p: cur.executemany(q, p) if p else None, sql, [tuple(r) for r in rows])
+
+    def executescript(self, script):
+        for statement in script.split(";"):
+            if statement.strip():
+                self.execute(statement)
+
+    def __enter__(self):
+        if self.depth == 0:
+            self.ready()
+            self.con.begin()
+        self.depth += 1
+        return self
+
+    def __exit__(self, kind, value, tb):
+        self.depth -= 1
+        if self.depth == 0:
+            if kind is None:
+                self.con.commit()
+            else:
+                try:
+                    self.con.rollback()
+                except Error:
+                    self.open()
+        return False
+
+    def close(self):
+        self.con.close()
+
+
+def is_mariadb(target):
+    return isinstance(target, str) and target.startswith(MARIADB)
+
+
+def num(value):
+    """A stat as the server keeps it: MariaDB hands DOUBLE values back as floats, 3.0 means 3."""
+    return int(value) if isinstance(value, float) and value.is_integer() else value
+
+
 def backup(path, copy):
     """Copy a database while the server is using it."""
+    if is_mariadb(path):
+        raise OSError("it is in MariaDB: back it up there (mariadb-dump --single-transaction)")
     source, target = sqlite3.connect(path), sqlite3.connect(copy)
     try:
         source.backup(target)
@@ -69,8 +252,13 @@ def backup(path, copy):
         target.close()
 
 
-def connect(path, schema):
-    """One connection per database, used from many threads: the caller holds its lock around every use."""
+def connect(path, schema, mariadb_schema=None):
+    """One connection per database, used from many threads: the caller holds its lock around every use. path is a
+    file, or a mariadb:// address."""
+    if is_mariadb(path):
+        con = MariaDB(path)
+        con.executescript(mariadb_schema)
+        return con
     con = sqlite3.connect(path, timeout=5, check_same_thread=False)
     con.execute("PRAGMA journal_mode=WAL")  # a crash never leaves a half-written database
     con.execute("PRAGMA synchronous=NORMAL")
@@ -82,6 +270,8 @@ def connect(path, schema):
 
 def reader(path):
     """A second, read-only connection for slow reads (rankings), so writes on the main one need not wait."""
+    if is_mariadb(path):
+        return MariaDB(path, read_only=True)
     con = sqlite3.connect(path, timeout=5, check_same_thread=False)
     con.execute("PRAGMA query_only=ON")
     return con
@@ -97,7 +287,7 @@ def retire(path):
 
 
 def open_accounts(path):
-    con = connect(path, ACCOUNTS)
+    con = connect(path, ACCOUNTS, MARIADB_ACCOUNTS)
     folder = os.path.dirname(path)
     old = os.path.join(folder, "accounts.json")
     if os.path.exists(old) and not con.execute("SELECT 1 FROM accounts LIMIT 1").fetchone():
@@ -156,9 +346,11 @@ def write_stats(con, cid, stats):
 def add_log_lines(con, lines, keep):
     """lines = (character id, time, kind, text). Keeps the newest `keep` of each (call inside a transaction)."""
     con.executemany("INSERT INTO event_log (character_id, at, kind, text) VALUES (?, ?, ?, ?)", lines)
-    con.executemany("DELETE FROM event_log WHERE character_id = ? AND id NOT IN "
-                    "(SELECT id FROM event_log WHERE character_id = ? ORDER BY id DESC LIMIT ?)",
-                    [(cid, cid, keep) for cid in {line[0] for line in lines}])
+    for cid in {line[0] for line in lines}:  # the oldest line kept, then everything before it goes
+        row = con.execute("SELECT id FROM event_log WHERE character_id = ? ORDER BY id DESC LIMIT 1 OFFSET ?",
+                          (cid, max(keep - 1, 0))).fetchone()
+        if row:
+            con.execute("DELETE FROM event_log WHERE character_id = ? AND id < ?", (cid, row[0]))
 
 
 def load_reports(con):
@@ -188,7 +380,7 @@ def load_account(con, account):
         return []
     for cid, stat, value in con.execute(
             "SELECT * FROM stats WHERE character_id IN (SELECT id FROM characters WHERE account = ?)", (account,)):
-        ids[cid]["stats"][stat] = value
+        ids[cid]["stats"][stat] = num(value)
     for cid, _, goods, item, days, expires, active, equipped in con.execute(
             "SELECT * FROM items WHERE character_id IN (SELECT id FROM characters WHERE account = ?) "
             "ORDER BY character_id, slot", (account,)):
@@ -252,7 +444,7 @@ def ranking(con, stat, default=0, counter=None, current=None, everyone=False):
             "SELECT c.id, c.name, h.value, s.value FROM stats s JOIN characters c ON c.id = s.character_id "
             "LEFT JOIN stats h ON h.character_id = c.id AND h.stat = 'honor' "
             "WHERE s.stat = ? AND s.value > 0", (stat,))
-    return [(cid, name, honor or 0, value) for cid, name, honor, value in rows]
+    return [(cid, name, num(honor or 0), num(value)) for cid, name, honor, value in rows]
 
 
 DIVISION_FIELDS = ("id", "name", "short", "leader", "nation", "created", "money", "points", "limit")
@@ -261,7 +453,10 @@ DIVISION_FIELDS = ("id", "name", "short", "leader", "nation", "created", "money"
 def load_divisions(con):
     """({division id: division}, {character id: [division id, state, since, crystal donated, title]}): all of them,
     they are few."""
-    have = {r[1] for r in con.execute("PRAGMA table_info(division_members)")}
+    if isinstance(con, MariaDB):  # its table was made with every column
+        have = {r[0] for r in con.execute("SHOW COLUMNS FROM division_members")}
+    else:
+        have = {r[1] for r in con.execute("PRAGMA table_info(division_members)")}
     for column, add in (("donated", "ALTER TABLE division_members ADD COLUMN donated INTEGER NOT NULL DEFAULT 0"),
                         ("title", "ALTER TABLE division_members ADD COLUMN title INTEGER NOT NULL DEFAULT 0")):
         if column not in have:  # added 2026-11-17 and 2026-11-18; older databases get them here
@@ -301,7 +496,7 @@ def write_division_member(con, cid, row):
 
 
 def open_characters(path):
-    con = connect(path, CHARACTERS)
+    con = connect(path, CHARACTERS, MARIADB_CHARACTERS)
     old = os.path.join(os.path.dirname(path), "characters.json")
     if os.path.exists(old) and not con.execute("SELECT 1 FROM characters LIMIT 1").fetchone():
         data = read_json(old)

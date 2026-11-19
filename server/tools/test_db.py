@@ -1,20 +1,43 @@
 # MarsWar server emulator. Copyright (C) 2026 the MarsWar emulator contributors.
 # Licensed under the GNU Affero General Public License v3 or later; see LICENSE.
-"""test_db.py -- the SQLite storage: everything survives a restart, old JSON files are imported once, a character name
-is taken only once, and hostile text stays plain text. Runs in a temporary folder."""
+"""test_db.py -- the storage: everything survives a restart, old JSON files are imported once, a character name is
+taken only once, and hostile text stays plain text. Runs in a temporary folder, on SQLite.
+
+To run the same checks on MariaDB, give two empty test databases (every table in them is dropped first, so their
+names must contain "test"): MW_TEST_ACCOUNTS_DB=mariadb://user@host/mw_test_accounts,
+MW_TEST_CHARACTERS_DB=mariadb://user@host/mw_test_characters, and MW_DB_PASSWORD. The JSON import and old-database
+checks always use SQLite files."""
 import json
 import os
 import re
 import shutil
+import sqlite3
 import sys
 import tempfile
 import time
 
 TOOLS = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(TOOLS))
+sys.path.insert(0, TOOLS)  # to_mariadb
 root = tempfile.mkdtemp(prefix="mw-db-")
 os.environ["MW_STATE_DIR"] = root
 import db  # noqa: E402
+
+MARIADB = {k: os.environ.get(f"MW_TEST_{k}_DB", "") for k in ("ACCOUNTS", "CHARACTERS")}
+TABLES = {"ACCOUNTS": ("bans", "accounts"),
+          "CHARACTERS": ("division_members", "divisions", "reports", "event_log", "texts", "contacts", "talents",
+                         "items", "stats", "characters")}
+for kind, url in MARIADB.items():
+    os.environ.pop(f"MW_{kind}_DB", None)  # never the real ones
+    if url:
+        if "test" not in url.rsplit("/", 1)[-1]:
+            sys.exit(f"MW_TEST_{kind}_DB: the database name must contain 'test' (its tables are dropped)")
+        con = db.MariaDB(url)
+        for table in TABLES[kind]:
+            con.execute("DROP TABLE IF EXISTS " + table)
+        con.close()
+        os.environ[f"MW_{kind}_DB"] = url
+print("storage:", ", ".join(f"{k.lower()} in MariaDB" if u else f"{k.lower()} in SQLite" for k, u in MARIADB.items()))
 import loginserver as ls  # noqa: E402
 
 fails = []
@@ -301,15 +324,78 @@ def old_divisions():
     con.close()
 
 
+def mariadb():
+    """MariaDB only: a dropped connection is made again, and a failed transaction leaves nothing behind."""
+    con = ls.STORE.con
+    first = con.execute("SELECT CONNECTION_ID()").fetchone()[0]
+    other = db.MariaDB(MARIADB["CHARACTERS"])
+    other.execute("KILL ?", (first,))
+    other.close()
+    check("a dropped connection is made again", con.execute("SELECT COUNT(*) FROM characters").fetchone()[0] >= 1
+          and con.execute("SELECT CONNECTION_ID()").fetchone()[0] != first)
+    before = counts("characters")
+    try:
+        with con:
+            con.execute("INSERT INTO event_log (character_id, at, kind, text) VALUES (?, ?, ?, ?)",
+                        (ls.STORE.id_of_name("Alpha"), 0, 0, "kept?"))
+            con.execute("INSERT INTO event_log (character_id, at, kind, text) VALUES (?, ?, ?, ?)", (999999, 0, 0, "x"))
+        check("a bad transaction fails", False)
+    except db.Error:
+        pass
+    check("and leaves nothing behind", counts("characters") == before
+          and not con.execute("SELECT 1 FROM event_log WHERE text = ?", ("kept?",)).fetchone())
+    check("rankings work on the read-only connection", ls.STORE.top("kills") is not None)
+    try:
+        ls.STORE.reader.execute("DELETE FROM reports")
+        check("the ranking connection cannot write", False)
+    except db.Error:
+        check("the ranking connection cannot write", True)
+
+
+def moving():
+    """MariaDB only: tools/to_mariadb.py copies the SQLite files importing() made, and refuses a database with rows."""
+    import to_mariadb
+    folder = os.path.join(root, "old")
+    try:
+        to_mariadb.copy(os.path.join(folder, "characters.db"), MARIADB["CHARACTERS"], out=lambda line: None)
+        check("moving refuses a database that has rows", False)
+    except SystemExit as e:
+        check("moving refuses a database that has rows", "already has rows" in str(e), str(e))
+    for con in (ls.STORE.con, ls.STORE.reader, ls.ACCOUNTS.con, ls.BANS.con):
+        con.close()
+    for kind, url in MARIADB.items():
+        con = db.MariaDB(url)
+        for table in TABLES[kind]:
+            con.execute("DROP TABLE IF EXISTS " + table)
+        con.close()
+    to_mariadb.copy(os.path.join(folder, "characters.db"), MARIADB["CHARACTERS"], out=lambda line: None)
+    to_mariadb.copy(os.path.join(folder, "accounts.db"), MARIADB["ACCOUNTS"], out=lambda line: None)
+    lite = sqlite3.connect(os.path.join(folder, "characters.db"))
+    maria = db.MariaDB(MARIADB["CHARACTERS"])
+    check("a moved characters database reads the same", db.load_characters(maria) == db.load_characters(lite))
+    lite.close()
+    maria.close()
+    maria = db.MariaDB(MARIADB["ACCOUNTS"])
+    check("moved accounts and bans", maria.execute("SELECT role FROM accounts WHERE name = ?", ("old",)).fetchone()
+          == ("gm",) and db.load_bans(maria)["accounts"]["old"]["reason"] == "r")
+    maria.close()
+    ls.STORE = ls.Store()  # main() closes these
+    ls.ACCOUNTS, ls.BANS = ls.Accounts(), ls.Bans()
+
+
 def main():
     try:
         characters()
         hostile()
+        if MARIADB["CHARACTERS"]:
+            mariadb()
         accounts()
         rollback()
         loading()
         importing()
         old_divisions()
+        if MARIADB["CHARACTERS"] and MARIADB["ACCOUNTS"]:
+            moving()
     finally:
         ls.STORE.con.close()
         ls.STORE.reader.close()
