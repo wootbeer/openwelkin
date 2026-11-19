@@ -1507,6 +1507,7 @@ MAX_SUITES = 10  # loadout presets per character
 MAX_SUITE_TEXT = 400  # characters in one preset (a name and a few dozen part ids)
 KICK_NOTICE = 1.5  # seconds a kicked player has to see why, before the connection closes
 CHAT_MAX, CHAT_EVERY, CHAT_QUEUE = 200, 0.5, 100  # characters in a line, seconds between a player's lines, lines waiting
+GROUP_CHAT = 21202  # shown as CHATMESSAGEUI_GROUP, "[Division]": the battle group (on_chat_group)
 SQUAD_CHAT = 21203  # shown as CHATMESSAGEUI_DETACHMENT, "[Squadron Team]" (ReceiveChatMessageObserver 0x103884d0)
 # battle box channels for squad chat: not seen in game yet. ChatManager::SendMessage sends three tabs as (21,21004)
 # with u16 2, 3 or 5; 2 is the Division Channel and 5 the Country tab, so the squad tab is most likely 3
@@ -2321,9 +2322,22 @@ class Session:
         elif self.character:
             log(f"[chat] {self.character['name']}: unknown channel {channel}")
 
-    def chat_squad(self, msg, off):
+    def on_chat_group(self, msg):
+        """Group chat (21,21063), ChatManager::SendMessage (0x10387d91): u32 n | n x u32 character id | str text. The
+        client lists the members of its group (GroupManager::GetGroup of the local character's +0xe8); the server
+        sends the line to the sender's squad instead, shown from (21,21202), CHATMESSAGEUI_GROUP ("[Division]" in
+        English, a mistranslation of the battle group)."""
+        n = struct.unpack_from("<I", msg.body)[0] if len(msg.body) >= 4 else None
+        if n is None or n > SQUAD_MAX * 4 or len(msg.body) < 4 + 4 * n:
+            if msg.flags & MSG_REQUEST:
+                self.reply(msg, bytes(DEFAULT_REPLY_SIZE))
+            return
+        self.chat_squad(msg, 4 + 4 * n, GROUP_CHAT)
+
+    def chat_squad(self, msg, off, shown=None):
         """Squad channel: the line goes to the sender's battle squad, the sender too, shown from (21,21203), which the
-        client labels CHATMESSAGEUI_DETACHMENT, "[Squadron Team]"."""
+        client labels CHATMESSAGEUI_DETACHMENT, "[Squadron Team]" (or as shown)."""
+        shown = shown or SQUAD_CHAT
         line = self.chat_text(msg, off)
         if not line:
             return
@@ -2336,7 +2350,7 @@ class Session:
         with ONLINE_LOCK:
             sessions = [s for s in ONLINE.values() if s.character and s.squad == squad and not s.blocks(self)]
         for s in sessions:
-            s.chat_line(SQUAD_CHAT, name, line[0], self.character["id"])
+            s.chat_line(shown, name, line[0], self.character["id"])
 
     def chat_division(self, msg, off):
         """Division channel: the line goes to the online members of the sender's division."""
@@ -3284,6 +3298,7 @@ HANDLERS = {
     (21, 21513): Session.on_chat_broadcast,      # Chat_BigBugleSendMessage (hall Broadcast channel)
     (21, 21052): Session.on_chat_battle,         # chat in battle
     (21, 21004): Session.on_chat_channel,        # battle chat box
+    (21, 21063): Session.on_chat_group,          # battle group chat (a squad here)
     (13, 13041): Session.on_gm_kick,             # GM /kick (GMKickRes)
     (21, 21030): Session.on_gm_announce,         # GM /announce
     (21, 21031): Session.on_gm_say,              # GM /say
@@ -5454,6 +5469,37 @@ def squad_link(a, b, joined):
         send_game_event(a.match.server, a, 19, 30501, struct.pack("<II", a.detachment, b.cid))
 
 
+def group_id(key):
+    """The client group (GroupManager's Group) a squad (side, number) is shown as: never 0, which means no group."""
+    return key[0] * 100 + key[1]
+
+
+def group_add(a, b, key, leader):
+    """Put b in a's client group for the squad. AddToGroup (19,50400), handler 0x103b8240: u32 group id | u32
+    character id | str name | u32 (to Group's constructor; the leader here) | u32 | u8 (leader here) | u32 | u8 ->
+    GroupManager::AddToGroup makes the group if needed and Group::AddMember (0x10398650) sets that character's +0xe8
+    to the group id. ChatManager::SendMessage finds the group from the local character's +0xe8 for group chat, and
+    Robot::updateHeading shows a robot's heading when its character has the local one's +0xe8."""
+    send_game_event(a.match.server, a, 19, 50400, struct.pack("<II", group_id(key), b.cid) + wstr(b.name)
+                    + struct.pack("<IIBIB", leader.cid, 0, 1 if b is leader else 0, 0, 0))
+
+
+def group_drop(a, b, key):
+    """Take b out of a's client group: RemovedFromGroup (19,50401) u32 group id | u32 character id ->
+    GroupManager::RemoveMember, and GS_OtherPlayerGroupStateChange (19,30057) u32 character id | u32 group id
+    (handler 0x10356ee0) sets b's +0xe8 back to 0."""
+    send_game_event(a.match.server, a, 19, 50401, struct.pack("<II", group_id(key), b.cid))
+    send_game_event(a.match.server, a, 19, 30057, struct.pack("<II", b.cid, 0))
+
+
+def group_dismiss(a, key, members):
+    """a left the squad: DismissGroup (19,50404) u32 group id -> GroupManager::Dismiss, and every member's +0xe8 back
+    to 0 on a's client."""
+    send_game_event(a.match.server, a, 19, 50404, struct.pack("<I", group_id(key)))
+    for b in members:
+        send_game_event(a.match.server, a, 19, 30057, struct.pack("<II", b.cid, 0))
+
+
 def squad_leader(a, leader, name=""):
     """Tell a's client who leads its own detachment. UpdateDetachmentLeader (19,30503): u32 detachment id | u32 leader
     character id | str name -> GroupManager::SetDetachmentLeader (Game.dll 0x10390730) keeps the id (+0x28; 0 becomes
@@ -5512,6 +5558,10 @@ def squad_join(peer, number, create):
             tell_player(other, f"{peer.name} joined squad {number}")
         members.append(peer)
         peer.squad = key
+        for other in members:  # the client group: the new member on everyone's client, the others on theirs
+            group_add(other, peer, key, members[0])
+            if other is not peer:
+                group_add(peer, other, key, members[0])
         tell_gate_squad(peer, m, key)
         squad_leader(peer, members[0])
         if len(members) == 1:
@@ -5546,8 +5596,11 @@ def squad_quit(m, peer, gone=False):
     tell_gate_squad(peer, m, None)
     led = members[0] is peer
     members.remove(peer)
+    if not gone:
+        group_dismiss(peer, key, members + [peer])
     for other in members:
         squad_link(other, peer, False)
+        group_drop(other, peer, key)
         if not gone:
             squad_link(peer, other, False)
         tell_player(other, f"{peer.name} left squad {key[1]}" + (f"; {members[0].name} leads it now" if led else ""))

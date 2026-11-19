@@ -55,7 +55,7 @@ class Recorder(ts.lt.Game):
     def datagram_received(self, data, addr):
         pkt = ts.fdp.Packet.parse(data)
         if not pkt.system:
-            self.events += [(typ, raw[12:]) for raw, _, typ in ts.fdp.messages(pkt.payload) if typ in (30020, 30030, 30150, 30500, 30501, 30503)]
+            self.events += [(typ, raw[12:]) for raw, _, typ in ts.fdp.messages(pkt.payload) if typ in (30020, 30030, 30057, 30150, 30500, 30501, 30503, 50400, 50401, 50404)]
         super().datagram_received(data, addr)
 
     def last(self, typ):
@@ -515,6 +515,25 @@ async def squads(kim, kim_id, kim_game, lou, lou_id, lou_game):
     say(kim, "squad hi", 21004, struct.pack("<H", 3))
     check("squad chat reaches the squad", await heard(lou) == (ls.SQUAD_CHAT, kim_id, "kim", "squad hi"))
     check("and comes back to the sender", await heard(kim) == (ls.SQUAD_CHAT, kim_id, "kim", "squad hi"))
+    group = ls.group_id((ls.ALLIANCE, 3))
+
+    def grouped(game):
+        return sorted(struct.unpack_from("<I", b, 4)[0] for t, b in game.events
+                      if t == 50400 and struct.unpack_from("<I", b)[0] == group)
+
+    check("the squad is a client group on both", grouped(kim_game) == sorted([kim_id, lou_id])
+          and grouped(lou_game) == sorted([kim_id, lou_id]), f"{grouped(kim_game)} {grouped(lou_game)}")
+    await asyncio.sleep(ls.CHAT_EVERY + 0.1)
+    # group chat as the client sends it: its own member list (ignored: the server uses the squad), then the text
+    say(lou, "group hi", 21063, struct.pack("<III", 2, kim_id, 999))
+    check("group chat reaches the squad", await heard(kim) == (ls.GROUP_CHAT, lou_id, "lou", "group hi"))
+    check("and the sender", await heard(lou) == (ls.GROUP_CHAT, lou_id, "lou", "group hi"))
+    await asyncio.sleep(ls.CHAT_EVERY + 0.1)
+    say(lou, "bad list", 21063, struct.pack("<I", 1000))
+    check("a group line with a bad member list is dropped", await heard(kim, 0.4) is None)
+    await asyncio.sleep(gap)
+    lou_game.squad(10402, 3)
+    check("joining your own squad again", await told(lou) == "You are in squad 3")
     lou_game.squad(10402, 3)
     check("changes are rate-limited", await heard(lou, 0.4) is None)
     await asyncio.sleep(gap)
@@ -525,6 +544,9 @@ async def squads(kim, kim_id, kim_game, lou, lou_id, lou_game):
     check("/L leaves", await told(lou) == "You left squad 3")
     check("the squad hears it", await told(kim) == "lou left squad 3")
     await asyncio.sleep(0.3)
+    check("the leaver's client group goes", lou_game.last(50404) == struct.pack("<I", group)
+          and kim_game.last(50401) == struct.pack("<II", group, lou_id)
+          and kim_game.last(30057) == struct.pack("<II", lou_id, 0))
     check("both drop the other from their detachment",
           kim_game.members(kim_id)[1] == [] and lou_game.members(lou_id)[1] == [])
     say(lou, "anyone?", 21004, struct.pack("<H", 3))

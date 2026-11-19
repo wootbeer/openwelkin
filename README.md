@@ -275,7 +275,8 @@ Players of a side can make squads in battle with the client's own chat commands:
 `/e 3` joins it, `/L` leaves, and `/l` says who leads (the player in the squad longest; the game announces a new
 leader as "squadron commander"). Squads are numbered 1 to 20 and hold up to 8 players; the server answers in a whisper
 from Server. Tried with the real client: making, joining and leaving squads and the leader lines work. The client's
-battle chat box has no squad tab, so squads have no chat of their own yet. Not tried with the real client yet: what the client shows for squad members.
+battle chat box has no squad tab; squads are now also sent to the client as its battle groups, which may open the
+battle box's Division tab for squad chat (not tried yet). Not tried with the real client yet: what the client shows for squad members.
 
 Each character has a friend list and a block list of up to 100 names, kept in `characters.db`. Lines from a blocked player
 do not reach you, and to them you look offline in private messages.

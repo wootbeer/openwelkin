@@ -170,7 +170,9 @@ reply layout, and answer with real data.
       - Real client 2026-11-18: tester's !order hold the bridge showed "Commander: <order>" at the top left and
         "Country Command<order>" in big text in the middle (no space: orders are now sent with a leading space).
         No commander icon over tester's robot on Bravo's screen: Robot::updateHeading sets the commander flag
-        only inside a block that runs when the robot's byte +0xaf is set (not read what sets it)
+        only inside a block that runs when the robot's byte +0xaf is set (+0xad and +0xae open the same heading
+        block). 2026-11-19, offline: no mov or lea in Game.dll touches Robot +0xac..+0xaf, so they are filled some
+        other way (a bulk copy?); next step is a Frida write watch on a robot's +0xaf in game
       - Built 2026-11-18 (offline, tools/test_chat.py): each side's commander in a match is its player there longest
         (30020 to that side on join and when the commander leaves), and the commander's `!order <text>` in battle
         chat goes out as 30030 to the side (split servers: gate asks the game server, link message "order"). Not
@@ -461,7 +463,19 @@ reply layout, and answer with real data.
 - [ ] Battle squad (Group) chat and the battle box's Team / Division tabs: they stay greyed without a squad.
       Real client 2026-11-18: the battle box's tabs are Country, Team (greyed), Division, Whisper, Service; there
       is no squad tab, and a line on the Division tab is never sent (no group), even in a squad. So the squad chat
-      below can not be reached from this client. (9,10108) f32 comes every 5 s in battle (not read).
+      below can not be reached from this client. (9,10108) f32 comes every 5 s in battle: it is
+      GroupManager::RequestCorpGroupInfo from BigMapState::Tick (reply not known; (19,30056) UpdateAllGroupInfo
+      is the likely one: u32 groups | (5 x u32 | u8 | 2 x u32 | u32 members | (u32 | str name | u8 | 5 x u32))).
+      2026-11-19, offline: the client's battle groups (GroupManager's Group, the "Division" tab = CHATINPUTUI_GROUP)
+      are a separate system that is live: CGroupMemberUI and CGroupQuickCallUI are made at start, and the group
+      list CCorpGroupList (join/leave buttons -> RequestJoinGroup / RequestLeaveGroup) sits in CSelfCorpUI
+      (dialog 0x10). A character's group id is its +0xe8 (base info 30040's u32 there, GS_OtherPlayerGroupStateChange
+      (19,30057) u32 character | u32 group); AddToGroup (19,50400) u32 group | u32 character | str name | u32 | u32 |
+      u8 | u32 | u8 adds a member and sets its +0xe8; RemovedFromGroup (19,50401) u32 group | u32 character;
+      DismissGroup (19,50404) u32 group. Group chat is (21,21063) u32 n | n x u32 member | str text, sent with the
+      group from the local character's +0xe8, shown from (21,21202). The emulator now makes each squad a client
+      group (id side * 100 + number) and sends (21,21063) lines to the squad. In game: does the Division tab open
+      and send, does the group show anywhere (CGroupMemberUI), and what does T open
       2026-11-18, offline: squad lines show from (21,21203) as "[Squadron Team]"; the emulator sends a squad's
       lines there for (21,21004) channel 3 or 4 (the client's send table has three tabs with u16 2, 3, 5, and 2 and 5
       are known) and logs other channels. In game: does joining a squad (/a N) open a tab, and what channel it sends Whispers from the battle box are not tried. Enter in battle needs DirectInput: tools/vinput.py enter:0.2 sends a line
