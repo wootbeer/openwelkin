@@ -74,52 +74,54 @@ CREATE INDEX IF NOT EXISTS division_members_division ON division_members (divisi
 
 
 # The same tables for MariaDB: text keys need a length, the event log an AUTO_INCREMENT id, and every text compares
-# byte for byte (utf8mb4_bin), as in SQLite. `key` is a reserved word there.
-MARIADB_TABLES = " ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+# byte for byte (utf8mb4_bin), as in SQLite. Every number is a BIGINT and every free text a MEDIUMTEXT: SQLite takes
+# any size, and a value too big for its column would make MariaDB (strict) refuse the whole save batch. Text keys are
+# VARCHARs longer than anything the server lets in. `key` is a reserved word there.
+MARIADB_TABLES = " ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_nopad_bin"  # nopad: 'bob ' is not 'bob'
 MARIADB_ACCOUNTS = """
 CREATE TABLE IF NOT EXISTS accounts (
     name VARCHAR(64) PRIMARY KEY, salt VARCHAR(64) NOT NULL, hash VARCHAR(128) NOT NULL, created BIGINT NOT NULL,
     role VARCHAR(16) NOT NULL DEFAULT 'player')%(t)s;
 CREATE TABLE IF NOT EXISTS bans (
-    kind VARCHAR(16) NOT NULL, target VARCHAR(100) NOT NULL, until BIGINT NOT NULL, reason TEXT NOT NULL,
+    kind VARCHAR(16) NOT NULL, target VARCHAR(100) NOT NULL, until BIGINT NOT NULL, reason MEDIUMTEXT NOT NULL,
     banned_by VARCHAR(100) NOT NULL, banned_at BIGINT NOT NULL, PRIMARY KEY (kind, target))%(t)s;
 """ % {"t": MARIADB_TABLES}
 
 MARIADB_CHARACTERS = """
 CREATE TABLE IF NOT EXISTS characters (
     id BIGINT PRIMARY KEY, account VARCHAR(64) NOT NULL, name VARCHAR(64) NOT NULL, name_key VARCHAR(64) NOT NULL UNIQUE,
-    gender INT NOT NULL, model INT NOT NULL, state INT NOT NULL, raw MEDIUMTEXT NOT NULL, robot BIGINT,
+    gender BIGINT NOT NULL, model BIGINT NOT NULL, state BIGINT NOT NULL, raw MEDIUMTEXT NOT NULL, robot BIGINT,
     INDEX characters_account (account))%(t)s;
 CREATE TABLE IF NOT EXISTS stats (
     character_id BIGINT NOT NULL, stat VARCHAR(64) NOT NULL, value DOUBLE NOT NULL,
     PRIMARY KEY (character_id, stat), INDEX stats_by_stat (stat, value),
     FOREIGN KEY (character_id) REFERENCES characters (id))%(t)s;
 CREATE TABLE IF NOT EXISTS items (
-    character_id BIGINT NOT NULL, slot INT NOT NULL, goods BIGINT, item BIGINT NOT NULL, days BIGINT NOT NULL,
-    expires BIGINT NOT NULL, active INT NOT NULL, equipped INT NOT NULL, PRIMARY KEY (character_id, slot),
+    character_id BIGINT NOT NULL, slot BIGINT NOT NULL, goods BIGINT, item BIGINT NOT NULL, days BIGINT NOT NULL,
+    expires BIGINT NOT NULL, active BIGINT NOT NULL, equipped BIGINT NOT NULL, PRIMARY KEY (character_id, slot),
     FOREIGN KEY (character_id) REFERENCES characters (id))%(t)s;
 CREATE TABLE IF NOT EXISTS talents (
-    character_id BIGINT NOT NULL, talent VARCHAR(64) NOT NULL, level INT NOT NULL, PRIMARY KEY (character_id, talent),
+    character_id BIGINT NOT NULL, talent VARCHAR(64) NOT NULL, level BIGINT NOT NULL, PRIMARY KEY (character_id, talent),
     FOREIGN KEY (character_id) REFERENCES characters (id))%(t)s;
 CREATE TABLE IF NOT EXISTS contacts (
     character_id BIGINT NOT NULL, kind VARCHAR(16) NOT NULL, other_id BIGINT NOT NULL,
     PRIMARY KEY (character_id, kind, other_id), FOREIGN KEY (character_id) REFERENCES characters (id))%(t)s;
 CREATE TABLE IF NOT EXISTS texts (
-    character_id BIGINT NOT NULL, `key` VARCHAR(64) NOT NULL, text TEXT NOT NULL, PRIMARY KEY (character_id, `key`),
+    character_id BIGINT NOT NULL, `key` VARCHAR(64) NOT NULL, text MEDIUMTEXT NOT NULL, PRIMARY KEY (character_id, `key`),
     FOREIGN KEY (character_id) REFERENCES characters (id))%(t)s;
 CREATE TABLE IF NOT EXISTS event_log (
-    id BIGINT PRIMARY KEY AUTO_INCREMENT, character_id BIGINT NOT NULL, at BIGINT NOT NULL, kind INT NOT NULL,
-    text TEXT NOT NULL, INDEX event_log_character (character_id, id),
+    id BIGINT PRIMARY KEY AUTO_INCREMENT, character_id BIGINT NOT NULL, at BIGINT NOT NULL, kind BIGINT NOT NULL,
+    text MEDIUMTEXT NOT NULL, INDEX event_log_character (character_id, id),
     FOREIGN KEY (character_id) REFERENCES characters (id))%(t)s;
 CREATE TABLE IF NOT EXISTS reports (boot VARCHAR(100) PRIMARY KEY, seq BIGINT NOT NULL, at BIGINT NOT NULL)%(t)s;
 CREATE TABLE IF NOT EXISTS divisions (
     id BIGINT PRIMARY KEY, name VARCHAR(64) NOT NULL, name_key VARCHAR(64) NOT NULL UNIQUE, short VARCHAR(16) NOT NULL,
-    short_key VARCHAR(16) NOT NULL UNIQUE, leader BIGINT NOT NULL, nation INT NOT NULL, created BIGINT NOT NULL,
-    money BIGINT NOT NULL, points BIGINT NOT NULL, member_limit INT NOT NULL,
+    short_key VARCHAR(16) NOT NULL UNIQUE, leader BIGINT NOT NULL, nation BIGINT NOT NULL, created BIGINT NOT NULL,
+    money BIGINT NOT NULL, points BIGINT NOT NULL, member_limit BIGINT NOT NULL,
     FOREIGN KEY (leader) REFERENCES characters (id))%(t)s;
 CREATE TABLE IF NOT EXISTS division_members (
-    character_id BIGINT PRIMARY KEY, division_id BIGINT NOT NULL, state INT NOT NULL, since BIGINT NOT NULL,
-    donated BIGINT NOT NULL DEFAULT 0, title INT NOT NULL DEFAULT 0, INDEX division_members_division (division_id),
+    character_id BIGINT PRIMARY KEY, division_id BIGINT NOT NULL, state BIGINT NOT NULL, since BIGINT NOT NULL,
+    donated BIGINT NOT NULL DEFAULT 0, title BIGINT NOT NULL DEFAULT 0, INDEX division_members_division (division_id),
     FOREIGN KEY (character_id) REFERENCES characters (id),
     FOREIGN KEY (division_id) REFERENCES divisions (id) ON DELETE CASCADE)%(t)s;
 """ % {"t": MARIADB_TABLES}
@@ -142,6 +144,7 @@ class MariaDB:
     long-lived connection never reads old data. A connection idle for a while is checked first and made again if
     MariaDB dropped it."""
     IDLE = 60.0  # seconds
+    LOST = {0, 2006, 2013, 2055, 4031}  # MariaDB error numbers for a dropped or timed-out connection
 
     def __init__(self, url, read_only=False):
         if pymysql is None:
@@ -155,6 +158,7 @@ class MariaDB:
                          user=urllib.parse.unquote(u.username or ""), password=os.environ.get("MW_DB_PASSWORD", ""),
                          database=urllib.parse.unquote(u.path.strip("/")), charset="utf8mb4", collation="utf8mb4_bin",
                          autocommit=True, connect_timeout=5, read_timeout=60, write_timeout=60,
+                         local_infile=False,  # MariaDB may never ask for a file from this machine
                          client_flag=pymysql.constants.CLIENT.FOUND_ROWS)  # rowcount = rows matched, as in SQLite
         if os.environ.get("MW_DB_SSL_CA"):
             self.args["ssl"] = {"ca": os.environ["MW_DB_SSL_CA"]}
@@ -188,8 +192,10 @@ class MariaDB:
         cur = self.con.cursor()
         try:
             call(cur, translate(sql), params)
-        except pymysql.err.OperationalError:
-            if self.depth:  # inside a transaction: the caller's rollback handles it
+        except (pymysql.err.OperationalError, pymysql.err.InterfaceError) as e:
+            # only a lost link is tried again, and only outside a transaction (inside, the caller's rollback handles
+            # it): writes always run in a transaction, so nothing is ever written twice
+            if self.depth or not e.args or e.args[0] not in self.LOST:
                 raise
             self.open()  # the link dropped between two statements: once more on a new connection
             cur = self.con.cursor()
@@ -211,7 +217,11 @@ class MariaDB:
     def __enter__(self):
         if self.depth == 0:
             self.ready()
-            self.con.begin()
+            try:
+                self.con.begin()
+            except (pymysql.err.OperationalError, pymysql.err.InterfaceError):
+                self.open()  # dropped since the last use: nothing is written yet, so start on a new connection
+                self.con.begin()
         self.depth += 1
         return self
 
@@ -288,6 +298,8 @@ def retire(path):
 
 def open_accounts(path):
     con = connect(path, ACCOUNTS, MARIADB_ACCOUNTS)
+    if is_mariadb(path):  # old JSON files are only imported next to an SQLite file
+        return con
     folder = os.path.dirname(path)
     old = os.path.join(folder, "accounts.json")
     if os.path.exists(old) and not con.execute("SELECT 1 FROM accounts LIMIT 1").fetchone():
@@ -497,6 +509,8 @@ def write_division_member(con, cid, row):
 
 def open_characters(path):
     con = connect(path, CHARACTERS, MARIADB_CHARACTERS)
+    if is_mariadb(path):
+        return con
     old = os.path.join(os.path.dirname(path), "characters.json")
     if os.path.exists(old) and not con.execute("SELECT 1 FROM characters LIMIT 1").fetchone():
         data = read_json(old)

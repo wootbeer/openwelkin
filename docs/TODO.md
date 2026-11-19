@@ -592,7 +592,14 @@ reply layout, and answer with real data.
       connection. tools/to_mariadb.py moves an SQLite file into an empty MariaDB database. Tested on MariaDB 11.8:
       test_db.py (all of it, plus reconnect, rollback, read-only and moving), test_match and test_chat on MariaDB
       (only the file backup check differs: the backup command says to use mariadb-dump). Still one gate per login
-      server: the gate caches characters and hands out ids itself
+      server: the gate caches characters and hands out ids itself.
+      Security pass the same day (plus an independent review): every value bound, PyMySQL escaping follows
+      NO_BACKSLASH_ESCAPES, TLS with MW_DB_SSL_CA is required and verified, local_infile off, password never in the
+      address. Fixed: integer columns are BIGINT (the client's u32 model would have broken MariaDB saves), free text
+      MEDIUMTEXT, utf8mb4_nopad_bin ('bob ' is not 'bob'), a transaction right after a dropped connection starts on a
+      new one. Both databases: one character that cannot be saved (a NaN stat did it on SQLite too) no longer stops
+      everyone's saves (each is then tried alone and the bad one waits, logged once), and the save thread never dies.
+      Known: if the link drops during COMMIT after MariaDB applied it, that batch's event log lines are written twice
 
 ## Storage (2026-10-30, tested offline)
 - [x] db.py: SQLite. accounts.db (accounts, bans) only on login, characters.db only on the gate, none on game servers

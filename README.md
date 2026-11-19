@@ -110,7 +110,9 @@ MW_DB_PASSWORD=...                                                 # never put t
 MW_DB_SSL_CA=/path/to/ca.pem                                       # optional: use TLS to MariaDB
 ```
 
-The server makes its tables on the first start. Keep MariaDB on a private network or behind a firewall, and give the
+The server makes its tables on the first start. Without `MW_DB_SSL_CA` the link to MariaDB is not checked, so anyone
+on the network path could read or change it: keep MariaDB on the same machine or a private network, behind a
+firewall, either way. With it, the server refuses a MariaDB that does not show a certificate from that CA. Give the
 login server's user no access to the characters database and the gate's none to the accounts database, so each
 server still sees only its own data. To move an existing server, stop it and copy each file once:
 

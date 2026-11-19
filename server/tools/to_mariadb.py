@@ -8,6 +8,7 @@ import os
 import re
 import sqlite3
 import sys
+import urllib.parse
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import db  # noqa: E402
@@ -23,7 +24,8 @@ def copy(path, url, out=print):
     kind = "accounts" if os.path.basename(path).startswith("accounts") else "characters"
     if not os.path.exists(path):
         raise SystemExit(f"{path}: no such file")
-    source = sqlite3.connect("file:" + os.path.abspath(path).replace("\\", "/") + "?mode=ro", uri=True)
+    source = sqlite3.connect("file:" + urllib.parse.quote(os.path.abspath(path).replace("\\", "/")) + "?mode=ro",
+                             uri=True)  # quoted, so no part of the path is read as an option
     target = (db.open_accounts if kind == "accounts" else db.open_characters)(url)
     try:
         for table in TABLES[kind]:

@@ -230,15 +230,32 @@ def rollback():
     """A failed save loses nothing: the change is kept and written by the next one."""
     cid = ls.STORE.create("carl", "Charlie", gender=0, model=0, state=1, raw="")
     ls.STORE.add_stats(cid, kills=7)
-    good, ls.STORE.lines = ls.STORE.lines, [(999999, 0, 0, "no such character")]
-    try:
-        ls.STORE.flush()
-        check("a bad save fails", False)
-    except db.Error:
-        pass
-    ls.STORE.lines = good
+    ls.STORE.lines.append((999999, 0, 0, "no such character"))
+    ls.STORE.flush()
+    check("a log line of an unknown character is dropped, the rest saved", not ls.STORE.lines and not ls.STORE.dirty)
     reopen()
     check("a failed save loses nothing", ls.STORE.stats(cid).get("kills") == 7)
+    # a value the client controls at its largest: the character create message's u32 model
+    big = ls.STORE.create("dora", "Delta", gender=255, model=0xFFFFFFFF, state=1, raw="ff" * 2000)
+    ls.STORE.flush()
+    reopen()
+    check("the largest client numbers are saved", ls.STORE.by_id(big)["model"] == 0xFFFFFFFF)
+    # one character that cannot be saved (NaN is refused by both databases) must not stop the others
+    bad = ls.STORE.create("eve", "Echo", gender=0, model=0, state=1, raw="")
+    ls.STORE.flush()
+    ls.STORE.by_id(bad).setdefault("stats", {})["kills"] = float("nan")
+    ls.STORE.mark_dirty(bad, stats=["kills"])
+    ls.STORE.add_stats(cid, kills=1)
+    ls.STORE.add_log(cid, "still saved")
+    ls.STORE.flush()
+    check("one bad character does not stop the others' saves", bad in ls.STORE.changed and cid not in ls.STORE.changed
+          and ls.STORE.dirty, str(ls.STORE.changed))
+    ls.STORE.by_id(bad)["stats"]["kills"] = 3
+    ls.STORE.flush()
+    check("it is saved once it can be", not ls.STORE.changed and not ls.STORE.dirty)
+    reopen()
+    check("both are saved", ls.STORE.stats(cid).get("kills") == 8 and ls.STORE.stats(bad).get("kills") == 3
+          and ls.STORE.event_log(cid)[-1][2] == "still saved", str(ls.STORE.event_log(cid)[-1:]))
 
 
 def loading():
@@ -333,6 +350,18 @@ def mariadb():
     other.close()
     check("a dropped connection is made again", con.execute("SELECT COUNT(*) FROM characters").fetchone()[0] >= 1
           and con.execute("SELECT CONNECTION_ID()").fetchone()[0] != first)
+    other = db.MariaDB(MARIADB["CHARACTERS"])
+    other.execute("KILL ?", (con.execute("SELECT CONNECTION_ID()").fetchone()[0],))
+    other.close()
+    try:
+        with con:  # dropped just now (not idle): the transaction starts on a new connection
+            con.execute("UPDATE characters SET state = state WHERE id = ?", (ls.STORE.id_of_name("Alpha"),))
+        check("a transaction right after a drop works", True)
+    except db.Error as e:
+        check("a transaction right after a drop works", False, repr(e))
+    check("names compare exactly ('alpha ' is not 'alpha')",
+          not con.execute("SELECT 1 FROM characters WHERE name_key = ?", ("alpha ",)).fetchone()
+          and con.execute("SELECT 1 FROM characters WHERE name_key = ?", ("alpha",)).fetchone())
     before = counts("characters")
     try:
         with con:

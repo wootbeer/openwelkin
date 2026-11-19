@@ -614,6 +614,7 @@ class Store:
         self.used = collections.OrderedDict()  # loaded accounts, least recently used first
         self.names = {}
         self.skeletons = set()  # name_skeleton of every name: a new name may not look like a taken one
+        self.broken = set()  # characters whose save failed on its own (logged once)
         if ROLE in ("all", "gate"):
             self.con = db.open_characters(self.path)
             self.reader = db.reader(self.path)
@@ -631,23 +632,54 @@ class Store:
     REPORTS_KEEP = 30 * 86400  # seconds a game server run's last report number is remembered
     report_lock = threading.Lock()  # gate: a report and its number are applied together, and saved together
 
+    def write(self, changed, lines):
+        """Write these changes and log lines (call inside a transaction)."""
+        for cid, keys in changed.items():
+            account, c = self.lookup(cid)
+            if c and keys is None:
+                db.write_character(self.con, account, c)
+            elif c:
+                st = c.get("stats", {})
+                db.write_stats(self.con, cid, {k: st[k] for k in keys if k in st})
+        db.add_log_lines(self.con, lines, LOG_KEEP)
+
     def save(self):
-        """Write what changed now (call with the lock held), all or nothing."""
-        with self.con:
-            for cid, keys in self.changed.items():
-                account, c = self.lookup(cid)
-                if c and keys is None:
-                    db.write_character(self.con, account, c)
-                elif c:
-                    st = c.get("stats", {})
-                    db.write_stats(self.con, cid, {k: st[k] for k in keys if k in st})
-            db.add_log_lines(self.con, self.lines, LOG_KEEP)
-            db.write_reports(self.con, {b: n for b, n in self.done.items() if self.saved.get(b) != n}, int(time.time()),
-                             self.REPORTS_KEEP)
+        """Write what changed now (call with the lock held): all in one transaction. If that fails, each character
+        (with its log lines) is tried in its own, so one bad row cannot stop everyone's saves; what still fails waits
+        for the next save and is logged once. A failed save raises only when nothing could be written."""
+        reports = {b: n for b, n in self.done.items() if self.saved.get(b) != n}
+        try:
+            with self.con:
+                self.write(self.changed, self.lines)
+                db.write_reports(self.con, reports, int(time.time()), self.REPORTS_KEEP)
+            self.changed, self.lines = {}, []
+        except Exception as e:  # a database error, or a value the driver refuses: try each character alone
+            log(f"store: batch save failed ({e!r}); saving one character at a time")
+            changed, lines, saved = self.changed, self.lines, 0
+            self.changed, self.lines = {}, []
+            for cid in set(changed) | {line[0] for line in lines}:
+                mine = [line for line in lines if line[0] == cid]
+                if self.lookup(cid)[1] is None:  # gone (or never was): its lines can never be saved
+                    log(f"store: dropped {len(mine)} log lines of unknown character {cid}")
+                    continue
+                part = {cid: changed[cid]} if cid in changed else {}
+                try:
+                    with self.con:
+                        self.write(part, mine)
+                    saved += 1
+                    self.broken.discard(cid)
+                except Exception as err:
+                    self.changed.update(part)
+                    self.lines += mine[-LOG_KEEP:]  # a character that keeps failing holds only its newest lines
+                    if cid not in self.broken:
+                        self.broken.add(cid)
+                        log(f"store: character {cid} not saved, kept for the next save: {err!r}")
+            if not saved and (self.changed or self.lines):
+                raise  # nothing went in (the database is away): keep everything, try again later
+            with self.con:
+                db.write_reports(self.con, reports, int(time.time()), self.REPORTS_KEEP)
         self.saved = dict(self.done)
-        self.changed.clear()
-        self.lines.clear()
-        self.dirty = False
+        self.dirty = bool(self.changed or self.lines)
 
     def mark_dirty(self, cid, line=None, stats=None):
         """Save later (call with the lock held): for frequent, low-value changes like kills and log lines. With
@@ -670,7 +702,7 @@ class Store:
             time.sleep(self.SAVE_INTERVAL)
             try:
                 self.flush()
-            except (OSError, db.Error) as e:
+            except Exception as e:  # never let the save thread die: log it and try again next time
                 log(f"store: save failed: {e!r}")
             for g in list(LINKS) if ROLE == "gate" else ():
                 if getattr(g, "boot", None) in self.saved:  # the game server can forget what is on disk
