@@ -410,7 +410,14 @@ reply layout, and answer with real data.
       u32 own detachment id | i32 zone (-1 = none; also to a new member, and -1 to one who leaves). The client then
       writes "Squadron team target battlefield change to %s!" with the zone's name from its own map data (or
       "Squadron team target cancelled!") and Robot::UpdateHUD points at the zone's position. A zone the map does not
-      have shows nothing. In game: which numbers are zones on Training Ground, and what the HUD shows. Real client 2026-11-18 (tester and
+      have shows nothing. In game: which numbers are zones on Training Ground, and what the HUD shows.
+      Squad window, 2026-11-19 offline: CSelfCorpUI (dialog 0x10, made at start; its OnEvent is Game.dll 0x105f64b0)
+      has the squad buttons: 214 Apply Leader (9,10404), 215 Resign (9,10409) f32, 216 Impeach (9,10408) f32, and
+      211 opens the name prompt (dialog 0x19) for (9,10405) RequestSetDetachmentName. No code in Game.dll shows
+      dialog 0x10 with a plain push, so how players open it is not known (a hotkey from data? T showed nothing).
+      The emulator does Resign: the squad goes to the member in it longest, the old leader goes last, every client
+      gets (19,30503). Not done: impeach (a vote: ImpeachDetachmentBegin (19,30520), answers (9,10420) bool from
+      the invite box, result (19,30521)), the name (reply (19,30507) not read). Real client 2026-11-18 (tester and
       Bravo, Alliance, Training Ground 1): /a 3 works for a GM too (the GM byte does not take the / letters); the
       Server whispers and "tester become squadron commander!" show; Bravo's /e 3 added each to the other's
       detachment, no crash; tester's /L showed "Bravo become squadron commander!" on Bravo and "tester is no longer

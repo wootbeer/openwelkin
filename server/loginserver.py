@@ -5339,6 +5339,8 @@ def on_game_message(server, peer, raw):
         squad_leave(peer)
     elif key == (9, 10404):
         squad_apply_leader(peer)
+    elif key == (9, 10409):
+        squad_resign(peer)
     elif key == (9, 10407) and len(body) >= 5:
         squad_target(peer, body[4])
     elif key == (9, 40110):
@@ -5513,8 +5515,9 @@ def squad_leader(a, leader, name=""):
 
 
 def squad_apply_leader(peer):
-    """/l in the battle chat box (9,10404, f32 only, GroupManager::RequestApplyLeader): ask to lead the squad. A squad
-    here is always led by the player in it longest, so this only says who that is."""
+    """/l in the battle chat box (9,10404, f32 only, GroupManager::RequestApplyLeader; also button 214 of the squad
+    window): ask to lead the squad. A squad here is led by its maker, then the player in it longest (or the one a
+    leader resigns to), so this only says who leads."""
     with GAME_LOCK:
         m = getattr(peer, "match", None)
         if not m or peer not in (m.peers or ()) or m.now - getattr(peer, "squad_at", -SQUAD_EVERY) < SQUAD_EVERY:
@@ -5525,7 +5528,30 @@ def squad_apply_leader(peer):
             return tell_player(peer, "You are not in a squad")
         if members[0] is peer:
             return tell_player(peer, f"You lead squad {peer.squad[1]}")
-        tell_player(peer, f"{members[0].name} leads squad {peer.squad[1]}; the player in it longest leads")
+        tell_player(peer, f"{members[0].name} leads squad {peer.squad[1]}")
+
+
+def squad_resign(peer):
+    """Resign in the squad window (CSelfCorpUI, dialog 0x10, button 215 -> (9,10409) f32,
+    GroupManager::RequestResignLeader): the leader hands the squad to the member in it longest and goes last."""
+    with GAME_LOCK:
+        m = getattr(peer, "match", None)
+        if not m or peer not in (m.peers or ()) or m.now - getattr(peer, "squad_at", -SQUAD_EVERY) < SQUAD_EVERY:
+            return
+        peer.squad_at = m.now
+        members = m.squads.get(getattr(peer, "squad", None) or ())
+        if not members:
+            return tell_player(peer, "You are not in a squad")
+        if members[0] is not peer:
+            return tell_player(peer, f"Only the squad leader ({members[0].name}) can resign")
+        if len(members) == 1:
+            return tell_player(peer, "Nobody else is in your squad to lead it")
+        members.append(members.pop(0))
+        for other in members:
+            squad_leader(other, members[0])
+            if other is not members[0]:
+                tell_player(other, f"{peer.name} resigned; {members[0].name} leads squad {peer.squad[1]}")
+        tell_player(members[0], f"{peer.name} resigned; you lead squad {peer.squad[1]}")
 
 
 SQUAD_NO_TARGET = 255  # "/t -1": the client reads a number and sends it as one byte

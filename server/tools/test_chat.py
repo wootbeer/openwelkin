@@ -507,7 +507,7 @@ async def squads(kim, kim_id, kim_game, lou, lou_id, lou_game):
           leader(kim_game, kim_id) == (True, kim_id, "kim") and leader(lou_game, lou_id) == (True, kim_id, "kim"))
     await asyncio.sleep(gap)
     lou_game.squad(10404, None)
-    check("/l says who leads", await told(lou) == "kim leads squad 3; the player in it longest leads")
+    check("/l says who leads", await told(lou) == "kim leads squad 3")
     check("each sees the other in their own detachment",
           kim_game.members(kim_id)[1] == [lou_id] and lou_game.members(lou_id)[1] == [kim_id],
           f"{kim_game.members(kim_id)} {lou_game.members(lou_id)}")
@@ -574,6 +574,20 @@ async def squads(kim, kim_id, kim_game, lou, lou_id, lou_game):
     await told(kim)
     await asyncio.sleep(0.3)
     check("a new member is shown the target", target(lou_game, lou_id) == 4)
+    await asyncio.sleep(gap)
+    lou_game.squad(10409, None)
+    check("only the leader can resign", await told(lou) == "Only the squad leader (kim) can resign")
+    kim_game.squad(10409, None)
+    check("resign hands the squad on", await told(kim) == "kim resigned; lou leads squad 3"
+          and await told(lou) == "kim resigned; you lead squad 3")
+    await asyncio.sleep(0.3)
+    check("both clients are told the new leader",
+          leader(kim_game, kim_id) == (True, lou_id, "lou") and leader(lou_game, lou_id) == (True, lou_id, "lou"))
+    await asyncio.sleep(gap)
+    lou_game.squad(10409, None)
+    await told(lou)
+    await told(kim)
+    await asyncio.sleep(gap)
     kim_game.squad(10407, ls.SQUAD_NO_TARGET)
     await asyncio.sleep(0.3)
     check("/t -1 cancels it", target(kim_game, kim_id) == -1 and target(lou_game, lou_id) == -1)

@@ -273,7 +273,7 @@ is the emulator's rule. When the commander leaves, the next player of that side 
 
 Players of a side can make squads in battle with the client's own chat commands: `/a 3` makes squad 3 (or joins it),
 `/e 3` joins it, `/L` leaves, `/l` says who leads, and the leader's `/t N` sets the squad's target zone (`/t -1`
-clears it) (the player in the squad longest; the game announces a new
+clears it). A leader who resigns hands the squad to the member in it longest (the player in the squad longest; the game announces a new
 leader as "squadron commander"). Squads are numbered 1 to 20 and hold up to 8 players; the server answers in a whisper
 from Server. Tried with the real client: making, joining and leaving squads and the leader lines work. Squads are also
 the client's battle groups: in a squad, the battle chat box's Team tab talks to the squad (the lines show as
