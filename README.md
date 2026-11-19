@@ -167,6 +167,7 @@ python server/tools/admin.py who
 | `aim` | Far shots at players and how many hit, best first. A player who hits nearly all of them is marked |
 | `kick <account> [reason]` | Disconnect an account (hall and battle). They see the reason in chat first |
 | `goto <account> <x> <y> <z>` | Move a player's robot in battle, for someone stuck |
+| `unbattle <account> [reason]` | Take a player out of their battle: they see the Record window and go back to the lobby, still online |
 | `tell <character> <text>` | A private line from Server to one player |
 | `mute <character> <time>` | No chat for a while; time like `30m`, `12h`, `7d`. `!` commands still work |
 | `unmute <character>` | |
@@ -184,7 +185,7 @@ The hall's scrolling announcements are in `announcements.txt` next to the databa
 made on first start, and changes show the next time a player opens the hall.
 
 A player with the role `gm` or `admin` can also type commands in game chat, starting with `!`, like `!kick bob`. A `gm` can
-use `who`, `matches`, `aim`, `kick`, `goto`, `tell`, `mute`, `unmute`, `ban`, `unban` and `bans`. An `admin` can also use `ipban`, `unipban`, `role`, `backup` and `notice`.
+use `who`, `matches`, `aim`, `kick`, `goto`, `unbattle`, `tell`, `mute`, `unmute`, `ban`, `unban` and `bans`. An `admin` can also use `ipban`, `unipban`, `role`, `backup` and `notice`.
 The reply comes as a private message from Server, and the command goes in `admin.log`.
 
 The client also has its own GM commands starting with `/`, and the server turns them on for `gm` and `admin` characters

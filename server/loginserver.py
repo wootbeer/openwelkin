@@ -1511,7 +1511,7 @@ SQUAD_CHAT = 21203  # shown as CHATMESSAGEUI_DETACHMENT, "[Squadron Team]" (Rece
 # battle box channels for squad chat: not seen in game yet. ChatManager::SendMessage sends three tabs as (21,21004)
 # with u16 2, 3 or 5; 2 is the Division Channel and 5 the Country tab, so the squad tab is most likely 3
 SQUAD_CHANNELS = (3, 4)
-GM_COMMANDS = {"who", "matches", "aim", "kick", "ban", "unban", "bans", "goto", "tell", "mute", "unmute"}
+GM_COMMANDS = {"who", "matches", "aim", "kick", "ban", "unban", "bans", "goto", "tell", "mute", "unmute", "unbattle"}
 GOTO_LIMIT = 100000.0  # goto refuses positions farther out than this
 GM_LEVEL = {"player": 0, "gm": 101, "admin": 110}  # sent in CharacterOnline; 101..110 makes the client a GM
 ROLE_COMMANDS = {"player": set(), "gm": GM_COMMANDS, "admin": GM_COMMANDS | {"ipban", "unipban", "role", "backup", "notice", "title"}}
@@ -3212,6 +3212,34 @@ def teleport_local(account, pos):
     return hit
 
 
+UNBATTLED = []  # game: (time, peer) of players taken out of a battle, closed then if their client has not left
+
+
+def unbattle_local(account, reason):
+    """Take the account's player out of their battle on this game server, keeping them in the hall. DisconnectByServer
+    (19,30150, f32 seconds) shows the Record window with a countdown, then the client goes back to the lobby (seen in
+    game 2026-10-30). The robot leaves the match at once, so nothing the player sends during the countdown counts.
+    True if they were in a battle here."""
+    if GAME_SERVER is None:
+        return False
+    hit = False
+    with GAME_LOCK:
+        for peer in list(GAME_SERVER.peers.values()):
+            if getattr(peer, "match", None) and STORE.account_of(getattr(peer, "cid", None)) == account:
+                tell_player(peer, "You were taken out of the battle" + (f": {reason}" if reason else ""))
+                send_game_event(GAME_SERVER, peer, 19, 30150, struct.pack("<f", RECORD_SECONDS))
+                leave_match(peer)
+                UNBATTLED.append((time.time() + RECORD_SECONDS + RECORD_GRACE, peer))
+                hit = True
+    return hit
+
+
+def unbattle(account, reason):
+    if ROLE in ("login", "gate"):
+        return any([ask(g, "unbattle", False, account=account, reason=reason) for g in list(LINKS)])
+    return unbattle_local(account, reason)
+
+
 def teleport(account, pos):
     if ROLE == "login":
         return any([ask(g, "goto", False, account=account, pos=list(pos)) for g in list(LINKS)])
@@ -3634,6 +3662,8 @@ def on_login_message(link, msg):
         return mute_here(msg["name"], msg["until"])
     if kind == "goto":
         return teleport(msg["account"], tuple(msg["pos"]))
+    if kind == "unbattle":
+        return unbattle(str(msg["account"]), str(msg["reason"]))
     if kind == "title":
         return title_here(str(msg["name"]), int(msg["title"]))
     if kind == "gm_reply":
@@ -3681,6 +3711,8 @@ def on_gate_request(link, msg):
         leave_game_local(msg["account"], msg["reason"])
     elif kind == "goto":
         return teleport_local(msg["account"], tuple(msg["pos"]))
+    elif kind == "unbattle":
+        return unbattle_local(str(msg["account"]), str(msg["reason"]))
     elif kind == "order":
         return give_order(str(msg["account"]), str(msg["text"]))
     elif kind == "ipkick":
@@ -5552,6 +5584,10 @@ def gm_game_command(server, peer, body):
 
 def game_tick(server, now):
     """One game loop step: every match, then everyone's queued events go out."""
+    while UNBATTLED and UNBATTLED[0][0] <= now:  # taken out of a battle: their countdown is over
+        peer = UNBATTLED.pop(0)[1]
+        if server.peers.get(peer.addr) is peer:
+            server.close(peer, "taken out of the battle")
     for m in list(MATCHES.values()):
         try:
             m.tick(now)
@@ -5599,6 +5635,7 @@ ADMIN_HELP = """commands:
   aim                                    far shots at players and how many hit (aim bot check)
   kick <account>                         disconnect an account (hall and battle)
   goto <account> <x> <y> <z>             move a player's robot in battle (unstick someone)
+  unbattle <account> [reason]            take a player out of their battle, back to the lobby (stays online)
   tell <character> <text>                a private line from Server to a player
   mute <character> <time>                no chat for a while; time like 30m, 12h, 7d
   unmute <character>
@@ -5788,6 +5825,15 @@ def cmd_unmute(args, actor):
     return f"unmuted {args[0][:32]}" if done else f"no character {args[0][:32]!r}"
 
 
+def cmd_unbattle(args, actor):
+    if not args:
+        return "usage: unbattle <account> [reason]"
+    reason = clean_line(" ".join(args[1:]))[:100]
+    if not unbattle(args[0], reason):
+        return f"{args[0][:32]} is not in a battle"
+    return f"took {args[0][:32]} out of the battle"
+
+
 def cmd_goto(args, actor):
     usage = "usage: goto <account> <x> <y> <z>"
     if len(args) != 4:
@@ -5943,7 +5989,7 @@ def cmd_role(args, actor):
 
 ADMIN_COMMANDS = {"who": cmd_who, "matches": cmd_matches, "aim": cmd_aim, "kick": cmd_kick, "ban": cmd_ban, "unban": cmd_unban,
                   "ipban": cmd_ipban, "unipban": cmd_unipban, "bans": cmd_bans, "role": cmd_role, "backup": cmd_backup, "notice": cmd_notice,
-                  "goto": cmd_goto, "tell": cmd_tell, "mute": cmd_mute, "title": cmd_title,
+                  "goto": cmd_goto, "unbattle": cmd_unbattle, "tell": cmd_tell, "mute": cmd_mute, "title": cmd_title,
                   "unmute": cmd_unmute, "help": lambda args, actor: ADMIN_HELP}
 
 

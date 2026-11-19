@@ -55,7 +55,7 @@ class Recorder(ts.lt.Game):
     def datagram_received(self, data, addr):
         pkt = ts.fdp.Packet.parse(data)
         if not pkt.system:
-            self.events += [(typ, raw[12:]) for raw, _, typ in ts.fdp.messages(pkt.payload) if typ in (30020, 30030, 30500, 30501, 30503)]
+            self.events += [(typ, raw[12:]) for raw, _, typ in ts.fdp.messages(pkt.payload) if typ in (30020, 30030, 30150, 30500, 30501, 30503)]
         super().datagram_received(data, addr)
 
     def last(self, typ):
@@ -553,6 +553,16 @@ async def squads(kim, kim_id, kim_game, lou, lou_id, lou_game):
     neo_game.squad(10401, 1)
     line = await told(neo)
     check("players of neither side have no squads", line == "Squads are for players of a side", str(line))
+
+    # --- an admin takes a player out of their battle; they stay online ---
+    reply = await asyncio.to_thread(ts.admin, "unbattle neo afk\x07 too long")
+    check("unbattle", reply.strip() == "took neo out of the battle", reply)
+    check("the player is told why", await told(neo) == "You were taken out of the battle: afk too long")
+    await asyncio.sleep(0.3)
+    check("and gets the Record window", neo_game.last(30150) == struct.pack("<f", ls.RECORD_SECONDS))
+    reply = await asyncio.to_thread(ts.admin, "unbattle neo")
+    check("only once", reply.strip() == "neo is not in a battle", reply)
+    check("and stays in the hall", await ts.answers(neo))
 
 
 async def commanders(amy, cara):

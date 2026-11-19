@@ -488,9 +488,10 @@ reply layout, and answer with real data.
       the login screen. GMKickRes (13,13041) is only the reply to a GM ("Kick %s Success!")
 - [x] A kick now closes the socket as well: on Windows shutdown does not wake a blocked recv, so a client that ignored it
       stayed on the gate. A kicked player can still act for the 1.5 s of the notice, but can not chat
-- [ ] DisconnectByServer (19,30150, f32 seconds) ends the battle for that player: Record window with a countdown,
-      then back to the lobby, no crash (in game 2026-10-30). No reason text. Use it for match end, or to remove a
-      player from a battle but keep them in the hall
+- [x] DisconnectByServer (19,30150, f32 seconds) ends the battle for that player: Record window with a countdown,
+      then back to the lobby, no crash (in game 2026-10-30). No reason text. Used for round end, and since
+      2026-11-18 by the GM command `unbattle <account> [reason]` (tools/test_chat.py, test_split.py; not tried in
+      game): the robot leaves the match at once, the reason comes as a Server whisper, the player stays in the hall
 
 ## Disconnects (2026-10-29, in game 2026-10-30)
 - [x] The client sends an FDP close packet (system, split id 4) when it leaves a battle: the player leaves at once

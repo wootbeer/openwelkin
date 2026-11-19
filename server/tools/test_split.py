@@ -243,6 +243,9 @@ async def scenario():
     p3.g.send(10401, struct.pack("<fB", 0.0, 1), reliable=True)  # /a 1: the game server answers through the gate
     told = await chat_reply(p3.gate)
     check("a game server's line reaches the player", told == "Squads are for players of a side", str(told))
+    reply = await asyncio.to_thread(admin, "unbattle dave")
+    check("unbattle reaches a player on a game server", reply.strip() == "took dave out of the battle", reply)
+    check("and they are told", await chat_reply(p3.gate) == "You were taken out of the battle")
     p3.leave()
     await asyncio.sleep(0.5)
 

@@ -1798,7 +1798,7 @@ The emulator ends a battlefield round itself, on a timer or a kill limit. It the
 f32 seconds
 ```
 
-Shows the Record window (dialog 0x68) with the player's own kills, deaths and honor and a countdown, then the client goes back to the lobby. The gate connection stays open. No reason text.
+Shows the Record window (dialog 0x68) with the player's own kills, deaths and honor and a countdown, then the client goes back to the lobby. The gate connection stays open. No reason text. Sent at the end of a round, and by the GM command `unbattle`, which takes the robot out of the match at once, tells the player why in a Server whisper, and closes the battle connection if the client is still there 10 seconds after the countdown.
 
 <a name="m-19-30250"></a>
 #### GS\_Character\_Show\_Message `(19,30250)`
