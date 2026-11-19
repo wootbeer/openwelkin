@@ -96,6 +96,8 @@
 - [Characters & objects](#char-msgs)
   - [GS\_Character\_New\_Character](#m-19-30001) `(19,30001)`
   - [AddToDetachment](#m-19-30500) `(19,30500)`
+  - [QuitDetachment](#m-19-30501) `(19,30501)`
+  - [Squad commands (RequestApplyDetachment / RequestEnterDetachment / RequestLeaveDetachment)](#m-9-10401) `(9,10401) (9,10402) (9,10403)`
   - [GS\_Character\_SetControl\_Character](#m-19-30100) `(19,30100)`
   - [GS\_Object\_Attach\_Object](#m-19-50001) `(19,50001)`
   - [GS\_Character\_Set\_BaseInfo](#m-19-30040) `(19,30040)`
@@ -1255,6 +1257,30 @@ u32 character id
 ```text
 u32 detachment id | u32 character id | u32 | str name | vec3 | i32 | i32 | i32
 ```
+
+Handler GroupManager::AddToDetachment (0x10399070). The client keeps only its own detachment (GroupManager +0x26c): the first one that names its own character makes it, then one with the same id adds that character to its members, and any other id is ignored. Robot::UpdateHUD reads the own detachment every frame without a null check, so a player must never lose theirs (that is why robot setup crashed without one). The emulator gives each player their own id and shows squad members by adding them to it.
+
+<a name="m-19-30501"></a>
+#### QuitDetachment `(19,30501)`
+
+*S→C · read, not tried*
+
+```text
+u32 detachment id | u32 character id
+```
+
+Handler 0x1039c930. For the own detachment: another character's id removes that member; the own character's id deletes the detachment, which crashes Robot::UpdateHUD, so the emulator only ever removes other members.
+
+<a name="m-9-10401"></a>
+#### Squad commands (RequestApplyDetachment / RequestEnterDetachment / RequestLeaveDetachment) `(9,10401) (9,10402) (9,10403)`
+
+*C→S game · read, not tried*
+
+```text
+10401, 10402: f32 | u8 number    10403: f32
+```
+
+Typed in the battle chat box by a player without the GM byte: `/a N` (10401, also sent by the dead Create Lochus window), `/e N` (10402), `/L` (10403). Also read: `/l` RequestApplyLeader, `/t N` RequestSetDetachmentTargetZone, (9,10400) RequestDetachmentMember and (9,10405) RequestSetDetachmentName (no live caller). The emulator: /a makes squad N of the player's side in the match (or joins it), /e joins it, /L leaves; 1 to 20, up to 8 players, one change a second. Members are added to each other's own detachment, and the game server tells the player what happened in a Server whisper (sent through the gate).
 
 <a name="m-19-30100"></a>
 #### GS\_Character\_SetControl\_Character `(19,30100)`

@@ -389,6 +389,15 @@ reply layout, and answer with real data.
       clears the Record window). Under "Campaign": winner, then each side's kills; then the 20 s countdown and back
       to the lobby. Only arena logics register a 20130 observer, so other battles keep 30150. Catalog 20 game
       messages have no event envelope: with one, the row count read 0 and the countdown read the event key
+- [ ] Squads (the client's detachments), 2026-11-18, offline (Game.dll). The battle chat box's /a N, /e N and /L
+      send (9,10401) / (9,10402) f32 | u8 and (9,10403) f32; the emulator makes, joins and leaves squads of a side
+      in a match (tools/test_chat.py). The client keeps only its own detachment and its members: AddToDetachment
+      with its own id adds a member, QuitDetachment (19,30501) u32 id | u32 character removes one. Never quit the
+      player's own character: Robot::UpdateHUD reads the own detachment every frame without a null check. Members
+      feed CSelfCorpUI (dialog 0x10, made at start) and the radar code; the squad radar marks come from the dead
+      CMFDetachmentInfo window. Not tried in game: whether the client shows the members anywhere, and whether the
+      battle box's Team tab opens. Not read: 30502..30522 (member update, leader, zones, name, list, orders,
+      impeach), /l and /t
 - [ ] Teams within a side, respawn point choice. Needs a client session: without knowing what
       sets the nation, players could not tell the sides apart, so nothing is built yet. Client's Kill arena, read from Game.dll, not
       tried: arena logic 5 in (19,40050), then init data u8 nation | u8 nation | f32. (19,49000) f32 seconds | u8 | f32

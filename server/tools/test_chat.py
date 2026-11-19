@@ -46,7 +46,8 @@ async def heard(gate, seconds=1.5):
 
 
 class Recorder(ts.lt.Game):
-    """A fake battle client that keeps the commander (19,30020) and order (19,30030) events it gets."""
+    """A fake battle client that keeps the commander (19,30020), order (19,30030) and detachment (19,30500 /
+    30501) events it gets."""
     def __init__(self, *args):
         super().__init__(*args)
         self.events = []
@@ -54,11 +55,25 @@ class Recorder(ts.lt.Game):
     def datagram_received(self, data, addr):
         pkt = ts.fdp.Packet.parse(data)
         if not pkt.system:
-            self.events += [(typ, raw[12:]) for raw, _, typ in ts.fdp.messages(pkt.payload) if typ in (30020, 30030)]
+            self.events += [(typ, raw[12:]) for raw, _, typ in ts.fdp.messages(pkt.payload) if typ in (30020, 30030, 30500, 30501)]
         super().datagram_received(data, addr)
 
     def last(self, typ):
         return next((body for t, body in reversed(self.events) if t == typ), None)
+
+    def members(self, cid):
+        """(own detachment id, the other characters the server put in it, in order of the events)."""
+        own = next(struct.unpack_from("<I", b)[0] for t, b in self.events if t == 30500
+                   and struct.unpack_from("<I", b, 4)[0] == cid)
+        have = []
+        for t, b in self.events:
+            det, who = struct.unpack_from("<II", b)
+            if det == own and who != cid:
+                have = [c for c in have if c != who] + ([who] if t == 30500 else [])
+        return own, have
+
+    def squad(self, typ, number):
+        self.send(typ, struct.pack("<fB", 0.0, number) if number is not None else bytes(4), reliable=True)
 
 
 async def battle(gate, cid):
@@ -464,6 +479,60 @@ async def scenario():
           str(line))
 
 
+async def squads(kim, kim_id, kim_game, lou, lou_id, lou_game):
+    """/a N makes squad N of the player's side, /e N joins it, /L leaves; members show in each other's detachment."""
+    async def told(gate):
+        line = await heard(gate)
+        return line[3] if line and line[2] == "Server" else line
+
+    gap = ls.SQUAD_EVERY + 0.1
+    lou_game.squad(10402, 3)
+    check("/e of a squad nobody made", await told(lou) == "There is no squad 3: /a 3 makes it")
+    kim_game.squad(10401, 3)
+    check("/a makes a squad", await told(kim) == "You made squad 3 and lead it. /L leaves it")
+    await asyncio.sleep(gap)
+    lou_game.squad(10402, 3)
+    check("/e joins it", (await told(lou) or "").startswith("You joined squad 3, led by kim (2 players)"))
+    check("the squad hears who joined", await told(kim) == "lou joined squad 3")
+    await asyncio.sleep(0.3)
+    check("each sees the other in their own detachment",
+          kim_game.members(kim_id)[1] == [lou_id] and lou_game.members(lou_id)[1] == [kim_id],
+          f"{kim_game.members(kim_id)} {lou_game.members(lou_id)}")
+    check("and keeps its own detachment id", kim_game.members(kim_id)[0] != lou_game.members(lou_id)[0])
+    lou_game.squad(10402, 3)
+    check("changes are rate-limited", await heard(lou, 0.4) is None)
+    await asyncio.sleep(gap)
+    lou_game.squad(10401, 0)
+    check("squad numbers start at 1", await told(lou) == f"Squads are numbered 1 to {ls.SQUAD_NUMBERS}")
+    await asyncio.sleep(gap)
+    lou_game.squad(10403, None)
+    check("/L leaves", await told(lou) == "You left squad 3")
+    check("the squad hears it", await told(kim) == "lou left squad 3")
+    await asyncio.sleep(0.3)
+    check("both drop the other from their detachment",
+          kim_game.members(kim_id)[1] == [] and lou_game.members(lou_id)[1] == [])
+    def quits_self(game, cid):
+        return [b for t, b in game.events if t == 30501 and struct.unpack_from("<I", b, 4)[0] == cid]
+    check("nobody's own detachment is taken away", not quits_self(kim_game, kim_id) and not quits_self(lou_game, lou_id))
+    await asyncio.sleep(gap)
+    lou_game.squad(10402, 3)
+    await told(lou)
+    await told(kim)
+    await asyncio.sleep(gap)
+    kim_game.squad(10403, None)
+    await told(kim)
+    check("when the leader leaves, the next one leads", await told(lou) == "kim left squad 3; lou leads it now")
+    await asyncio.sleep(gap)
+    lou_game.squad(10403, None)
+    await told(lou)
+    neo, neo_id = await player("neo")  # a fresh one: the fake clients send nothing, and go stale after STALE_PEER
+    neo_game = await battle(neo, neo_id)
+    await asyncio.sleep(0.5)
+    neo_game.squad(10401, 1)
+    line = await told(neo)
+    check("players of neither side have no squads", line == "Squads are for players of a side", str(line))
+
+
 async def commanders(amy, cara):
     """The first player of a side in a match commands it; !order in battle chat reaches only that side."""
     def leader(body):
@@ -493,6 +562,7 @@ async def commanders(amy, cara):
     await asyncio.sleep(ls.CHAT_EVERY + 0.1)
     say(cara, "!order go")
     check("no orders from the hall", (await heard(cara))[3] == "You are not in a battle")
+    await squads(kim, kim_id, kim_game, lou, lou_id, lou_game)
     kim.close()  # logs out: out of the battle too
     await asyncio.sleep(1.0)
     check("when the commander leaves, the next player commands", leader(lou_game.last(30020)) == (lou_id, "lou"))

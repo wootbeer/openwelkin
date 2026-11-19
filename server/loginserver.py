@@ -3631,6 +3631,8 @@ def on_game_server_message(link, msg):
             STORE.add_stats(msg["cid"], **msg["deltas"])
         elif kind == "log":
             STORE.add_log(msg["cid"], msg["text"], msg["level"])
+        elif kind == "tell":
+            tell_session(str(msg["account"]), str(msg["text"]))
         elif kind == "match":
             note_match(msg["account"], (id(link), msg["match"]) if msg["match"] else None)
 
@@ -3995,6 +3997,7 @@ class Match:
         self.kill_mode = KILL_MODE and bool(self.bf.get("rounds"))
         self.side_kills = dict.fromkeys(NATIONS, 0)
         self.orders = {}  # side -> its commander's last order (give_order)
+        self.squads = {}  # (side, number) -> its players, leader first (squad_join)
         self.round_ends = 0.0
         self.targets = {}
         self.trails = {}  # robot id -> deque of (time, position), the last TRAIL_SECONDS of its moves
@@ -4204,6 +4207,23 @@ def end_round(m):
 def close_round(m):
     for p in list(m.peers):
         m.server.close(p, "round over")
+
+
+def tell_session(account, text):
+    """A line from Server to a player in the hall or a battle (gate): the battle chat box shows whispers. Called with
+    GAME_LOCK held, so like note_match it takes no lock: reading ONLINE and queueing a line are each a single step."""
+    session = ONLINE.get(account)
+    if session:
+        session.chat_line(21200, "Server", clean_line(text))
+
+
+def tell_player(peer, text):
+    """The game server can not chat: its lines go through the gate."""
+    account = STORE.account_of(peer.cid)
+    if ROLE == "game":
+        STORE.report("tell", account=account, text=text)
+    else:
+        tell_session(account, text)
 
 
 def note_match(account, match):
@@ -4598,6 +4618,7 @@ def leave_match(peer):
         return
     side = nation_of(peer.cid)
     commanded = side_commander(m, side) is peer
+    squad_quit(m, peer, gone=True)
     m.peers.remove(peer)
     peer.match = None
     BATTLE_CHOICE.pop(peer.cid, None)
@@ -5050,6 +5071,15 @@ def robot_parts(cid, rid, pos, base=None):
             (core, base + 3, snapshots.robot_core(pos=pos, char=cid))] + slots
 
 
+def detachment_body(detachment, cid, name, pos):
+    """AddToDetachment (19,30500), handler GroupManager::AddToDetachment (Game.dll 0x10399070). The client keeps only
+    its own detachment (GroupManager +0x26c): the first one naming its own character makes it; after that, one with
+    the same detachment id adds that character to its members (0x3c bytes each, at +0x9c; count +0x78), and any
+    other id is ignored."""
+    return (struct.pack("<III", detachment, cid, cid) + wstr(name) + struct.pack("<3f", *pos)
+            + struct.pack("<iii", -1, -1, -1))
+
+
 def spawn_robot(server, peer, cid, rid, pos, detachment, name, local):
     """Create a character and its robot on the client:
       GS_Character_New_Character (19,30001): u32 char id
@@ -5059,8 +5089,7 @@ def spawn_robot(server, peer, cid, rid, pos, detachment, name, local):
       GS_Character_SetControl_Character (19,30100): u32 char id | u32 object id | u32  (local player only)
     """
     send_game_event(server, peer, 19, 30001, struct.pack("<I", cid))
-    send_game_event(server, peer, 19, 30500, struct.pack("<III", detachment, cid, cid) + wstr(name)
-                    + struct.pack("<3f", *pos) + struct.pack("<iii", -1, -1, -1))
+    send_game_event(server, peer, 19, 30500, detachment_body(detachment, cid, name, pos))
     if local:
         # SetControl before creating the robot: the character remembers its object id, so the robot is already
         # local when it is created and its weapons load their HUD (otherwise Weapon::UpdateHUD hits a null HUD).
@@ -5208,6 +5237,10 @@ def on_game_message(server, peer, raw):
         select_reborn(server, peer, struct.unpack_from("<I", body, 4)[0])
     elif key == (9, 40335):
         quick_relive(server, peer, body)
+    elif key in ((9, 10401), (9, 10402)) and len(body) >= 5:
+        squad_join(peer, body[4], create=msg.type == 10401)
+    elif key == (9, 10403):
+        squad_leave(peer)
     elif key == (9, 40110):
         suicide(server, peer)
     elif key in ((9, 40314), (9, 40333)):
@@ -5316,6 +5349,93 @@ def give_order(account, text):
         tell_side(m, side, 19, 30030, wstr(text))
     log(f"[game] {peer.name} orders: {text}")
     return ""
+
+
+SQUAD_NUMBERS, SQUAD_MAX, SQUAD_EVERY = 20, 8, 1.0  # squads per side, players in one, seconds between changes
+
+
+def squad_link(a, b, joined):
+    """Show b on a's client as a member of a's own detachment, or take b off it. A player's own detachment never
+    changes: Robot::UpdateHUD reads it every frame without a null check, so taking it away (QuitDetachment with the
+    player's own character) would crash the client. QuitDetachment (19,30501): u32 detachment id | u32 character id
+    (handler Game.dll 0x1039c930) removes that member."""
+    if joined:
+        send_game_event(a.match.server, a, 19, 30500, detachment_body(a.detachment, b.cid, b.name, b.pos))
+    else:
+        send_game_event(a.match.server, a, 19, 30501, struct.pack("<II", a.detachment, b.cid))
+
+
+def squad_join(peer, number, create):
+    """The battle chat box's squad commands (the client calls squads detachments), sent when the player has no GM
+    byte: /a N (9,10401) and /e N (9,10402), each f32 | u8 N. /a makes squad N of the player's side, or joins it if
+    it is there; /e joins it. A squad's members are shown on each other's clients as members of their own
+    detachment."""
+    with GAME_LOCK:
+        m = getattr(peer, "match", None)
+        if not m or peer not in (m.peers or ()):
+            return
+        if m.now - getattr(peer, "squad_at", -SQUAD_EVERY) < SQUAD_EVERY:
+            return
+        peer.squad_at = m.now
+        side = nation_of(peer.cid)
+        if not side:
+            return tell_player(peer, "Squads are for players of a side")
+        if not 1 <= number <= SQUAD_NUMBERS:
+            return tell_player(peer, f"Squads are numbered 1 to {SQUAD_NUMBERS}")
+        key = (side, number)
+        members = m.squads.get(key)
+        if getattr(peer, "squad", None) == key:
+            return tell_player(peer, f"You are in squad {number}")
+        if members is None and not create:
+            return tell_player(peer, f"There is no squad {number}: /a {number} makes it")
+        if members and len(members) >= SQUAD_MAX:
+            return tell_player(peer, f"Squad {number} is full ({SQUAD_MAX} players)")
+        squad_quit(m, peer)
+        members = m.squads.setdefault(key, [])
+        for other in members:
+            squad_link(other, peer, True)
+            squad_link(peer, other, True)
+            tell_player(other, f"{peer.name} joined squad {number}")
+        members.append(peer)
+        peer.squad = key
+        if len(members) == 1:
+            tell_player(peer, f"You made squad {number} and lead it. /L leaves it")
+        else:
+            tell_player(peer, f"You joined squad {number}, led by {members[0].name} ({len(members)} players). "
+                              "/L leaves it")
+    log(f"[game] {peer.name} joined squad {number} of side {side} in match {m.id}")
+
+
+def squad_leave(peer):
+    """/L in the battle chat box (9,10403): leave the squad."""
+    with GAME_LOCK:
+        m = getattr(peer, "match", None)
+        if not m or peer not in (m.peers or ()) or m.now - getattr(peer, "squad_at", -SQUAD_EVERY) < SQUAD_EVERY:
+            return
+        peer.squad_at = m.now
+        if getattr(peer, "squad", None) is None:
+            return tell_player(peer, "You are not in a squad")
+        number = peer.squad[1]
+        squad_quit(m, peer)
+        tell_player(peer, f"You left squad {number}")
+
+
+def squad_quit(m, peer, gone=False):
+    """Take a player out of their squad (call with GAME_LOCK held); gone = they are leaving the match."""
+    key = getattr(peer, "squad", None)
+    members = m.squads.get(key) if key else None
+    peer.squad = None
+    if not members or peer not in members:
+        return
+    led = members[0] is peer
+    members.remove(peer)
+    for other in members:
+        squad_link(other, peer, False)
+        if not gone:
+            squad_link(peer, other, False)
+        tell_player(other, f"{peer.name} left squad {key[1]}" + (f"; {members[0].name} leads it now" if led else ""))
+    if not members:
+        del m.squads[key]
 
 
 def gm_game_command(server, peer, body):

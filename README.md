@@ -270,6 +270,10 @@ their robot. The commander can type `!order <text>` in battle chat (up to 100 ch
 everyone on their side sees it as a "Country Command". The game's own commander window is not in this client, so this
 is the emulator's rule. When the commander leaves, the next player of that side takes over.
 
+Players of a side can make squads in battle with the client's own chat commands: `/a 3` makes squad 3 (or joins it),
+`/e 3` joins it, `/L` leaves. Squads are numbered 1 to 20 and hold up to 8 players; the server answers in a whisper
+from Server. Not tried with the real client yet: what the client shows for squad members.
+
 Each character has a friend list and a block list of up to 100 names, kept in `characters.db`. Lines from a blocked player
 do not reach you, and to them you look offline in private messages.
 
