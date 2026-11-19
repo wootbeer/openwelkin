@@ -1509,8 +1509,8 @@ KICK_NOTICE = 1.5  # seconds a kicked player has to see why, before the connecti
 CHAT_MAX, CHAT_EVERY, CHAT_QUEUE = 200, 0.5, 100  # characters in a line, seconds between a player's lines, lines waiting
 GROUP_CHAT = 21202  # shown as CHATMESSAGEUI_GROUP, "[Division]": the battle group (on_chat_group)
 SQUAD_CHAT = 21203  # shown as CHATMESSAGEUI_DETACHMENT, "[Squadron Team]" (ReceiveChatMessageObserver 0x103884d0)
-# battle box channels for squad chat: not seen in game yet. ChatManager::SendMessage sends three tabs as (21,21004)
-# with u16 2, 3 or 5; 2 is the Division Channel and 5 the Country tab, so the squad tab is most likely 3
+# (21,21004) channels for squad chat. Real client 2026-11-19: the battle box has no such tab (its Team tab sends group
+# chat, 21063, see on_chat_group); ChatManager::SendMessage's third 21004 channel is 3, kept here in case it is used
 SQUAD_CHANNELS = (3, 4)
 GM_COMMANDS = {"who", "matches", "aim", "kick", "ban", "unban", "bans", "goto", "tell", "mute", "unmute", "unbattle"}
 GOTO_LIMIT = 100000.0  # goto refuses positions farther out than this

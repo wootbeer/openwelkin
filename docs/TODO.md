@@ -460,7 +460,7 @@ reply layout, and answer with real data.
       21202 [Division] cyan (CHATMESSAGEUI_GROUP: the battle squad, mistranslated), 21203 and 21204 no label, 21212
       [GM], 21514 [Broadcast]; 21200 and 21211 did not show in the hall. Hall chat Enter needs DirectInput too
       (tools/vinput.py enter:0.2)
-- [ ] Battle squad (Group) chat and the battle box's Team / Division tabs: they stay greyed without a squad.
+- [x] Battle squad (Group) chat and the battle box's Team / Division tabs: they stay greyed without a squad.
       Real client 2026-11-18: the battle box's tabs are Country, Team (greyed), Division, Whisper, Service; there
       is no squad tab, and a line on the Division tab is never sent (no group), even in a squad. So the squad chat
       below can not be reached from this client. (9,10108) f32 comes every 5 s in battle: it is
@@ -474,8 +474,15 @@ reply layout, and answer with real data.
       u8 | u32 | u8 adds a member and sets its +0xe8; RemovedFromGroup (19,50401) u32 group | u32 character;
       DismissGroup (19,50404) u32 group. Group chat is (21,21063) u32 n | n x u32 member | str text, sent with the
       group from the local character's +0xe8, shown from (21,21202). The emulator now makes each squad a client
-      group (id side * 100 + number) and sends (21,21063) lines to the squad. In game: does the Division tab open
-      and send, does the group show anywhere (CGroupMemberUI), and what does T open
+      group (id side * 100 + number) and sends (21,21063) lines to the squad. Real client 2026-11-19 (tester and
+      Bravo in squad 3): each client writes its own "[Team] <name>: Join Team" for every member, a member list shows
+      at the top left (it lists Bravo, not the leader tester, on both), a green marker shows on screen, and the battle
+      box's Team tab is no longer greyed. Squad chat works: the Team tab sends (21,21063) and the line shows as
+      "[Division] Bravo: team hi" (cyan) on both. The Division tab is the division channel: (21,21004) u16 2,
+      shown as "[Team]" (the client's English labels are swapped). Earlier "the Division tab sends nothing" was
+      wrong: clicking a tab takes the focus from the input line, so typed text went nowhere; click the input line
+      (pm.ps1 470 792) after the tab. The client also sends (9,40502) u32 and (9,20001) 12 bytes in battle (not
+      read). T did not open a window (Bravo's view went to a 4X scope instead)
       2026-11-18, offline: squad lines show from (21,21203) as "[Squadron Team]"; the emulator sends a squad's
       lines there for (21,21004) channel 3 or 4 (the client's send table has three tabs with u16 2, 3, 5, and 2 and 5
       are known) and logs other channels. In game: does joining a squad (/a N) open a tab, and what channel it sends Whispers from the battle box are not tried. Enter in battle needs DirectInput: tools/vinput.py enter:0.2 sends a line
