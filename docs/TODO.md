@@ -414,7 +414,11 @@ reply layout, and answer with real data.
       Squad window, 2026-11-19 offline: CSelfCorpUI (dialog 0x10, made at start; its OnEvent is Game.dll 0x105f64b0)
       has the squad buttons: 214 Apply Leader (9,10404), 215 Resign (9,10409) f32, 216 Impeach (9,10408) f32, and
       211 opens the name prompt (dialog 0x19) for (9,10405) RequestSetDetachmentName. No code in Game.dll shows
-      dialog 0x10 with a plain push, so how players open it is not known (a hotkey from data? T showed nothing).
+      dialog 0x10 with a plain push. Later the same day: dialog 16 is "Division and Individual" in
+      Scripts/ENGDlgDatabase.xml (Squadron Info: Name + Edit 211, Squadron Commander + Apply 214 / Quit 215 /
+      Impeach 216, "Set Residence/Target Battle Area" 219, "Alter to other Squadron Team" 226). It is a page of the
+      battle dialog, but CBGDialogUI::OnSelectTab (0x104c5a00) hides it on every tab and its tab 1 shows nothing, so
+      this client never opens it: these buttons are dead code, and /a /e /L /l /t are the only squad controls.
       The emulator does Resign: the squad goes to the member in it longest, the old leader goes last, every client
       gets (19,30503). Not done: impeach (a vote: ImpeachDetachmentBegin (19,30520), answers (9,10420) bool from
       the invite box, result (19,30521)), the name (reply (19,30507) not read). Real client 2026-11-18 (tester and
