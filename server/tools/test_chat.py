@@ -582,7 +582,7 @@ async def commanders(amy, cara):
     check("only the commander gives orders", (await heard(lou))[3] == "Only your side's commander can give orders")
     say(kim, "!order hold the  bridge", 21004, struct.pack("<H", 5))
     await asyncio.sleep(0.5)
-    want = ls.wstr("hold the bridge")
+    want = ls.order_body("hold the bridge")
     check("an order reaches the commander's side, cleaned", kim_game.last(30030) == want and lou_game.last(30030) == want)
     check("and is not also a chat line", await heard(lou, 0.3) is None)
     await asyncio.sleep(ls.CHAT_EVERY + 0.1)
@@ -601,7 +601,7 @@ async def commanders(amy, cara):
     await asyncio.sleep(ls.CHAT_EVERY + 0.1)
     say(lou, "!order " + "y" * 300, 21052)
     await asyncio.sleep(0.5)
-    check("an order is cut to ORDER_MAX", lou_game.last(30030) == ls.wstr("y" * ls.ORDER_MAX))
+    check("an order is cut to ORDER_MAX", lou_game.last(30030) == ls.order_body("y" * ls.ORDER_MAX))
 
 
 def main():

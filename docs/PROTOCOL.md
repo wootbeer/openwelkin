@@ -1275,7 +1275,7 @@ Handler 0x1039c930. For the own detachment: another character's id removes that 
 <a name="m-19-30503"></a>
 #### UpdateDetachmentLeader `(19,30503)`
 
-*S→C · read, not tried*
+*S→C · verified*
 
 ```text
 u32 detachment id | u32 leader character id (0 = none) | str name
@@ -1286,7 +1286,7 @@ For the own detachment only: GroupManager::SetDetachmentLeader (0x10390730) keep
 <a name="m-9-10401"></a>
 #### Squad commands (RequestApplyDetachment / RequestEnterDetachment / RequestLeaveDetachment) `(9,10401) (9,10402) (9,10403)`
 
-*C→S game · read, not tried*
+*C→S game · verified*
 
 ```text
 10401, 10402: f32 | u8 number    10403: f32
@@ -1506,24 +1506,24 @@ Remote robots only (GS\_Robot\_Action\_ObjectObserver, 0x10265f70). Skipped whil
 <a name="m-19-30020"></a>
 #### GS\_UpdateNationLeader `(19,30020)`
 
-*S→C · read, not tried*
+*S→C · partial*
 
 ```text
 u32 commander character id (-1 = none: nothing more is read) | str name | u8
 ```
 
-Names a side's commander. GroupManager keeps it (+0x9c, +0xa0, +0xbc) and raises (9,12101); Robot::updateHeading puts the commander icon over the robot whose character has that id. In this client the ways to pick a commander (the corps windows and the battle Commander tab) are never created, so the emulator makes the player of a side who has been in the match longest its commander, and sends this to that side when it changes and to each player who joins. The u8 is sent as 0.
+Names a side's commander. GroupManager keeps it (+0x9c, +0xa0, +0xbc) and raises (9,12101); Robot::updateHeading puts the commander icon over the robot whose character has that id. In this client the ways to pick a commander (the corps windows and the battle Commander tab) are never created, so the emulator makes the player of a side who has been in the match longest its commander, and sends this to that side when it changes and to each player who joins. The u8 is sent as 0. Real client 2026-11-18: no icon showed over the commander's robot; Robot::updateHeading sets the flag only in a block that runs when the robot's byte +0xaf is set.
 
 <a name="m-19-30030"></a>
 #### GS\_UpdateCorpCmd `(19,30030)`
 
-*S→C · read, not tried*
+*S→C · verified*
 
 ```text
 str order
 ```
 
-The side's order. The client keeps it (GroupManager +0xcc), writes "Country Command" and the order in chat and raises (9,10100) for the central info panel. The dead Commander tab sent orders as (9,10023) `f32 | str`; the emulator takes them from battle chat instead: the commander types `!order <text>` (cleaned, at most 100 characters, one every 10 seconds) and the order goes to their side in their match. A player who joins later gets the side's last order.
+The side's order. Real client 2026-11-18: shown as "Commander: " + order at the top left and "Country Command" + order in big text in the middle, with no space between, so the emulator starts the order with a space. The client keeps it (GroupManager +0xcc), writes "Country Command" and the order in chat and raises (9,10100) for the central info panel. The dead Commander tab sent orders as (9,10023) `f32 | str`; the emulator takes them from battle chat instead: the commander types `!order <text>` (cleaned, at most 100 characters, one every 10 seconds) and the order goes to their side in their match. A player who joins later gets the side's last order.
 
 <a name="m-19-50176"></a>
 #### GS\_ReportPoint `(19,50176)`
@@ -1798,7 +1798,7 @@ The emulator ends a battlefield round itself, on a timer or a kill limit. It the
 f32 seconds
 ```
 
-Shows the Record window (dialog 0x68) with the player's own kills, deaths and honor and a countdown, then the client goes back to the lobby. The gate connection stays open. No reason text. Sent at the end of a round, and by the GM command `unbattle`, which takes the robot out of the match at once, tells the player why in a Server whisper, and closes the battle connection if the client is still there 10 seconds after the countdown.
+Shows the Record window (dialog 0x68) with the player's own kills, deaths and honor and a countdown, then the client goes back to the lobby. The gate connection stays open. No reason text. Sent at the end of a round, and by the GM command `unbattle` (real client 2026-11-18: the whisper with the reason, the Record window, then the lobby; the client closed its own battle connection), which takes the robot out of the match at once, tells the player why in a Server whisper, and closes the battle connection if the client is still there 10 seconds after the countdown.
 
 <a name="m-19-30250"></a>
 #### GS\_Character\_Show\_Message `(19,30250)`
@@ -1885,7 +1885,7 @@ Shown from (21,21200) as [Whisper]. The client also has code that sends (21,2103
 u16 channel | str text
 ```
 
-Channel 5 is the battle box's Country tab, shown from (21,21204) as [Country]. It reaches the sender's side in its match. Channel 2 is the hall's Division Channel: the emulator sends (21,21201) to the online members of the sender's division, the sender too; the client labels it CHATMESSAGEUI\_TEAM, "【Team】" in English (seen in game; (21,21202) is labelled "【Division】" but is the battle squad). The battle box's Team and Division tabs stay greyed without a team. Read from Game.dll 2026-11-18: ReceiveChatMessageObserver (0x103884d0) gives (21,21200) to (21,21204) to ChatManager::AddMessage as channels 1, 2, 4, 5, 6, which the chat box labels whisper, [Team], [Division] (CHATMESSAGEUI\_GROUP), [Squadron Team] (CHATMESSAGEUI\_DETACHMENT, the battle squad) and [Country]. ChatManager::SendMessage sends three tabs as this message with u16 2, 3 or 5. The emulator takes 3 and 4 as the squad tab (not seen in game yet): the line goes to the sender's squad as (21,21203). Other channels are logged. Team chat is (21,21063), not read yet. (21,21052) is in the client too, but (21,21211) did not show in the battle box.
+Channel 5 is the battle box's Country tab, shown from (21,21204) as [Country]. It reaches the sender's side in its match. Channel 2 is the hall's Division Channel: the emulator sends (21,21201) to the online members of the sender's division, the sender too; the client labels it CHATMESSAGEUI\_TEAM, "【Team】" in English (seen in game; (21,21202) is labelled "【Division】" but is the battle squad). The battle box's Team and Division tabs stay greyed without a team. Read from Game.dll 2026-11-18: ReceiveChatMessageObserver (0x103884d0) gives (21,21200) to (21,21204) to ChatManager::AddMessage as channels 1, 2, 4, 5, 6, which the chat box labels whisper, [Team], [Division] (CHATMESSAGEUI\_GROUP), [Squadron Team] (CHATMESSAGEUI\_DETACHMENT, the battle squad) and [Country]. ChatManager::SendMessage sends three tabs as this message with u16 2, 3 or 5. The emulator takes 3 and 4 as the squad tab: the line goes to the sender's squad as (21,21203). Other channels are logged. Real client 2026-11-18: this client's battle box has no squad tab (Country, Team, Division, Whisper, Service) and sends nothing from the greyed Team tab or from the Division tab without a group, so squad chat is not reachable from it. Team chat is (21,21063), not read yet. (21,21052) is in the client too, but (21,21211) did not show in the battle box.
 
 <a name="m-21-21522"></a>
 #### CHAT\_GetFriendListFormDB `(21,21522)`

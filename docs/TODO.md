@@ -167,6 +167,10 @@ reply layout, and answer with real data.
       - (15,15022) corps name lookups (see below); the client asks for corps 0 at every hall login
       - Not read: detachments (19,30500..30522), impeach (19,30080/30081), group orders (19,30050..30053), the
         hall corps orders (21,21058/21061, 9,10120). Comm. Credits and command levels belong here too
+      - Real client 2026-11-18: tester's !order hold the bridge showed "Commander: <order>" at the top left and
+        "Country Command<order>" in big text in the middle (no space: orders are now sent with a leading space).
+        No commander icon over tester's robot on Bravo's screen: Robot::updateHeading sets the commander flag
+        only inside a block that runs when the robot's byte +0xaf is set (not read what sets it)
       - Built 2026-11-18 (offline, tools/test_chat.py): each side's commander in a match is its player there longest
         (30020 to that side on join and when the commander leaves), and the commander's `!order <text>` in battle
         chat goes out as 30030 to the side (split servers: gate asks the game server, link message "order"). Not
@@ -389,7 +393,7 @@ reply layout, and answer with real data.
       clears the Record window). Under "Campaign": winner, then each side's kills; then the 20 s countdown and back
       to the lobby. Only arena logics register a 20130 observer, so other battles keep 30150. Catalog 20 game
       messages have no event envelope: with one, the row count read 0 and the countdown read the event key
-- [ ] Squads (the client's detachments), 2026-11-18, offline (Game.dll). The battle chat box's /a N, /e N and /L
+- [x] Squads (the client's detachments), 2026-11-18, offline (Game.dll). The battle chat box's /a N, /e N and /L
       send (9,10401) / (9,10402) f32 | u8 and (9,10403) f32; the emulator makes, joins and leaves squads of a side
       in a match (tools/test_chat.py). The client keeps only its own detachment and its members: AddToDetachment
       with its own id adds a member, QuitDetachment (19,30501) u32 id | u32 character removes one. Never quit the
@@ -398,7 +402,12 @@ reply layout, and answer with real data.
       CMFDetachmentInfo window. Not tried in game: whether the client shows the members anywhere, and whether the
       battle box's Team tab opens. Leader: (19,30503) u32 id | u32 leader (0 = none) | str name; the client writes
       "%s become squadron commander!" itself; /l is (9,10404) f32 and gets told who leads. Not read: 30502,
-      30504..30522 (member update, zones, name, list, orders, impeach), /t
+      30504..30522 (member update, zones, name, list, orders, impeach), /t. Real client 2026-11-18 (tester and
+      Bravo, Alliance, Training Ground 1): /a 3 works for a GM too (the GM byte does not take the / letters); the
+      Server whispers and "tester become squadron commander!" show; Bravo's /e 3 added each to the other's
+      detachment, no crash; tester's /L showed "Bravo become squadron commander!" on Bravo and "tester is no longer
+      a squadron commander!" on tester. Nameplates do not change (a player's own reads "[Need Team]" above the
+      name either way), and the battle chat box's Team tab stays greyed
 - [ ] Teams within a side, respawn point choice. Needs a client session: without knowing what
       sets the nation, players could not tell the sides apart, so nothing is built yet. Client's Kill arena, read from Game.dll, not
       tried: arena logic 5 in (19,40050), then init data u8 nation | u8 nation | f32. (19,49000) f32 seconds | u8 | f32
@@ -450,6 +459,9 @@ reply layout, and answer with real data.
       [GM], 21514 [Broadcast]; 21200 and 21211 did not show in the hall. Hall chat Enter needs DirectInput too
       (tools/vinput.py enter:0.2)
 - [ ] Battle squad (Group) chat and the battle box's Team / Division tabs: they stay greyed without a squad.
+      Real client 2026-11-18: the battle box's tabs are Country, Team (greyed), Division, Whisper, Service; there
+      is no squad tab, and a line on the Division tab is never sent (no group), even in a squad. So the squad chat
+      below can not be reached from this client. (9,10108) f32 comes every 5 s in battle (not read).
       2026-11-18, offline: squad lines show from (21,21203) as "[Squadron Team]"; the emulator sends a squad's
       lines there for (21,21004) channel 3 or 4 (the client's send table has three tabs with u16 2, 3, 5, and 2 and 5
       are known) and logs other channels. In game: does joining a squad (/a N) open a tab, and what channel it sends Whispers from the battle box are not tried. Enter in battle needs DirectInput: tools/vinput.py enter:0.2 sends a line

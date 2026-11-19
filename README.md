@@ -268,13 +268,14 @@ a line every half second, and control characters are removed. The sender's name 
 
 In each match, the player of a side who has been there longest is that side's commander, and the game shows an icon over
 their robot. The commander can type `!order <text>` in battle chat (up to 100 characters, one every 10 seconds), and
-everyone on their side sees it as a "Country Command". The game's own commander window is not in this client, so this
+everyone on their side sees it as a "Country Command" (tried with the real client). The game's own commander window is not in this client, so this
 is the emulator's rule. When the commander leaves, the next player of that side takes over.
 
 Players of a side can make squads in battle with the client's own chat commands: `/a 3` makes squad 3 (or joins it),
 `/e 3` joins it, `/L` leaves, and `/l` says who leads (the player in the squad longest; the game announces a new
 leader as "squadron commander"). Squads are numbered 1 to 20 and hold up to 8 players; the server answers in a whisper
-from Server. Lines on the battle chat box's squad tab go to the squad, shown as "[Squadron Team]". Not tried with the real client yet: what the client shows for squad members.
+from Server. Tried with the real client: making, joining and leaving squads and the leader lines work. The client's
+battle chat box has no squad tab, so squads have no chat of their own yet. Not tried with the real client yet: what the client shows for squad members.
 
 Each character has a friend list and a block list of up to 100 names, kept in `characters.db`. Lines from a blocked player
 do not reach you, and to them you look offline in private messages.

@@ -4457,7 +4457,7 @@ def join_match(server, peer):
     if side:  # who commands the player's side (the player, if first there), and its last order
         send_game_event(server, peer, 19, 30020, commander_body(side_commander(m, side)))
         if side in m.orders:
-            send_game_event(server, peer, 19, 30030, wstr(m.orders[side]))
+            send_game_event(server, peer, 19, 30030, order_body(m.orders[side]))
     tell_gate_match(peer, m.id)
     log(f"[game] {peer.name} (cid {peer.cid}) joined {m.bf['name']} (match {m.id}) as slot {slot}; "
         f"{len(m.peers)} player(s)")
@@ -5401,6 +5401,13 @@ def commander_body(peer):
     return struct.pack("<I", peer.cid) + wstr(peer.name) + b"\0" if peer else struct.pack("<i", -1)
 
 
+def order_body(text):
+    """GS_UpdateCorpCmd (19,30030): str order. The client puts "Country Command" straight in front of it in the middle
+    of the screen (real client 2026-11-18: "Country Commandhold the bridge"), so the order starts with a space; the
+    top-left panel then reads "Commander:  <order>"."""
+    return wstr(" " + text)
+
+
 def tell_side(m, side, catalog, type_, body):
     for p in m.peers or ():
         if nation_of(p.cid) == side:
@@ -5428,7 +5435,7 @@ def give_order(account, text):
             return f"One order every {ORDER_EVERY:.0f} seconds"
         peer.ordered_at = now
         m.orders[side] = text
-        tell_side(m, side, 19, 30030, wstr(text))
+        tell_side(m, side, 19, 30030, order_body(text))
     log(f"[game] {peer.name} orders: {text}")
     return ""
 
