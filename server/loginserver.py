@@ -1507,6 +1507,10 @@ MAX_SUITES = 10  # loadout presets per character
 MAX_SUITE_TEXT = 400  # characters in one preset (a name and a few dozen part ids)
 KICK_NOTICE = 1.5  # seconds a kicked player has to see why, before the connection closes
 CHAT_MAX, CHAT_EVERY, CHAT_QUEUE = 200, 0.5, 100  # characters in a line, seconds between a player's lines, lines waiting
+SQUAD_CHAT = 21203  # shown as CHATMESSAGEUI_DETACHMENT, "[Squadron Team]" (ReceiveChatMessageObserver 0x103884d0)
+# battle box channels for squad chat: not seen in game yet. ChatManager::SendMessage sends three tabs as (21,21004)
+# with u16 2, 3 or 5; 2 is the Division Channel and 5 the Country tab, so the squad tab is most likely 3
+SQUAD_CHANNELS = (3, 4)
 GM_COMMANDS = {"who", "matches", "aim", "kick", "ban", "unban", "bans", "goto", "tell", "mute", "unmute"}
 GOTO_LIMIT = 100000.0  # goto refuses positions farther out than this
 GM_LEVEL = {"player": 0, "gm": 101, "admin": 110}  # sent in CharacterOnline; 101..110 makes the client a GM
@@ -1664,6 +1668,7 @@ class Session:
         self.gm_level = 0  # GM_LEVEL of the account's role when it logged in; the client opens its / commands with it
         self.character, self.next_chat, self.next_contact, self.next_division = None, 0.0, 0.0, 0.0
         self.match = None  # (game server, match id) while in a battle: only the game server knows who shares a match
+        self.squad = None  # (game server, match id, side, number) while in a battle squad, for squad chat
         self.send_lock = threading.Lock()
         self.outbox = collections.deque(maxlen=CHAT_QUEUE)  # lines from other players' threads wait here
         self.outbox_ready = threading.Event()
@@ -2311,6 +2316,27 @@ class Session:
             self.chat_to_all(msg, 21204, True, same_match=True, off=2, same_side=True)
         elif channel == 2:
             self.chat_division(msg, off=2)
+        elif channel in SQUAD_CHANNELS:
+            self.chat_squad(msg, off=2)
+        elif self.character:
+            log(f"[chat] {self.character['name']}: unknown channel {channel}")
+
+    def chat_squad(self, msg, off):
+        """Squad channel: the line goes to the sender's battle squad, the sender too, shown from (21,21203), which the
+        client labels CHATMESSAGEUI_DETACHMENT, "[Squadron Team]"."""
+        line = self.chat_text(msg, off)
+        if not line:
+            return
+        if line[0].startswith("!"):
+            return self.gm_chat(line[0][1:])
+        squad, name = self.squad, self.character["name"]
+        if not squad:
+            return self.chat_line(21200, "Server", "You are not in a squad: /a N makes squad N, /e N joins it")
+        log(f"[squad] {name}: {line[0]}")
+        with ONLINE_LOCK:
+            sessions = [s for s in ONLINE.values() if s.character and s.squad == squad and not s.blocks(self)]
+        for s in sessions:
+            s.chat_line(SQUAD_CHAT, name, line[0], self.character["id"])
 
     def chat_division(self, msg, off):
         """Division channel: the line goes to the online members of the sender's division."""
@@ -3635,6 +3661,9 @@ def on_game_server_message(link, msg):
             tell_session(str(msg["account"]), str(msg["text"]))
         elif kind == "match":
             note_match(msg["account"], (id(link), msg["match"]) if msg["match"] else None)
+        elif kind == "squad":
+            squad = msg["squad"]
+            note_squad(msg["account"], (id(link), *squad) if squad else None)
 
 
 def on_gate_request(link, msg):
@@ -4232,6 +4261,25 @@ def note_match(account, match):
     session = ONLINE.get(account)
     if session:
         session.match = match
+        if not match:
+            session.squad = None
+
+
+def note_squad(account, squad):
+    """gate: which battle squad a player is in, for squad chat (no lock, like note_match)."""
+    session = ONLINE.get(account)
+    if session:
+        session.squad = squad
+
+
+def tell_gate_squad(peer, m, key):
+    """A player joined squad key = (side, number) of match m, or left it (key None)."""
+    account = STORE.account_of(peer.cid)
+    where = [m.id, *key] if key else None
+    if ROLE == "game":
+        STORE.report("squad", account=account, squad=where)
+    else:
+        note_squad(account, ("here", *where) if where else None)
 
 
 def tell_gate_match(peer, match_id):
@@ -5425,6 +5473,7 @@ def squad_join(peer, number, create):
             tell_player(other, f"{peer.name} joined squad {number}")
         members.append(peer)
         peer.squad = key
+        tell_gate_squad(peer, m, key)
         squad_leader(peer, members[0])
         if len(members) == 1:
             tell_player(peer, f"You made squad {number} and lead it. /L leaves it")
@@ -5455,6 +5504,7 @@ def squad_quit(m, peer, gone=False):
     peer.squad = None
     if not members or peer not in members:
         return
+    tell_gate_squad(peer, m, None)
     led = members[0] is peer
     members.remove(peer)
     for other in members:

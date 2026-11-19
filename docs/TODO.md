@@ -449,7 +449,10 @@ reply layout, and answer with real data.
       21202 [Division] cyan (CHATMESSAGEUI_GROUP: the battle squad, mistranslated), 21203 and 21204 no label, 21212
       [GM], 21514 [Broadcast]; 21200 and 21211 did not show in the hall. Hall chat Enter needs DirectInput too
       (tools/vinput.py enter:0.2)
-- [ ] Battle squad (Group) chat and the battle box's Team / Division tabs: they stay greyed without a squad. Whispers from the battle box are not tried. Enter in battle needs DirectInput: tools/vinput.py enter:0.2 sends a line
+- [ ] Battle squad (Group) chat and the battle box's Team / Division tabs: they stay greyed without a squad.
+      2026-11-18, offline: squad lines show from (21,21203) as "[Squadron Team]"; the emulator sends a squad's
+      lines there for (21,21004) channel 3 or 4 (the client's send table has three tabs with u16 2, 3, 5, and 2 and 5
+      are known) and logs other channels. In game: does joining a squad (/a N) open a tab, and what channel it sends Whispers from the battle box are not tried. Enter in battle needs DirectInput: tools/vinput.py enter:0.2 sends a line
 - [ ] The client's own / commands, 2026-11-05 offline (ChatManager::SendMessage, 0x10386600). A chat line starting
       with / is a command. GM level 101..110 in CharacterOnline sets the GM byte (+0xb8); the emulator sends 101 for
       gm and 110 for admin (the gate gets it in the signed session key; a role change counts from the next login).

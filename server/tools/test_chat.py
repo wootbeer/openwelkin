@@ -512,6 +512,9 @@ async def squads(kim, kim_id, kim_game, lou, lou_id, lou_game):
           kim_game.members(kim_id)[1] == [lou_id] and lou_game.members(lou_id)[1] == [kim_id],
           f"{kim_game.members(kim_id)} {lou_game.members(lou_id)}")
     check("and keeps its own detachment id", kim_game.members(kim_id)[0] != lou_game.members(lou_id)[0])
+    say(kim, "squad hi", 21004, struct.pack("<H", 3))
+    check("squad chat reaches the squad", await heard(lou) == (ls.SQUAD_CHAT, kim_id, "kim", "squad hi"))
+    check("and comes back to the sender", await heard(kim) == (ls.SQUAD_CHAT, kim_id, "kim", "squad hi"))
     lou_game.squad(10402, 3)
     check("changes are rate-limited", await heard(lou, 0.4) is None)
     await asyncio.sleep(gap)
@@ -524,6 +527,9 @@ async def squads(kim, kim_id, kim_game, lou, lou_id, lou_game):
     await asyncio.sleep(0.3)
     check("both drop the other from their detachment",
           kim_game.members(kim_id)[1] == [] and lou_game.members(lou_id)[1] == [])
+    say(lou, "anyone?", 21004, struct.pack("<H", 3))
+    check("out of a squad, squad chat goes nowhere", (await told(lou) or "").startswith("You are not in a squad")
+          and await heard(kim, 0.4) is None)
     def quits_self(game, cid):
         return [b for t, b in game.events if t == 30501 and struct.unpack_from("<I", b, 4)[0] == cid]
     check("nobody's own detachment is taken away", not quits_self(kim_game, kim_id) and not quits_self(lou_game, lou_id))
