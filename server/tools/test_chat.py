@@ -55,7 +55,7 @@ class Recorder(ts.lt.Game):
     def datagram_received(self, data, addr):
         pkt = ts.fdp.Packet.parse(data)
         if not pkt.system:
-            self.events += [(typ, raw[12:]) for raw, _, typ in ts.fdp.messages(pkt.payload) if typ in (30020, 30030, 30057, 30150, 30500, 30501, 30503, 50400, 50401, 50404)]
+            self.events += [(typ, raw[12:]) for raw, _, typ in ts.fdp.messages(pkt.payload) if typ in (30020, 30030, 30057, 30150, 30500, 30501, 30503, 30505, 50400, 50401, 50404)]
         super().datagram_received(data, addr)
 
     def last(self, typ):
@@ -512,6 +512,18 @@ async def squads(kim, kim_id, kim_game, lou, lou_id, lou_game):
           kim_game.members(kim_id)[1] == [lou_id] and lou_game.members(lou_id)[1] == [kim_id],
           f"{kim_game.members(kim_id)} {lou_game.members(lou_id)}")
     check("and keeps its own detachment id", kim_game.members(kim_id)[0] != lou_game.members(lou_id)[0])
+
+    def target(game, cid):
+        body = game.last(30505)
+        return body and struct.unpack("<Ii", body)[0] == game.members(cid)[0] and struct.unpack("<Ii", body)[1]
+
+    await asyncio.sleep(gap)
+    lou_game.squad(10407, 4)
+    check("/t: only the leader sets the target", await told(lou) == "Only the squad leader (kim) sets the target")
+    kim_game.squad(10407, 4)
+    await asyncio.sleep(0.3)
+    check("/t 4 shows the target zone to the squad", target(kim_game, kim_id) == 4 and target(lou_game, lou_id) == 4,
+          f"{kim_game.last(30505)} {lou_game.last(30505)}")
     say(kim, "squad hi", 21004, struct.pack("<H", 3))
     check("squad chat reaches the squad", await heard(lou) == (ls.SQUAD_CHAT, kim_id, "kim", "squad hi"))
     check("and comes back to the sender", await heard(kim) == (ls.SQUAD_CHAT, kim_id, "kim", "squad hi"))
@@ -544,6 +556,7 @@ async def squads(kim, kim_id, kim_game, lou, lou_id, lou_game):
     check("/L leaves", await told(lou) == "You left squad 3")
     check("the squad hears it", await told(kim) == "lou left squad 3")
     await asyncio.sleep(0.3)
+    check("the leaver's target is cancelled", target(lou_game, lou_id) == -1)
     check("the leaver's client group goes", lou_game.last(50404) == struct.pack("<I", group)
           and kim_game.last(50401) == struct.pack("<II", group, lou_id)
           and kim_game.last(30057) == struct.pack("<II", lou_id, 0))
@@ -559,6 +572,11 @@ async def squads(kim, kim_id, kim_game, lou, lou_id, lou_game):
     lou_game.squad(10402, 3)
     await told(lou)
     await told(kim)
+    await asyncio.sleep(0.3)
+    check("a new member is shown the target", target(lou_game, lou_id) == 4)
+    kim_game.squad(10407, ls.SQUAD_NO_TARGET)
+    await asyncio.sleep(0.3)
+    check("/t -1 cancels it", target(kim_game, kim_id) == -1 and target(lou_game, lou_id) == -1)
     await asyncio.sleep(gap)
     kim_game.squad(10403, None)
     await told(kim)

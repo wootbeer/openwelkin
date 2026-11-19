@@ -404,7 +404,13 @@ reply layout, and answer with real data.
       CMFDetachmentInfo window. Not tried in game: whether the client shows the members anywhere, and whether the
       battle box's Team tab opens. Leader: (19,30503) u32 id | u32 leader (0 = none) | str name; the client writes
       "%s become squadron commander!" itself; /l is (9,10404) f32 and gets told who leads. Not read: 30502,
-      30504..30522 (member update, zones, name, list, orders, impeach), /t. Real client 2026-11-18 (tester and
+      30504, 30506..30522 (member update, home zone, name, list, orders, impeach). /t N, 2026-11-19 offline:
+      (9,10407) f32 | u8 N (RequestSetDetachmentTargetZone; the client reads a number and sends one byte, so /t -1
+      is 255); the emulator lets the squad leader set it and sends every member UpdateDetachmentTargetZone (19,30505)
+      u32 own detachment id | i32 zone (-1 = none; also to a new member, and -1 to one who leaves). The client then
+      writes "Squadron team target battlefield change to %s!" with the zone's name from its own map data (or
+      "Squadron team target cancelled!") and Robot::UpdateHUD points at the zone's position. A zone the map does not
+      have shows nothing. In game: which numbers are zones on Training Ground, and what the HUD shows. Real client 2026-11-18 (tester and
       Bravo, Alliance, Training Ground 1): /a 3 works for a GM too (the GM byte does not take the / letters); the
       Server whispers and "tester become squadron commander!" show; Bravo's /e 3 added each to the other's
       detachment, no crash; tester's /L showed "Bravo become squadron commander!" on Bravo and "tester is no longer
@@ -481,8 +487,12 @@ reply layout, and answer with real data.
       "[Division] Bravo: team hi" (cyan) on both. The Division tab is the division channel: (21,21004) u16 2,
       shown as "[Team]" (the client's English labels are swapped). Earlier "the Division tab sends nothing" was
       wrong: clicking a tab takes the focus from the input line, so typed text went nowhere; click the input line
-      (pm.ps1 470 792) after the tab. The client also sends (9,40502) u32 and (9,20001) 12 bytes in battle (not
-      read). T did not open a window (Bravo's view went to a 4X scope instead)
+      (pm.ps1 470 792) after the tab. The client also sends (9,40502) u32 and (9,20001) 12 bytes in battle.
+      2026-11-19, offline: (9,40502) is f32 only, GroupManager::RequestUpdateGroupData from CGroupMemberUI::Tick
+      (the member list) on a timer. Its likely answer is UpdateGroupMemberInfo (19,50410): u32 group | u32 n |
+      n x (u32 character | f32 (kept at member +0x38) | u32 (+0x3c) | vec3 (+0x2c)) -> Group::UpdateMemberInfo, then
+      (9,40500). Not answered: what the f32 and u32 mean is not known (the list reads live robots for most of it).
+      (9,20001) is not built by a catalog 9 push in Game.dll (only CVideoTutorialManager uses the number) T did not open a window (Bravo's view went to a 4X scope instead)
       2026-11-18, offline: squad lines show from (21,21203) as "[Squadron Team]"; the emulator sends a squad's
       lines there for (21,21004) channel 3 or 4 (the client's send table has three tabs with u16 2, 3, 5, and 2 and 5
       are known) and logs other channels. In game: does joining a squad (/a N) open a tab, and what channel it sends Whispers from the battle box are not tried. Enter in battle needs DirectInput: tools/vinput.py enter:0.2 sends a line
@@ -497,7 +507,7 @@ reply layout, and answer with real data.
       byte too, or it is cleared on entering a battle; /announce 0 Battle hello showed "Battle" as a notice: the client
       reads the text with >>, so only its first word is sent. Since 2026-11-06 your own character gets no 30040, so
       the GM byte stays as CharacterOnline set it: try / commands in battle again. Not tried: /kick, /banchat, /moveto. Without the GM byte the letter after / picks a squad ("Detachment") action: /a N apply to join,
-      /e N enter, /L leave, /l apply to be leader, /t N set the target zone (requests not read yet), /h hides the
+      /e N enter, /L leave, /l apply to be leader, /t N set the target zone (done 2026-11-19), /h hides the
       screen's windows and HUD (client only). Squads need teams first
 - [x] goto <account> <x> <y> <z> (GM), 2026-11-05 offline: GS_GMSetLocation (19,33000) vec3 moves the player's own
       robot; the server moves it on the others too. Works across split servers (tools/test_split.py). Real client

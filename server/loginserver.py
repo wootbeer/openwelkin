@@ -4074,6 +4074,7 @@ class Match:
         self.side_kills = dict.fromkeys(NATIONS, 0)
         self.orders = {}  # side -> its commander's last order (give_order)
         self.squads = {}  # (side, number) -> its players, leader first (squad_join)
+        self.squad_targets = {}  # (side, number) -> target zone set with /t (squad_target)
         self.round_ends = 0.0
         self.targets = {}
         self.trails = {}  # robot id -> deque of (time, position), the last TRAIL_SECONDS of its moves
@@ -5338,6 +5339,8 @@ def on_game_message(server, peer, raw):
         squad_leave(peer)
     elif key == (9, 10404):
         squad_apply_leader(peer)
+    elif key == (9, 10407) and len(body) >= 5:
+        squad_target(peer, body[4])
     elif key == (9, 40110):
         suicide(server, peer)
     elif key in ((9, 40314), (9, 40333)):
@@ -5525,6 +5528,43 @@ def squad_apply_leader(peer):
         tell_player(peer, f"{members[0].name} leads squad {peer.squad[1]}; the player in it longest leads")
 
 
+SQUAD_NO_TARGET = 255  # "/t -1": the client reads a number and sends it as one byte
+
+
+def squad_show_target(a, zone):
+    """Tell a's client its squad's target zone. UpdateDetachmentTargetZone (19,30505): u32 detachment id | i32 zone
+    (handler Game.dll 0x1039ce60) -> GroupManager::SetDetachmentTargetZone (0x10390940), which only takes the player's
+    own detachment: it keeps the zone (+0x4c), writes "Squadron team target battlefield change to %s!" with the
+    zone's name from the client's own map data (or, for -1, "Squadron team target cancelled!"), and
+    Robot::UpdateHUD then points at that zone. A zone the map does not have shows nothing."""
+    send_game_event(a.match.server, a, 19, 30505,
+                    struct.pack("<Ii", a.detachment, -1 if zone in (None, SQUAD_NO_TARGET) else zone))
+
+
+def squad_target(peer, zone):
+    """/t N in the battle chat box (9,10407, f32 | u8 N, GroupManager::RequestSetDetachmentTargetZone; /t -1 sends
+    255): the squad leader sets the squad's target zone, shown to every member."""
+    with GAME_LOCK:
+        m = getattr(peer, "match", None)
+        if not m or peer not in (m.peers or ()) or m.now - getattr(peer, "squad_at", -SQUAD_EVERY) < SQUAD_EVERY:
+            return
+        peer.squad_at = m.now
+        key = getattr(peer, "squad", None)
+        members = m.squads.get(key) if key else None
+        if not members:
+            return tell_player(peer, "You are not in a squad")
+        if members[0] is not peer:
+            return tell_player(peer, f"Only the squad leader ({members[0].name}) sets the target")
+        if zone == SQUAD_NO_TARGET:
+            if m.squad_targets.pop(key, None) is None:
+                return tell_player(peer, "Your squad has no target")
+        else:
+            m.squad_targets[key] = zone
+        for other in members:
+            squad_show_target(other, zone)
+    log(f"[game] {peer.name} set squad {key[1]}'s target zone to {zone if zone != SQUAD_NO_TARGET else 'none'}")
+
+
 def squad_join(peer, number, create):
     """The battle chat box's squad commands (the client calls squads detachments), sent when the player has no GM
     byte: /a N (9,10401) and /e N (9,10402), each f32 | u8 N. /a makes squad N of the player's side, or joins it if
@@ -5564,6 +5604,8 @@ def squad_join(peer, number, create):
                 group_add(peer, other, key, members[0])
         tell_gate_squad(peer, m, key)
         squad_leader(peer, members[0])
+        if key in m.squad_targets:
+            squad_show_target(peer, m.squad_targets[key])
         if len(members) == 1:
             tell_player(peer, f"You made squad {number} and lead it. /L leaves it")
         else:
@@ -5596,6 +5638,8 @@ def squad_quit(m, peer, gone=False):
     tell_gate_squad(peer, m, None)
     led = members[0] is peer
     members.remove(peer)
+    if not gone and key in m.squad_targets:
+        squad_show_target(peer, None)  # "Squadron team target cancelled!"
     if not gone:
         group_dismiss(peer, key, members + [peer])
     for other in members:
@@ -5610,6 +5654,7 @@ def squad_quit(m, peer, gone=False):
         squad_leader(peer, None, peer.name)  # "<name> is no longer a squadron commander!"
     if not members:
         del m.squads[key]
+        m.squad_targets.pop(key, None)
 
 
 def gm_game_command(server, peer, body):
