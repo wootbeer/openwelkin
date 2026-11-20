@@ -394,6 +394,8 @@ async def scenario():
     first, off = ls.read_wstr(r.body, 8)
     second = ls.read_wstr(r.body, off + 8)[0]
     check("announcements come from the file", n == 2 and first == "first line" and len(second) == ls.CHAT_MAX)
+    r = await amy.request(20, 20116, struct.pack("<I", 0))
+    check("held tasks: an explicit empty list", r.result == 0 and r.body == bytes(4), repr(r.body[:8]))
 
     # --- the client's own GM / commands ---
     async def online(name, cid):

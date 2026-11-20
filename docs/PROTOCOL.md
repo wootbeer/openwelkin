@@ -1107,7 +1107,7 @@ u32 n | n x ( str token | str name | str info | u32 type | u32 mode | i32 time
 | u32 bound object | str | u32 template | u32 level )
 ```
 
-Held missions. A body under 4 bytes reads the count from stack junk and loops on huge allocations: always send the count.
+Held missions. Asked once in the hall, request body `u32 0`. The client clears its held missions first, then adds each snapshot with MissionManager::AddHoldMission (observer Game.dll 0x106df7e0); a nonzero result is only logged. A body under 4 bytes reads the count from stack junk and loops on huge allocations: always send the count. No event envelope. The emulator has no missions and answers `u32 0`.
 
 <a name="m-21-21048"></a>
 #### CS\_GetTaskServerAfficheList `(21,21048)`

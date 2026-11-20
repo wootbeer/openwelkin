@@ -1953,6 +1953,13 @@ class Session:
             body += struct.pack("<I", i) + wstr(text) + struct.pack("<I", 0)
         self.reply(msg, body)
 
+    def on_hold_tasks(self, msg):
+        # Task_GetHoldTask (20,20116), asked once in the hall with a u32 0 body. The client clears its held missions
+        # first, then Task_GetHoldTask_Observer (Game.dll 0x106df7e0) reads u32 n | n x Mission snapshot into
+        # MissionManager::AddHoldMission. There are no missions here, so the count is 0. The count must be sent: with
+        # under 4 bytes the observer takes it from stack junk. Catalog 20 has no event envelope.
+        self.reply(msg, struct.pack("<I", 0))
+
     def on_today_military(self, msg):
         # CGS_GetCharacterTodayMilitary (14,14057): reply = 10 x u32 (stTodayMilitary) -> CNewHallUI::SetTodayMilitary,
         # the hall's Battle Report panel: battlefield time (s) | kills | deaths | honor | crystal, then the same five
@@ -3327,6 +3334,7 @@ HANDLERS = {
     (18, 18021): Session.on_map_status,          # MapStatus
     (18, 18000): Session.on_apply_enter,         # QS_ApplyEnter (enter a battlefield / training ground)
     (21, 21047): Session.on_announcements,       # UpdateAllAnnouncement (hall scrolling bar)
+    (20, 20116): Session.on_hold_tasks,          # Task_GetHoldTask (held missions: none)
     (21, 21513): Session.on_chat_broadcast,      # Chat_BigBugleSendMessage (hall Broadcast channel)
     (21, 21052): Session.on_chat_battle,         # chat in battle
     (21, 21004): Session.on_chat_channel,        # battle chat box

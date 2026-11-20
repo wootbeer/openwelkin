@@ -197,7 +197,8 @@ reply layout, and answer with real data.
       the list. Not known what the text is
 
 ## Tasks / announcements / social
-- [ ] (20,20116) Task_GetHoldTask
+- [x] (20,20116) Task_GetHoldTask: asked once in the hall (body u32 0); answered with an empty list, there are no
+      missions yet. The reply is u32 n | n x Mission snapshot (Mission::WriteSnapshot reads it)
 - [x] (21,21047) UpdateAllAnnouncement
 - [ ] (21,21048) CS_GetTaskServerAfficheList
 - [x] (21,21069) CS_AckTradeRes: one u32, read and dropped
