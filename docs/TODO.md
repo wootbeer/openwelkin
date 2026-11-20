@@ -657,6 +657,10 @@ reply layout, and answer with real data.
       | 256     | 8       | 11 ms           | 37%        | 5.8 MB/s | -- |
       | 400     | 13      | 17 ms           | 60%        | 8.8 MB/s | 39 / 56 ms |
 
+      2026-11-20: the shot sight checks (hills and walls, since 2026-11-05) had made 128 players cost 16-24 ms a tick,
+      under 30 ticks/s, moves 99% within 236 ms. Terrain.clear now skips each 80-unit stretch of a shot that stays
+      above the highest ground of its 8 x 8 cells (same answers, checked on every map): 128 players 8-11 ms, 30/s,
+      move delay median 40, 99% 66 ms. What is left on top is sending (packets, events, the match tick).
       One Python process should hold about 600 players before ticks run late. Past that: run matches in more
       processes (the split-server plan), or move the game server to a faster language.
 - [x] Real client on the batched server (2026-10-30): login, join, walk, fire, die, respawn all fine, one resend seen

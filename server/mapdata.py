@@ -16,6 +16,8 @@ import sys
 TERRAIN_STEP = 10.0    # map units between two height samples
 TERRAIN_MARGIN = 2.0   # the ground must be this far above a shot's line to stop it
 SIGHT_END = 4.0        # units at each end of a shot that are not checked (the muzzle, the robot's feet)
+TERRAIN_BLOCK = 8      # Terrain.clear skips a stretch of a shot that stays above the highest ground of these cells
+TERRAIN_CHUNK = 16     # samples in one such stretch
 LEAF = 8               # triangles per leaf of a model's box tree
 CELL = 64.0            # map units per cell of the grid that finds the models near a shot
 SAMPLE = 16.0          # a shot looks up the grid every this many units (models are listed CELL/4 wider)
@@ -38,6 +40,14 @@ class Terrain:
             self.h.byteswap()
         self.x0 = -(self.cols - 1) * TERRAIN_STEP / 2
         self.z0 = -(self.rows - 1) * TERRAIN_STEP / 2
+        # the highest sample of each TERRAIN_BLOCK x TERRAIN_BLOCK cells, corners included: no ground in them is higher
+        b, cols = TERRAIN_BLOCK, self.cols
+        self.bcols, self.brows = (cols - 2) // b + 1, (self.rows - 2) // b + 1
+        self.bmax = array.array("f")
+        for j in range(self.brows):
+            rows = [self.h[r * cols:(r + 1) * cols] for r in range(j * b, min(j * b + b, self.rows - 1) + 1)]
+            top = list(map(max, *rows)) if len(rows) > 1 else list(rows[0])
+            self.bmax.extend(max(top[i * b:min(i * b + b, cols - 1) + 1]) for i in range(self.bcols))
 
     def height(self, x, z):
         """Ground height at x,z, or None off the map. Of the two ways a grid cell can be cut into triangles, the
@@ -64,15 +74,31 @@ class Terrain:
                 return True
         n = math.dist(a, b)
         steps = int(n / (TERRAIN_STEP / 2))
-        for k in range(1, steps):
-            s = k / steps
-            if not SIGHT_END < s * n < n - SIGHT_END:
+        for k0 in range(1, steps, TERRAIN_CHUNK):  # a stretch of samples above all the ground under it is clear
+            k1 = min(steps - 1, k0 + TERRAIN_CHUNK - 1)
+            (x0, y0, z0), (x1, y1, z1) = ([p + (q - p) * (k / steps) for p, q in zip(a, b)] for k in (k0, k1))
+            if self.highest(min(x0, x1), max(x0, x1), min(z0, z1), max(z0, z1)) <= min(y0, y1) + TERRAIN_MARGIN:
                 continue
-            x, y, z = (p + (q - p) * s for p, q in zip(a, b))
-            g = self.height(x, z)
-            if g is not None and g > y + TERRAIN_MARGIN:
-                return False
+            for k in range(k0, k1 + 1):
+                s = k / steps
+                if not SIGHT_END < s * n < n - SIGHT_END:
+                    continue
+                x, y, z = (p + (q - p) * s for p, q in zip(a, b))
+                g = self.height(x, z)
+                if g is not None and g > y + TERRAIN_MARGIN:
+                    return False
         return True
+
+    def highest(self, x0, x1, z0, z1):
+        """No ground between x0..x1, z0..z1 is higher than this (-inf off the map)."""
+        c0 = max(0, math.floor((x0 - self.x0) / TERRAIN_STEP))
+        c1 = min(self.cols - 2, math.floor((x1 - self.x0) / TERRAIN_STEP))
+        r0 = max(0, math.floor((z0 - self.z0) / TERRAIN_STEP))
+        r1 = min(self.rows - 2, math.floor((z1 - self.z0) / TERRAIN_STEP))
+        if c0 > c1 or r0 > r1:
+            return -math.inf
+        b, w, m = TERRAIN_BLOCK, self.bcols, self.bmax
+        return max(m[j * w + i] for j in range(r0 // b, r1 // b + 1) for i in range(c0 // b, c1 // b + 1))
 
 
 # ---- reading the client's files (setup_data.py) ----

@@ -7,6 +7,7 @@ Usage: python -I tools/test_match.py"""
 import copy
 import math
 import os
+import random
 import struct
 import sys
 import time
@@ -559,6 +560,29 @@ ok &= check("terrain: over the ridge is clear, through it is not",
             ridge.clear((0.0, 25.0, 0.0), (50.0, 25.0, 0.0)) and not ridge.clear((0.0, 2.5, 0.0), (50.0, 2.5, 0.0)))
 ok &= check("terrain: a shot from under the ground (a tunnel) is not checked",
             ridge.clear((0.0, -10.0, 0.0), (50.0, 2.5, 0.0)))
+
+
+def clear_by_samples(t, a, b):
+    """Terrain.clear without its highest-ground shortcut: every sample looked up."""
+    if any(t.height(x, z) is None or y < t.height(x, z) - ls.mapdata.TERRAIN_MARGIN for x, y, z in (a, b)):
+        return True
+    n = math.dist(a, b)
+    steps = int(n / (ls.mapdata.TERRAIN_STEP / 2))
+    for k in range(1, steps):
+        if ls.mapdata.SIGHT_END < k / steps * n < n - ls.mapdata.SIGHT_END:
+            x, y, z = (p + (q - p) * k / steps for p, q in zip(a, b))
+            g = t.height(x, z)
+            if g is not None and g > y + ls.mapdata.TERRAIN_MARGIN:
+                return False
+    return True
+
+
+rng = random.Random(5)
+shots = [((rng.uniform(-110, 110), rng.uniform(-3, 26), rng.uniform(-110, 110)),
+          (rng.uniform(-110, 110), rng.uniform(-3, 26), rng.uniform(-110, 110))) for _ in range(3000)]
+ok &= check("terrain: skipping stretches above the highest ground gives the same answers",
+            all(ridge.clear(a, b) == clear_by_samples(ridge, a, b) for a, b in shots)
+            and any(not ridge.clear(a, b) for a, b in shots))
 saved_terrain, m.terrain = m.terrain, ridge
 pb.pos = (60.0, 0.0, 0.0)
 hp = pb.player_hp
