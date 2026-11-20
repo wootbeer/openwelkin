@@ -3602,14 +3602,25 @@ def report_load():
         UPLINK.send("load", players=n)
 
 
+def placement_order(bfid):
+    """gate: the game servers to try for a player entering battlefield bfid. First those with an open match there,
+    fullest match first, so players of one battlefield play together instead of in half-empty matches on several
+    servers; then the rest, emptiest first."""
+    room = [g for g in LINKS if getattr(g, "open", {}).get(bfid, 0) > 0]
+    return (sorted(room, key=lambda g: (g.open[bfid], g.load))
+            + sorted((g for g in LINKS if g not in room), key=lambda g: g.load))
+
+
 def place_in_game(account, cid, bfid, gm_level=0):
-    """gate: announce a player to the emptiest game server: (ip, port, ticket), or None if none answers."""
-    for g in sorted(LINKS, key=lambda g: g.load):
+    """gate: announce a player to a game server (placement_order): (ip, port, ticket), or None if none answers."""
+    for g in placement_order(bfid):
         ticket = secrets.randbits(32) or 1
         character = dict(STORE.by_id(cid) or {}, division=DIVISIONS.of(cid))  # the game server has no divisions
         if ask(g, "expect", False, ticket=ticket, account=account, cid=cid, bfid=bfid, character=character,
                gm=gm_level):
             g.load += 1  # until its next report
+            if getattr(g, "open", {}).get(bfid, 0) > 0:
+                g.open[bfid] -= 1
             g.accounts.append(account)
             return g.ip, g.port, ticket
     log(f"no game server for {account!r}")
@@ -3703,6 +3714,30 @@ def drain_reports():
             STORE.sent(report, ok)
             if not ok:
                 return
+
+
+def open_room():
+    """game: {battlefield id: places left in the match a player entering it would join} (find_match's choice)."""
+    with GAME_LOCK:
+        room = {}
+        for m in MATCHES.values():
+            if m.is_open() and m.bfid not in room:
+                room[m.bfid] = MAX_MATCH_PLAYERS - len(m.peers)
+        return {str(bfid): n for bfid, n in room.items()}
+
+
+def parse_open_room(raw):
+    """gate: a game server's open_room() report, checked: {battlefield id: places}, at most one per battlefield."""
+    out = {}
+    if isinstance(raw, dict):
+        for k, v in list(raw.items())[:len(BATTLEFIELDS)]:
+            try:
+                bfid, n = int(k), int(v)
+            except (TypeError, ValueError):
+                continue
+            if bfid in BATTLEFIELDS and 0 < n <= MAX_MATCH_PLAYERS:
+                out[bfid] = n
+    return out
 
 
 def players_here():
@@ -3824,6 +3859,7 @@ def on_game_server_message(link, msg):
     kind = msg["t"]
     if kind == "load":
         link.load, link.accounts = len(msg["accounts"]), msg["accounts"]
+        link.open = parse_open_room(msg.get("open"))
         return
     with STORE.report_lock:
         if not STORE.new_report(str(msg["boot"]), int(msg["seq"])):
@@ -3898,7 +3934,7 @@ def load_loop():
     while True:
         time.sleep(LOAD_EVERY)
         if UPLINK:
-            UPLINK.send("load", accounts=players_here())
+            UPLINK.send("load", accounts=players_here(), open=open_room())
 
 
 def banned_ip(ip):

@@ -201,6 +201,21 @@ def units():
     ls.LOST_GRACE = grace
     ls.LINKS.clear()
 
+    # placing players: an open match on their battlefield first (fullest first), else the emptiest server
+    busy, empty, roomy = FakeLink(1), FakeLink(2), FakeLink(3)
+    busy.load, busy.open = 10, ls.parse_open_room({"2": 1})
+    roomy.load, roomy.open = 3, ls.parse_open_room({"2": 20, "1": 31})
+    empty.load, empty.open = 0, {}
+    ls.LINKS.extend([empty, roomy, busy])
+    check("a player joins the fullest open match of the battlefield", ls.place_in_game("amy", 1, 2)[1] == 1)
+    check("then the next open one", ls.place_in_game("ben", 2, 2)[1] == 3 and busy.open[2] == 0)
+    check("another battlefield with room", ls.place_in_game("cat", 3, 1)[1] == 3)
+    roomy.open = {}
+    check("no open match: the emptiest server", ls.place_in_game("dan", 4, 2)[1] == 2)
+    check("a load report's room is checked", ls.parse_open_room({"2": 5, "999": 3, "1": 0, "x": 1, "3": "a"}) == {2: 5}
+          and ls.parse_open_room(["2"]) == {} and ls.parse_open_room({"2": 10 ** 9}) == {})
+    ls.LINKS.clear()
+
     # the game loop never waits for the gate
     class Stuck:
         def send(self, *a, **k):

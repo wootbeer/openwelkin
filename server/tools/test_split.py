@@ -23,6 +23,7 @@ TOOLS = os.path.dirname(os.path.abspath(__file__))
 SERVER = os.path.dirname(TOOLS)
 OFFSET = 200
 os.environ["MW_PORT_OFFSET"] = str(OFFSET)
+os.environ["MW_MATCH_PLAYERS"] = "2"  # two players fill a match, so a third goes to the other game server
 sys.path[:0] = [SERVER, TOOLS]
 root = tempfile.mkdtemp(prefix="mw-split-")
 os.environ["MW_STATE_DIR"] = os.path.join(root, "tool")
@@ -186,15 +187,18 @@ async def scenario():
     check("the gate takes no logins", not took)
     check("the gate made no account", not seen("mallory"))
 
-    # --- two players are spread over the two game servers ---
-    p1, p2 = Player(), Player()
+    # --- players of a battlefield fill its open match; a full one sends the next to the other game server ---
+    p1, p2, p3 = Player(), Player(), Player()
     await p1.join("bob", res)
-    await asyncio.sleep(2.5)  # game servers report their load every 2 s
+    await asyncio.sleep(2.5)  # game servers report their load (and open matches) every 2 s
     await p2.join("carol", res)
+    await asyncio.sleep(2.5)
+    check("a player joins the open match on its game server", p1.port == p2.port, f"{p1.port} {p2.port}")
+    await p3.join("dave", res)
     await asyncio.sleep(0.5)
-    check("players go to different game servers", p1.port != p2.port, f"{p1.port} {p2.port}")
+    check("a full match sends the next player to the other game server", p3.port != p1.port, f"{p1.port} {p3.port}")
     who = await asyncio.to_thread(admin, "who")
-    check("who sees both, on their game servers", "bob" in who and "carol" in who and "game port" in who, who)
+    check("who sees them, on their game servers", "bob" in who and "carol" in who and "game port" in who, who)
     matches = await asyncio.to_thread(admin, "matches")
     check("matches lists both servers", matches.count("game port") == 2, matches)
     aim = await asyncio.to_thread(admin, "aim")
@@ -226,16 +230,11 @@ async def scenario():
         except asyncio.TimeoutError:
             return None
 
-    await asyncio.sleep(2.5)
-    p3 = Player()
-    await p3.join("dave", res)
-    await asyncio.sleep(0.5)
     for p in (p1, p2, p3):
         await p.gate.request(13, 13004, struct.pack("<I", p.cid))
-    same, other = (p1, p2) if p3.port == p1.port else (p2, p1)
-    p3.gate.send(ls.Message(21, 21052, body=ls.wstr("hello match")))
-    check("battle chat reaches a player on the same game server", await chat(same.gate, 3) is not None)
-    check("but not the same match id on another game server", await chat(other.gate, 0.5) is None)
+    p1.gate.send(ls.Message(21, 21052, body=ls.wstr("hello match")))
+    check("battle chat reaches a player on the same game server", await chat(p2.gate, 3) is not None)
+    check("but not the same match id on another game server", await chat(p3.gate, 0.5) is None)
     await asyncio.sleep(ls.CHAT_EVERY + 0.1)
     p3.gate.send(ls.Message(21, 21052, body=ls.wstr("!order go")))  # neither side: the game server says no
     told = await chat_reply(p3.gate)

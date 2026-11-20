@@ -136,7 +136,7 @@ python server/start_split.py --games 3
 | Server | Keeps | Does |
 |--------|-------|------|
 | login | `accounts.db`, admin commands | Checks passwords, sends players to the gate |
-| gate | `characters.db` | Hall, shop, characters. Sends players to the emptiest game server |
+| gate | `characters.db` | Hall, shop, characters. Sends players to a game server with an open match on their battlefield, else the emptiest |
 | game | nothing | Battles. Reports kills and stats to the gate |
 
 Each game server is one process, so more of them use more CPU cores. Each server gets a folder under `split/`.

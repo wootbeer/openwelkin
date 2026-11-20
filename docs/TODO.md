@@ -581,7 +581,10 @@ reply layout, and answer with real data.
 - [x] Login signs the session key with Ed25519, a gate holds only the public key, each key works once. The battle
       ticket is a u32 and cannot be signed: the gate announces it to the game server, with the character
 - [x] Private links (cluster.py): both ends prove they hold internal.key, every message is signed and numbered
-- [x] Players go to the emptiest game server; stats and log lines go to the gate, and wait if it is away
+- [x] Players go to the emptiest game server; stats and log lines go to the gate, and wait if it is away.
+      2026-11-20: first to a game server with an open match on their battlefield (fullest first; game servers report
+      the room in their load reports, every 2 s), so one battlefield's players are not spread over half-empty
+      matches on several servers
 - [x] who, matches, kick, ban and IP ban work across servers
 - [x] Real client with 2 game servers (2026-10-31): the signed session key works, the character and stats load, a
       battle runs on the second game server
