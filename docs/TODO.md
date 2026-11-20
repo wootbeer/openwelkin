@@ -260,6 +260,26 @@ reply layout, and answer with real data.
       u32 kind | u32 weapon. The emulator had read the kind as the weapon (every list came back empty); fixed. Two
       Thunder kills showed as "tester 2" under Thunder
 - [ ] Vehicle tab: no vehicles yet
+
+## Vehicles (not started; research 2026-11-20, offline)
+- [ ] The client has a whole vehicle system. data/flyweights/Vehicle: 32 entries, classes FWheelVehicle (Cavy 4001,
+      Jaguar_HeavyVehicle 402420, SpawnTruck 4024), FPedrailVehicle (tracked: Destroyer 4023, Mammoth 4017,
+      SandStorm 4009, Thunderclap 4014, Wolf 4011), FSuspendVehicle (hover: EnergyCarrier 4004, Lancer 4012,
+      SaberToothedTiger 4002, TigerShark 4018), FAircraftVehicle (Clarion 4019, CloudOwl 4007, Cyclone 4003,
+      DeathWing 4010, Falcon 4008, Season 4015, Jaguar_FlyVehicle 402421), FNonControlledEstab (fixed guns 401412,
+      401413), plus FMapHint / FAdvanceEstab helpers. Vehicles are establishments (ControlledEstab) with seats
+      (Seat::RequestBoard / Board / UnBoard, driver and passenger controllers per kind).
+- [ ] Messages (tools/eventmap.py): (19,50320) BoardRobot, (19,50321) UnBoardRobot, (19,50323) ChangeSeat,
+      (19,50380) SyncSeatRotation, (19,50350) wheel / (19,50351) tracked / (19,50352) hover moves, (9,40358)
+      CtlEsab heart move (P2P), (19,50390) VehicleProduce, (19,50311) stock (the Robot Roof's; VehicleStockUpdated
+      listens too), (19,50800..50805) the waiting-vehicle depot (list, one vehicle, show, lock, password),
+      (19,50452) transport auto move, (9,40111/40112) and (19,50111/50112) Robot_Board_Object, (9,40158) seat
+      weapon change, (9,40201) password typed. Ordering is the Vehicle Roof (CVehicleRoofUI) at a vehicle depot
+      (Func_VehicleReceive), like the Robot Roof. Not yet read: the request ids (Establishment::RequestBoard sends
+      after a distance check, Game.dll 0x1028f8f0), the snapshot layouts (WriteSnapshot of each kind), and how
+      aircraft move
+- [ ] Order of work when started: show a parked vehicle (50001 with its flyweight), board / unboard it, drive
+      it (its move message), then the depot and the Vehicle Roof; each step needs the real client
 - [x] Request read in game 2026-11-03: u8 period (1 Total, 2 Monthly, 3 Weekly, 4 Daily) | u32 first row | u32 rows
       (20); Shooting (15100) has one more u8 in front. My place: u32 character id | u8 period. The u32 after the camp
       byte is a team id: anything but 0 makes the client ask UpdateTeamInfo (15,15023) once per row, so 0 is sent
