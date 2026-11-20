@@ -612,6 +612,21 @@ ok &= check("walls: a robot right at the wall still hits (the ends are not check
             wall.clear((0.0, 2.5, 0.0), (21.0, 2.5, 0.0)))
 ok &= check("walls: the placement moves and turns the model",
             not wall.clear((500.0, 0.0, -10.0), (500.0, 0.0, 10.0)) and wall.clear((0.0, 2.5, -10.0), (0.0, 2.5, 10.0)))
+
+
+def cells_by_samples(w, a, b):
+    """The grid cells a shot touches, looked up every 4 units along it."""
+    steps = max(1, int(math.dist(a, b) / 4) + 1)
+    return {(math.floor((a[0] + (b[0] - a[0]) * k / steps) / md.CELL), math.floor((a[2] + (b[2] - a[2]) * k / steps) / md.CELL))
+            for k in range(steps + 1)}
+
+
+wall.grid = {cell: [cell] for cell in ((i, j) for i in range(-6, 7) for j in range(-6, 7))}  # each cell lists itself
+shots = [((rng.uniform(-300, 300), 0.0, rng.uniform(-300, 300)), (rng.uniform(-300, 300), 0.0, rng.uniform(-300, 300)))
+         for _ in range(2000)] + [((0.0, 0.0, 0.0), (128.0, 0.0, 128.0)), ((64.0, 0.0, -50.0), (64.0, 0.0, 50.0))]
+ok &= check("walls: a shot looks in every grid cell it crosses",
+            all(cells_by_samples(wall, a, b) <= wall.near(a, b) for a, b in shots))
+wall = md.Walls(walls_file)
 saved_walls, m.walls = m.walls, wall
 pb.pos = (40.0, 0.0, 0.0)
 hp = pb.player_hp

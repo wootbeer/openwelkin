@@ -20,7 +20,6 @@ TERRAIN_BLOCK = 8      # Terrain.clear skips a stretch of a shot that stays abov
 TERRAIN_CHUNK = 16     # samples in one such stretch
 LEAF = 8               # triangles per leaf of a model's box tree
 CELL = 64.0            # map units per cell of the grid that finds the models near a shot
-SAMPLE = 16.0          # a shot looks up the grid every this many units (models are listed CELL/4 wider)
 
 
 class Terrain:
@@ -91,14 +90,16 @@ class Terrain:
 
     def highest(self, x0, x1, z0, z1):
         """No ground between x0..x1, z0..z1 is higher than this (-inf off the map)."""
-        c0 = max(0, math.floor((x0 - self.x0) / TERRAIN_STEP))
-        c1 = min(self.cols - 2, math.floor((x1 - self.x0) / TERRAIN_STEP))
-        r0 = max(0, math.floor((z0 - self.z0) / TERRAIN_STEP))
-        r1 = min(self.rows - 2, math.floor((z1 - self.z0) / TERRAIN_STEP))
-        if c0 > c1 or r0 > r1:
+        fx0, fx1 = (x0 - self.x0) / TERRAIN_STEP, (x1 - self.x0) / TERRAIN_STEP
+        fz0, fz1 = (z0 - self.z0) / TERRAIN_STEP, (z1 - self.z0) / TERRAIN_STEP
+        if fx1 < 0 or fz1 < 0 or fx0 >= self.cols - 1 or fz0 >= self.rows - 1:
             return -math.inf
-        b, w, m = TERRAIN_BLOCK, self.bcols, self.bmax
-        return max(m[j * w + i] for j in range(r0 // b, r1 // b + 1) for i in range(c0 // b, c1 // b + 1))
+        b, w, m = TERRAIN_BLOCK, self.bcols, self.bmax  # int() is floor here: negative starts are clamped to 0
+        i0, i1 = int(max(fx0, 0.0)) // b, int(min(fx1, self.cols - 2)) // b
+        j0, j1 = int(max(fz0, 0.0)) // b, int(min(fz1, self.rows - 2)) // b
+        if i0 == i1 and j0 == j1:
+            return m[j0 * w + i0]
+        return max(m[j * w + i] for j in range(j0, j1 + 1) for i in range(i0, i1 + 1))
 
 
 # ---- reading the client's files (setup_data.py) ----
@@ -364,15 +365,24 @@ class Walls:
                     self.grid.setdefault((gx, gz), []).append(k)
 
     def near(self, a, b):
-        """Placements whose box might touch the segment a-b."""
-        n = math.dist(a, b)
-        steps = max(1, int(n / SAMPLE) + 1)
-        seen = set()
-        for k in range(steps + 1):
-            s = k / steps
-            cell = (int(math.floor((a[0] + (b[0] - a[0]) * s) / CELL)),
-                    int(math.floor((a[2] + (b[2] - a[2]) * s) / CELL)))
-            seen.update(self.grid.get(cell, ()))
+        """Placements whose box might touch the segment a-b: those listed in every grid cell the segment crosses
+        (walked cell by cell; the lists are CELL/4 wider than the boxes, so a corner is never missed)."""
+        x0, z0, x1, z1 = a[0] / CELL, a[2] / CELL, b[0] / CELL, b[2] / CELL
+        cx, cz, ex, ez = math.floor(x0), math.floor(z0), math.floor(x1), math.floor(z1)
+        dx, dz = x1 - x0, z1 - z0
+        sx, sz = (1 if dx > 0 else -1), (1 if dz > 0 else -1)
+        tdx, tdz = (abs(1 / dx) if dx else math.inf), (abs(1 / dz) if dz else math.inf)
+        tx = ((cx + 1 - x0) if dx > 0 else (x0 - cx)) * tdx if dx else math.inf
+        tz = ((cz + 1 - z0) if dz > 0 else (z0 - cz)) * tdz if dz else math.inf
+        grid, seen = self.grid, set()
+        for _ in range(abs(ex - cx) + abs(ez - cz) + 1):
+            found = grid.get((cx, cz))
+            if found:
+                seen.update(found)
+            if tx < tz:
+                cx, tx = cx + sx, tx + tdx
+            else:
+                cz, tz = cz + sz, tz + tdz
         return seen
 
     def clear(self, a, b):

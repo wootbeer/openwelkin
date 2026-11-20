@@ -4294,27 +4294,39 @@ class Match:
         if now >= self.next_ai and not self.over:
             self.next_ai = now + AI_TICK
             ai_step(self, now)
+        tick_no, queue = self.tick_no, self.server.queue
         for v in self.peers:
-            for rid, (body, pos, reach) in list(v.moves.items()):
-                last = v.sent.get(rid)  # (body, tick) this viewer last got for the robot
+            moves = v.moves
+            if not moves:
+                continue
+            vx, vy, vz = v.pos
+            sent, near_v = v.sent, max(NEAR_DISTANCE, v.fire_range)
+            out = []
+            for rid, (body, pos, reach) in list(moves.items()):
+                last = sent.get(rid)  # (body, tick) this viewer last got for the robot
                 if last:
                     if last[0] == body:
                         every = STILL_EVERY
                     else:
-                        d2 = (pos[0] - v.pos[0]) ** 2 + (pos[1] - v.pos[1]) ** 2 + (pos[2] - v.pos[2]) ** 2
-                        near = max(NEAR_DISTANCE, v.fire_range, reach)
-                        every = 1 if d2 <= near ** 2 else MID_EVERY if d2 <= (near + MID_BAND) ** 2 else FAR_EVERY
-                    if self.tick_no - last[1] < every:
+                        d2 = (pos[0] - vx) ** 2 + (pos[1] - vy) ** 2 + (pos[2] - vz) ** 2
+                        near = near_v if near_v >= reach else reach
+                        every = 1 if d2 <= near * near else MID_EVERY if d2 <= (near + MID_BAND) ** 2 else FAR_EVERY
+                    if tick_no - last[1] < every:
                         if every == STILL_EVERY:
-                            del v.moves[rid]
+                            del moves[rid]
                         continue
-                del v.moves[rid]
-                v.sent[rid] = (body, self.tick_no)
+                del moves[rid]
+                sent[rid] = (body, tick_no)
                 if last and last[0] == body and body[4:8] == b"\0\0\0\0":  # standing a second: see SNAP_RISE
                     x, y, z = struct.unpack_from("<3f", body, 8)
-                    send_game_event(self.server, v, 19, 50100, body[:8] + struct.pack("<3f", x, y + SNAP_RISE, z)
-                                    + body[20:], reliable=False)
-                send_game_event(self.server, v, 19, 50100, body, reliable=False)
+                    out.append(body[:8] + struct.pack("<3f", x, y + SNAP_RISE, z) + body[20:])
+                out.append(body)
+            # as send_game_event(..., 19, 50100, body, reliable=False) for each, without taking the lock again
+            key = getattr(v, "event_key", 0)
+            for body in out:
+                key += 1
+                queue(v, EVENT_HEAD.pack(MSG_HAS_TYPE, 19, 50100, 0.0, key) + body, False)
+            v.event_key = key
 
 
 def show_message(m, text):
