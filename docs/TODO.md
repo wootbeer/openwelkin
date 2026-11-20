@@ -664,7 +664,9 @@ reply layout, and answer with real data.
       Then at 256 players (was 23-33 ms, 23-28 ticks/s, moves 99% within 716 ms): Walls.near walks only the grid
       cells a shot crosses (was a lookup every 16 units; same answers on every map), and the per-tick move loop
       queues moves directly (no second lock per move). 256 players: 14 ms a tick, 30/s, CPU about 60%, move delay
-      median 39, 99% 64 ms. What is left on top is sending (packets, events, the match tick).
+      median 39, 99% 64 ms. 400 players: 27-32 ms a tick, 25-28/s, one core full, move delay median 320 ms: the
+      limit of one game server process. What is left on top is sending (a system call per packet, the flush, the
+      move loop); past about 300 players a gate should spread matches over more game servers (Split servers)
       One Python process should hold about 600 players before ticks run late. Past that: run matches in more
       processes (the split-server plan), or move the game server to a faster language.
 - [x] Real client on the batched server (2026-10-30): login, join, walk, fire, die, respawn all fine, one resend seen
