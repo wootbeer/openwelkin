@@ -396,6 +396,13 @@ async def scenario():
     check("announcements come from the file", n == 2 and first == "first line" and len(second) == ls.CHAT_MAX)
     r = await amy.request(20, 20116, struct.pack("<I", 0))
     check("held tasks: an explicit empty list", r.result == 0 and r.body == bytes(4), repr(r.body[:8]))
+    r = await amy.request(14, 14054)
+    n = struct.unpack_from("<I", r.body)[0]
+    rows = [struct.unpack_from("<BI", r.body, 4 + 5 * i) for i in range(n)]
+    check("Comm. grade table: grade n needs row n-1", len(r.body) == 4 + 5 * n
+          and rows == [(i + 1, need) for i, need in enumerate(ls.COMMAND_GRADES)])
+    r = await amy.request(14, 14010, struct.pack("<I", amy_id))
+    check("Comm. Lvl starts at 1 with no credits", r.body[20:] == struct.pack("<BI", 1, 0), r.body.hex())
 
     # --- the client's own GM / commands ---
     async def online(name, cid):

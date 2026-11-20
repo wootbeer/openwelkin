@@ -310,7 +310,9 @@ zones are its Respawn Platforms, numbered from 1 ("Outpost 3", "Alliance Base 9"
 leader as "squadron commander"). Squads are numbered 1 to 20 and hold up to 8 players; the server answers in a whisper
 from Server. Tried with the real client: making, joining and leaving squads and the leader lines work. Squads are also
 the client's battle groups: in a squad, the battle chat box's Team tab talks to the squad (the lines show as
-"[Division]", the client's own mix-up), and the Division tab talks to your division (shown as "[Team]"). Not tried with the real client yet: what the client shows for squad members.
+"[Division]", the client's own mix-up), and the Division tab talks to your division (shown as "[Team]"). A squad
+leader earns a Comm. Credit for each enemy a member of the squad destroys; the Info window shows them as Comm. Lvl 1
+to 10 (the emulator's own rule). Not tried with the real client yet: what the client shows for squad members.
 
 Each character has a friend list and a block list of up to 100 names, kept in `characters.db`. Lines from a blocked player
 do not reach you, and to them you look offline in private messages.

@@ -477,6 +477,15 @@ GOODS_OF = {pid: gid for gid, (pid, *_) in enumerate(SHOP, 1)}  # product id -> 
 assert all(i in GOODS_OF for p in PACKAGES for i in p[2]), "every package item must be sold in SHOP"
 RANKED_WEAPONS = [pid for pid, *_ in SHOP if pid in WEAPONS and PRODUCTS.get(pid, {}).get("type") == 8]  # Ranking, Weapon
 RANK_THRESHOLDS = [int(50 * n ** 1.8) for n in range(71)]
+# Comm. Credits (the Info window's "Comm. Lvl" bar) are the emulator's own rule: a squad leader earns one for each
+# enemy a member of the squad destroys. Grade n needs COMMAND_GRADES[n - 1] credits; grade 1 needs none.
+COMMAND_GRADES = [0, 10, 30, 60, 100, 150, 250, 400, 600, 1000]
+
+
+def command_grade(credits):
+    """The Comm. Lvl for these credits: 1 to len(COMMAND_GRADES). Never 0: the Info window reads the table row
+    before the player's grade, so grade 0 with a table would read before its start."""
+    return max(1, sum(1 for need in COMMAND_GRADES if credits >= need))
 
 
 # Robot tab talents: id -> (robot flyweight, column 0 Battle / 1 Engineer / 2 Scout, row, rank needed, max level)
@@ -2002,8 +2011,20 @@ class Session:
         # CG_Character_Get_Exploit (14,14010), request: u32 character id. Reply: u32 exploit (shown as "exploit /
         # next rank" in the hall) | 4 x u32 (summed by the client) | u8 (+0xbc) | u32 (+0xc0)
         cid = struct.unpack_from("<I", msg.body)[0] if len(msg.body) >= 4 else 0
-        exploit = STORE.stats(cid).get("honor", 0)
-        self.reply(msg, struct.pack("<IIIIIBI", exploit, exploit, 0, 0, 0, 0, 0))
+        st = STORE.stats(cid)
+        exploit, credits = st.get("honor", 0), int(st.get("command", 0))
+        self.reply(msg, struct.pack("<IIIIIBI", exploit, exploit, 0, 0, 0, command_grade(credits), credits))
+
+    def on_command_grades(self, msg):
+        # CGS_CGSManager_CommandGradeTable (14,14054), asked once at hall login. Reply: u32 n | n x (u8 grade |
+        # u32 Comm. Credits needed), kept at the client's manager +0x274 as 8-byte rows. The Info window
+        # (CInfomationUI::UpdateBaseInfo) takes the Comm. Lvl L (character +0xbc) and Comm. Credit C (+0xc0) from
+        # (14,14010): when L is below the table's length it fills the bar with (C - row[L-1]) / (row[L] - row[L-1])
+        # and writes "To lvl up needed %d Comm. Credits." with row[L] - C. So row i is what grade i + 1 needs.
+        body = struct.pack("<I", len(COMMAND_GRADES))
+        for n, need in enumerate(COMMAND_GRADES, 1):
+            body += struct.pack("<BI", n, need)
+        self.reply(msg, body)
 
     def on_rank_table(self, msg):
         # CGS_GetAllMilitaryRank (14,14040). Reply read by CGS_GetAllMilitaryRankObserver (Game.dll 0x10357ad0):
@@ -3383,6 +3404,7 @@ HANDLERS = {
     (14, 14057): Session.on_today_military,      # CGS_GetCharacterTodayMilitary (Battle Report panel)
     (14, 14010): Session.on_exploit,             # CG_Character_Get_Exploit (rank / experience)
     (14, 14040): Session.on_rank_table,          # CGS_GetAllMilitaryRank
+    (14, 14054): Session.on_command_grades,      # CGS_CGSManager_CommandGradeTable (Comm. Lvl)
     (24, 24019): Session.on_money,               # GS_UpdateCharacterMoney
     (24, 24008): Session.on_goods_flyweights,    # GS_RequestAllGoodsFlyweight
     (14, 14042): Session.on_talents,             # CGS_UpdateTalentInfo (Robot tab)
@@ -5108,6 +5130,10 @@ def award_kill(server, peer, victim_text="a target robot"):
     extra[f"weapon{loadout_weapon(peer.cid)}"] = 1  # the Ranking window's Weapon tab
     record_stats(peer, kills=1, honor=KILL_HONOR, crystal=KILL_PAY, money=KILL_PAY, **extra)
     STORE.add_log(peer.cid, f"Destroyed {victim_text} (+{KILL_HONOR} honor, +{KILL_PAY} crystal)")
+    m = getattr(peer, "match", None)
+    members = m.squads.get(getattr(peer, "squad", None) or ()) if m else None
+    if members and members[0] is not peer:  # the squad leader commanded it: a Comm. Credit (COMMAND_GRADES)
+        STORE.add_stats(members[0].cid, command=1)
 
 
 def placed(peer):

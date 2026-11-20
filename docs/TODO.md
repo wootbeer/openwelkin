@@ -76,12 +76,14 @@ reply layout, and answer with real data.
 - [x] (14,14040) CGS_GetAllMilitaryRank
 - [x] (14,14050) CGS_GetCharacterAllBattleFrontContribution and (14,14051): contribution = honor from kills on that
       front. Real client 2026-11-02: the Total Contribution column and Battle Joined show it; after one kill on Northern Front both show 10
-- [ ] (14,14054) CGS_CGSManager_CommandGradeTable, 2026-11-18, offline: asked once at hall login. Reply
+- [x] (14,14054) CGS_CGSManager_CommandGradeTable, 2026-11-18, offline: asked once at hall login. Reply
       u32 n | n x (u8 grade | u32 Comm. Credits needed), kept at the client's manager +0x274. The Info window
       (CInfomationUI::UpdateBaseInfo) shows "Comm. Lvl" (character +0xbc) and "Comm. Credit" (+0xc0), both from
       (14,14010)'s last two fields, with a bar and "To lvl up needed %d Comm. Credits." when the level is below the
-      table's length. Nothing earns Comm. Credits in the emulator yet (commanding is not known), so we send level 0
-      and an empty table: the bar is not drawn
+      table's length. 2026-11-20, offline: the bar is (C - row[L-1]) / (row[L] - row[L-1]), needed = row[L] - C, so
+      L must be 1 or more once there is a table. The emulator's own rule: a squad leader earns one Comm. Credit for
+      each enemy a member of the squad destroys (stat "command"); grades 1..10 at 0, 10, 30, 60, 100, 150, 250, 400,
+      600, 1000 credits. Not tried in game: the Info window's bar
 - [x] (14,14057) CGS_GetCharacterTodayMilitary
 - [ ] (14,14059) GetCharacterHelpLog: help events seen, "10100|10101|". Nothing in Game.dll sends the save
       (14,14060), so it stays empty. An empty log at rank level 1 opens the tutorial video; if that shows at

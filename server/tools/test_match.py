@@ -856,6 +856,28 @@ for addr in list(server.peers):
 ls.KILL_MODE = False
 step()
 
+# Comm. Credits: a squad leader earns one for each enemy a member of the squad destroys
+sent.clear()
+pa, pb, pc = join_front(A, a_cid), join_front(B, b_cid), join_front(C, c_cid)
+step()
+ls.squad_join(pc, 1, create=True)
+ls.squad_join(pb, 1, create=False)
+before_c, before_b = ls.STORE.stats(c_cid).get("command", 0), ls.STORE.stats(b_cid).get("command", 0)
+kill(pb, pa)
+step(ls.RESPAWN_DELAY + 1)
+ok &= check("a squad member's kill gives the leader a Comm. Credit",
+            ls.STORE.stats(c_cid).get("command", 0) == before_c + 1 and ls.STORE.stats(b_cid).get("command", 0) == before_b)
+pc.next_shot = 0.0
+kill(pc, pa)
+step()
+ok &= check("the leader's own kill does not", ls.STORE.stats(c_cid).get("command", 0) == before_c + 1)
+ok &= check("Comm. Lvl: grade 1 from no credits, then by the table", ls.command_grade(0) == 1
+            and ls.command_grade(ls.COMMAND_GRADES[1] - 1) == 1 and ls.command_grade(ls.COMMAND_GRADES[1]) == 2
+            and ls.command_grade(10 ** 9) == len(ls.COMMAND_GRADES))
+for addr in list(server.peers):
+    server.close(server.peers[addr], "test over")
+step()
+
 # own character: no base info (it would empty the loadout presets); a Respawn Platform (MW_PLATFORM) can be used
 ls.PLATFORM = True
 before = len(sent)
