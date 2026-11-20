@@ -4357,6 +4357,12 @@ def side_score_body(nation, score):
     return struct.pack("<Bi", nation, score)
 
 
+def team_kill(killer, victim):
+    """Both players are on the same side (characters with no side never are)."""
+    side = nation_of(killer.cid)
+    return side in NATIONS and side == nation_of(victim.cid)
+
+
 def count_side_kill(m, killer, victim):
     """Kill mode: a kill on the other nation scores for the killer's side. True if that side reached ROUND_KILLS."""
     side, other = nation_of(killer.cid), nation_of(victim.cid)
@@ -4889,7 +4895,7 @@ def kill_report(m, victim_name, killer_name, weapon, victim_nation=0, killer_nat
 
 def credit_kill(server, killer, victim_text, player=False):
     """K/D count (GS_UpdateKillInfo 19,30204: u32 kind | i32 | u32 total kills -> character +0xf8) and score.
-    player: the victim was a player of the other side (not a target robot, not a team mate)."""
+    player: the victim was a player (team kills never get here), not a target robot."""
     killer.kills += 1
     send_game_event(server, killer, 19, 30204, struct.pack("<IiI", 0, 0, killer.kills))
     award_kill(server, killer, victim_text, player)
@@ -4931,8 +4937,10 @@ def hit_player(server, m, victim, damage, killer_name, killer=None, suicide=Fals
     else:
         kill_report(m, victim.name, killer_name, loadout_weapon(killer.cid) if killer else DEFAULT_WEAPON,
                     nation_of(victim.cid), nation_of(killer.cid) if killer else DUMMY_NATION)
-    if killer:
-        credit_kill(server, killer, victim.name, player=nation_of(killer.cid) != nation_of(victim.cid))
+    if killer and team_kill(killer, victim):  # no score for it: no kill, honor, crystal or Comm. Credit
+        STORE.add_log(killer.cid, f"Destroyed team mate {victim.name} (no reward)")
+    elif killer:
+        credit_kill(server, killer, victim.name, player=True)
         killer.player_kills += 1
         side_won = count_side_kill(m, killer, victim)
         if side_won or (m.bf.get("rounds") and ROUND_KILLS and not m.kill_mode and killer.player_kills >= ROUND_KILLS):
