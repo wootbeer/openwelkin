@@ -623,11 +623,13 @@ class Store:
             self.names = {name.lower(): cid for cid, (_, name) in known.items()}
             self.skeletons = {name_skeleton(name) for _, name in known.values()}
             self.data["next_id"] = db.next_id(self.con)
+            self.log_id = db.next_log_id(self.con)  # the gate is the only writer, so it numbers the log lines
             self.saved = db.load_reports(self.con)
             self.done = dict(self.saved)
         self.tops = {}  # (stat, period) -> (time made, sorted rows)
 
     dirty = False
+    log_id = 1  # the number the next event log line gets
     SAVE_INTERVAL = 5.0  # seconds; battle stats and log lines are written in batches
     REPORTS_KEEP = 30 * 86400  # seconds a game server run's last report number is remembered
     report_lock = threading.Lock()  # gate: a report and its number are applied together, and saved together
@@ -685,7 +687,8 @@ class Store:
         """Save later (call with the lock held): for frequent, low-value changes like kills and log lines. With
         stats, only those stats changed, and only they are written (unless something else is waiting too)."""
         if line:
-            self.lines.append((cid, *line))
+            self.lines.append((cid, *line, self.log_id))
+            self.log_id += 1
         elif stats is None or (cid in self.changed and self.changed[cid] is None):
             self.changed[cid] = None
         else:

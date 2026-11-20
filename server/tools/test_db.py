@@ -230,7 +230,7 @@ def rollback():
     """A failed save loses nothing: the change is kept and written by the next one."""
     cid = ls.STORE.create("carl", "Charlie", gender=0, model=0, state=1, raw="")
     ls.STORE.add_stats(cid, kills=7)
-    ls.STORE.lines.append((999999, 0, 0, "no such character"))
+    ls.STORE.lines.append((999999, 0, 0, "no such character", 1 << 40))
     ls.STORE.flush()
     check("a log line of an unknown character is dropped, the rest saved", not ls.STORE.lines and not ls.STORE.dirty)
     reopen()
@@ -256,6 +256,26 @@ def rollback():
     reopen()
     check("both are saved", ls.STORE.stats(cid).get("kills") == 8 and ls.STORE.stats(bad).get("kills") == 3
           and ls.STORE.event_log(cid)[-1][2] == "still saved", str(ls.STORE.event_log(cid)[-1:]))
+    # the link drops during a COMMIT the database applied anyway: the same lines are written again
+    def rows():
+        return ls.STORE.con.execute("SELECT COUNT(*) FROM event_log WHERE character_id = ?", (cid,)).fetchone()[0]
+    before = rows()
+    ls.STORE.add_log(cid, "once")
+    ls.STORE.add_log(cid, "twice?")
+    again = list(ls.STORE.lines)
+    ls.STORE.flush()
+    with ls.STORE.lock:
+        ls.STORE.lines += again
+        ls.STORE.dirty = True
+    ls.STORE.flush()
+    check("a batch written again adds no lines", rows() == before + 2, f"{before} -> {rows()}")
+    reopen()
+    ls.STORE.add_log(cid, "after a restart")
+    ls.STORE.flush()
+    reopen()
+    check("line numbers go on after a restart", rows() == before + 3
+          and [x[2] for x in ls.STORE.event_log(cid)[-3:]] == ["once", "twice?", "after a restart"],
+          str(ls.STORE.event_log(cid)[-3:]))
 
 
 def loading():

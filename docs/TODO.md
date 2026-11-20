@@ -600,7 +600,8 @@ reply layout, and answer with real data.
       MEDIUMTEXT, utf8mb4_nopad_bin ('bob ' is not 'bob'), a transaction right after a dropped connection starts on a
       new one. Both databases: one character that cannot be saved (a NaN stat did it on SQLite too) no longer stops
       everyone's saves (each is then tried alone and the bad one waits, logged once), and the save thread never dies.
-      Known: if the link drops during COMMIT after MariaDB applied it, that batch's event log lines are written twice
+      Fixed later that day: the gate numbers event log lines itself, so when the link drops during a COMMIT that
+      MariaDB applied anyway, writing the batch again adds nothing (it used to write those lines twice)
 
 ## Storage (2026-10-30, tested offline)
 - [x] db.py: SQLite. accounts.db (accounts, bans) only on login, characters.db only on the gate, none on game servers

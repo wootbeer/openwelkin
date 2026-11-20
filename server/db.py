@@ -356,8 +356,11 @@ def write_stats(con, cid, stats):
 
 
 def add_log_lines(con, lines, keep):
-    """lines = (character id, time, kind, text). Keeps the newest `keep` of each (call inside a transaction)."""
-    con.executemany("INSERT INTO event_log (character_id, at, kind, text) VALUES (?, ?, ?, ?)", lines)
+    """lines = (character id, time, kind, text, line id). Keeps the newest `keep` of each (call inside a transaction).
+    The caller numbers the lines (next_log_id), so writing a batch again adds nothing: when the link drops during a
+    COMMIT that the database applied anyway, the retry does not write the lines twice."""
+    con.executemany("INSERT INTO event_log (character_id, at, kind, text, id) VALUES (?, ?, ?, ?, ?) "
+                    "ON CONFLICT (id) DO UPDATE SET id = excluded.id", lines)
     for cid in {line[0] for line in lines}:  # the oldest line kept, then everything before it goes
         row = con.execute("SELECT id FROM event_log WHERE character_id = ? ORDER BY id DESC LIMIT 1 OFFSET ?",
                           (cid, max(keep - 1, 0))).fetchone()
@@ -430,6 +433,10 @@ def load_characters(con):
 
 def next_id(con):
     return max(1000, con.execute("SELECT coalesce(max(id), 0) + 1 FROM characters").fetchone()[0])
+
+
+def next_log_id(con):
+    return con.execute("SELECT coalesce(max(id), 0) + 1 FROM event_log").fetchone()[0]
 
 
 def load_index(con):
