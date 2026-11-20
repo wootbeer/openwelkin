@@ -4887,11 +4887,12 @@ def kill_report(m, victim_name, killer_name, weapon, victim_nation=0, killer_nat
                 + struct.pack("<II", killer_nation, weapon))
 
 
-def credit_kill(server, killer, victim_text):
-    """K/D count (GS_UpdateKillInfo 19,30204: u32 kind | i32 | u32 total kills -> character +0xf8) and score."""
+def credit_kill(server, killer, victim_text, player=False):
+    """K/D count (GS_UpdateKillInfo 19,30204: u32 kind | i32 | u32 total kills -> character +0xf8) and score.
+    player: the victim was a player of the other side (not a target robot, not a team mate)."""
     killer.kills += 1
     send_game_event(server, killer, 19, 30204, struct.pack("<IiI", 0, 0, killer.kills))
-    award_kill(server, killer, victim_text)
+    award_kill(server, killer, victim_text, player)
 
 
 def hit_dummy(server, m, shooter, rid):
@@ -4931,7 +4932,7 @@ def hit_player(server, m, victim, damage, killer_name, killer=None, suicide=Fals
         kill_report(m, victim.name, killer_name, loadout_weapon(killer.cid) if killer else DEFAULT_WEAPON,
                     nation_of(victim.cid), nation_of(killer.cid) if killer else DUMMY_NATION)
     if killer:
-        credit_kill(server, killer, victim.name)
+        credit_kill(server, killer, victim.name, player=nation_of(killer.cid) != nation_of(victim.cid))
         killer.player_kills += 1
         side_won = count_side_kill(m, killer, victim)
         if side_won or (m.bf.get("rounds") and ROUND_KILLS and not m.kill_mode and killer.player_kills >= ROUND_KILLS):
@@ -5157,7 +5158,7 @@ def record_stats(peer, **deltas):
     STORE.add_stats(peer.cid, battle_time=played, **deltas)
 
 
-def award_kill(server, peer, victim_text="a target robot"):
+def award_kill(server, peer, victim_text="a target robot", player=False):
     """Score for a kill. Honor (CPlayerInfoUI shows robot +0x40c) comes from GS_Robot_Malice (19,50130):
     u32 honor | u32 reason (0..6, message text) | u32 | u32, applied to the event owner's robot. Bonus
     (CPlayerInfoUI::AddPay) comes from GS_Character_Wage (19,30201): u32 char id | u32 pay (character +0x3f4)
@@ -5171,7 +5172,8 @@ def award_kill(server, peer, victim_text="a target robot"):
     STORE.add_log(peer.cid, f"Destroyed {victim_text} (+{KILL_HONOR} honor, +{KILL_PAY} crystal)")
     m = getattr(peer, "match", None)
     members = m.squads.get(getattr(peer, "squad", None) or ()) if m else None
-    if members and members[0] is not peer:  # the squad leader commanded it: a Comm. Credit (COMMAND_GRADES)
+    if player and members and members[0] is not peer:  # the leader commanded it: a Comm. Credit (COMMAND_GRADES).
+        # Only enemy players count: target robots or team mates would let a squad farm credits for its leader
         STORE.add_stats(members[0].cid, command=1)
 
 

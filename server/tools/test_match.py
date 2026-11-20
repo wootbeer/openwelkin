@@ -871,6 +871,13 @@ pc.next_shot = 0.0
 kill(pc, pa)
 step()
 ok &= check("the leader's own kill does not", ls.STORE.stats(c_cid).get("command", 0) == before_c + 1)
+ls.credit_kill(server, pb, "a target robot")
+ok &= check("nor a member's target robot kill", ls.STORE.stats(c_cid).get("command", 0) == before_c + 1)
+step(ls.RESPAWN_DELAY + 1)
+pb.next_shot = 0.0
+kill(pb, pc)
+step()
+ok &= check("nor a member killing a team mate", ls.STORE.stats(c_cid).get("command", 0) == before_c + 1)
 ok &= check("Comm. Lvl: grade 1 from no credits, then by the table", ls.command_grade(0) == 1
             and ls.command_grade(ls.COMMAND_GRADES[1] - 1) == 1 and ls.command_grade(ls.COMMAND_GRADES[1]) == 2
             and ls.command_grade(10 ** 9) == len(ls.COMMAND_GRADES))

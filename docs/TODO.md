@@ -84,7 +84,9 @@ reply layout, and answer with real data.
       L must be 1 or more once there is a table. The emulator's own rule: a squad leader earns one Comm. Credit for
       each enemy a member of the squad destroys (stat "command"); grades 1..10 at 0, 10, 30, 60, 100, 150, 250, 400,
       600, 1000 credits. Real client 2026-11-20 with 15 credits: Comm. Lvl 2, "To lvl up needed 15 Comm. Credits.",
-      the bar a quarter full
+      the bar a quarter full. Security review the same day (independent, of everything since 001571c): nothing
+      exploitable; fixed that target robots and team mates also earned the leader credits. Known, kept: kills of
+      team mates still give honor and crystal, as before
 - [x] (14,14057) CGS_GetCharacterTodayMilitary
 - [x] (14,14059) GetCharacterHelpLog: help events seen, "10100|10101|". Nothing in Game.dll sends the save
       (14,14060). 2026-11-20, offline (observer 0x106a3af0): at rank level 1 a log without 10100 makes the client
