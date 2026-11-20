@@ -1000,6 +1000,20 @@ def station(nation, x):
 
 saved_stations, ls.MAP_STATIONS = ls.STATIONS.get("B01"), True
 ls.STATIONS["B01"] = ls.parse_stations([station(ls.FEDERAL, 100), station(ls.ALLIANCE, 200), station(1, 300)])
+# the same platforms are the map's zones for the squad target (/t), sent in GS_Battle_Initialize
+body = ls.zones_body("B01.reb")
+zones, off = [], 4
+for _ in range(struct.unpack_from("<I", body)[0]):
+    first = struct.unpack_from("<I", body, off)[0]
+    name, off = ls.read_wstr(body, off + 4)
+    off = ls.read_wstr(body, ls.read_wstr(body, off)[1])[1] + 9
+    pos = struct.unpack_from("<3f", body, off)
+    zones.append((first, name, pos, body[off + 13]))
+    off += 14
+ok &= check("zones: one per platform, named and placed", off == len(body) and zones == [
+    (1, "Federal Base 1", (100.0, 60.0, 0.0), 1), (2, "Alliance Base 2", (200.0, 60.0, 0.0), 2),
+    (3, "Outpost 3", (300.0, 60.0, 0.0), 3)])
+ok &= check("a map without platforms has no zones", ls.zones_body("nosuchmap.reb") == bytes(4))
 ls.MATCHES.clear()
 pa = join_front(A, a_cid)
 own, theirs, city = pa.match.stations

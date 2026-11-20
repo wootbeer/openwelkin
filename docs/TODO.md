@@ -409,9 +409,13 @@ reply layout, and answer with real data.
       (9,10407) f32 | u8 N (RequestSetDetachmentTargetZone; the client reads a number and sends one byte, so /t -1
       is 255); the emulator lets the squad leader set it and sends every member UpdateDetachmentTargetZone (19,30505)
       u32 own detachment id | i32 zone (-1 = none; also to a new member, and -1 to one who leaves). The client then
-      writes "Squadron team target battlefield change to %s!" with the zone's name from its own map data (or
-      "Squadron team target cancelled!") and Robot::UpdateHUD points at the zone's position. A zone the map does not
-      have shows nothing. In game: which numbers are zones on Training Ground, and what the HUD shows.
+      writes "Squadron team target battlefield change to %s!" with the zone's name (or "Squadron team target
+      cancelled!") and Robot::UpdateHUD points at the zone's position. A zone it does not have shows nothing.
+      Real client 2026-11-20: the client has NO zones of its own (its 255-slot table at LogicWorld +0xd0 was empty);
+      they come from GS_Battle_Initialize (19,40050), the list the docs called "preload". The emulator now sends one
+      zone per Respawn Platform ("Outpost N", "Federal/Alliance Base N", zone N = platform N) and refuses other
+      numbers. On Mars Front /t 9 showed "...change to Alliance Base 9!" and a HUD arrow at the screen edge pointing
+      toward it; /t -1 showed the cancel line and the arrow went. Not known: the zones' other fields
       Squad window, 2026-11-19 offline: CSelfCorpUI (dialog 0x10, made at start; its OnEvent is Game.dll 0x105f64b0)
       has the squad buttons: 214 Apply Leader (9,10404), 215 Resign (9,10409) f32, 216 Impeach (9,10408) f32, and
       211 opens the name prompt (dialog 0x19) for (9,10405) RequestSetDetachmentName. No code in Game.dll shows

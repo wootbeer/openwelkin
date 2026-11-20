@@ -259,6 +259,32 @@ def map_stations(world):
     return STATIONS[name]
 
 
+def map_zones(world):
+    """A battlefield's zones, for the squad target (/t N): [(zone id, name, pos)]. The client has no zones of its own;
+    GS_Battle_Initialize brings them. Ours are the map's Respawn Platforms (data/maps/<map>.stations), numbered from
+    1 in file order: a side's own one is "<side> Base <n>", the others "Outpost <n>", n being the zone number /t
+    takes. [] if the map has no stations file."""
+    zones = []
+    for i, st in enumerate(map_stations(world)[:SQUAD_NO_TARGET - 1]):  # zone ids are a u8; 255 means none
+        kind = f"{NATION_NAMES[st['nation']]} Base" if st["nation"] in NATION_NAMES else "Outpost"
+        zones.append((i + 1, f"{kind} {i + 1}", st["pos"]))
+    return zones
+
+
+def zones_body(world):
+    """The zone list of GS_Battle_Initialize: u32 n | n x BFZone. A BFZone (read at Game.dll 0x102f9850, kept by
+    LogicWorld::AddBFZone 0x102f95d0 in a 255-slot table at LogicWorld +0xd0, slot = zone id):
+    u32 (-1 marks an empty slot) | str name | str | str | u32 | u8 | u32 | 3 x f32 position | u8 | u8 zone id.
+    The name is what "Squadron team target battlefield change to %s!" shows; the position is where the target is.
+    The other fields are not known and are sent as 0 / empty."""
+    zones = map_zones(world)
+    body = struct.pack("<I", len(zones))
+    for zid, name, pos in zones:
+        body += (struct.pack("<I", zid) + wstr(name) + wstr("") + wstr("") + struct.pack("<IBI", 0, 0, 0)
+                 + struct.pack("<3f", *pos) + struct.pack("<BB", 0, zid))
+    return body
+
+
 def parse_stations(raw):
     """The stations of a .stations file (a JSON list); a bad file gives []."""
     out = []
@@ -5257,7 +5283,7 @@ def on_game_message(server, peer, raw):
         # First message after the FDP session opens. The connect stream carries the battle ticket from
         # QS_ApplyEnter; without a valid one the connection gets nothing. Then GS_Battle_Initialize (19,40050),
         # handled by GS_Battle_Initialize_Observer (Game.dll 0x103faf30):
-        #   u32 map id | astr world file | u8 | u32 n x preload item (3 strings) | u32 m x ProductServerInfo (3 x u32)
+        #   u32 map id | astr world file | u8 | u32 n x zone (zones_body) | u32 m x ProductServerInfo (3 x u32)
         #   | u32 arena logic (0..5, extra logic data may follow) -> LogicWorld::Initialize
         who = redeem_ticket(peer)
         if not who:
@@ -5271,8 +5297,8 @@ def on_game_message(server, peer, raw):
             logic = struct.pack("<IBBf", ARENA_KILL, FEDERAL, ALLIANCE, float(ROUND_SECONDS))
         else:
             logic = struct.pack("<I", 0)
-        send_game_event(server, peer, 19, 40050, struct.pack("<I", 1) + wstr(bf["world"]) + struct.pack("<BII", 0, 0, 0)
-                        + logic)
+        send_game_event(server, peer, 19, 40050, struct.pack("<I", 1) + wstr(bf["world"]) + struct.pack("<B", 0)
+                        + zones_body(bf["world"]) + struct.pack("<I", 0) + logic)
         return
     if not getattr(peer, "battle_sent", False):
         return  # nothing before the ticket
@@ -5627,6 +5653,9 @@ def squad_target(peer, zone):
         if zone == SQUAD_NO_TARGET:
             if m.squad_targets.pop(key, None) is None:
                 return tell_player(peer, "Your squad has no target")
+        elif not any(zid == zone for zid, _, _ in map_zones(m.bf["world"])):
+            zones = map_zones(m.bf["world"])
+            return tell_player(peer, f"Zones here are 1 to {len(zones)}" if zones else "This map has no zones")
         else:
             m.squad_targets[key] = zone
         for other in members:

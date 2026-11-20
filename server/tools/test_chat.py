@@ -519,13 +519,26 @@ async def squads(kim, kim_id, kim_game, lou, lou_id, lou_game):
         body = game.last(30505)
         return body and struct.unpack("<Ii", body)[0] == game.members(cid)[0] and struct.unpack("<Ii", body)[1]
 
+    # zones are the map's Respawn Platforms (data/maps, made by setup_data.py): battlefield 1 has one, if set up
+    zones = ls.map_zones(ls.BATTLEFIELDS[1]["world"])
     await asyncio.sleep(gap)
-    lou_game.squad(10407, 4)
+    lou_game.squad(10407, 1)
     check("/t: only the leader sets the target", await told(lou) == "Only the squad leader (kim) sets the target")
-    kim_game.squad(10407, 4)
-    await asyncio.sleep(0.3)
-    check("/t 4 shows the target zone to the squad", target(kim_game, kim_id) == 4 and target(lou_game, lou_id) == 4,
-          f"{kim_game.last(30505)} {lou_game.last(30505)}")
+    await asyncio.sleep(gap)
+    kim_game.squad(10407, len(zones) + 1)
+    check("/t of a zone the map does not have", await told(kim) == (f"Zones here are 1 to {len(zones)}" if zones
+                                                                    else "This map has no zones"))
+    if not zones:
+        print("note: no data/maps (run setup_data.py); the target checks are skipped")
+        zone1 = 1
+        await asyncio.sleep(gap)
+    else:
+        zone1 = zones[0][0]
+        await asyncio.sleep(gap)
+        kim_game.squad(10407, zone1)
+        await asyncio.sleep(0.3)
+    check("/t 1 shows the target zone to the squad", not zones or (target(kim_game, kim_id) == zone1
+          and target(lou_game, lou_id) == zone1), f"{kim_game.last(30505)} {lou_game.last(30505)}")
     say(kim, "squad hi", 21004, struct.pack("<H", 3))
     check("squad chat reaches the squad", await heard(lou) == (ls.SQUAD_CHAT, kim_id, "kim", "squad hi"))
     check("and comes back to the sender", await heard(kim) == (ls.SQUAD_CHAT, kim_id, "kim", "squad hi"))
@@ -558,7 +571,7 @@ async def squads(kim, kim_id, kim_game, lou, lou_id, lou_game):
     check("/L leaves", await told(lou) == "You left squad 3")
     check("the squad hears it", await told(kim) == "lou left squad 3")
     await asyncio.sleep(0.3)
-    check("the leaver's target is cancelled", target(lou_game, lou_id) == -1)
+    check("the leaver's target is cancelled", not zones or target(lou_game, lou_id) == -1)
     check("the leaver's client group goes", lou_game.last(50404) == struct.pack("<I", group)
           and kim_game.last(50401) == struct.pack("<II", group, lou_id)
           and kim_game.last(30057) == struct.pack("<II", lou_id, 0))
@@ -575,7 +588,7 @@ async def squads(kim, kim_id, kim_game, lou, lou_id, lou_game):
     await told(lou)
     await told(kim)
     await asyncio.sleep(0.3)
-    check("a new member is shown the target", target(lou_game, lou_id) == 4)
+    check("a new member is shown the target", not zones or target(lou_game, lou_id) == zone1)
     await asyncio.sleep(gap)
     lou_game.squad(10409, None)
     check("only the leader can resign", await told(lou) == "Only the squad leader (kim) can resign")
@@ -592,7 +605,8 @@ async def squads(kim, kim_id, kim_game, lou, lou_id, lou_game):
     await asyncio.sleep(gap)
     kim_game.squad(10407, ls.SQUAD_NO_TARGET)
     await asyncio.sleep(0.3)
-    check("/t -1 cancels it", target(kim_game, kim_id) == -1 and target(lou_game, lou_id) == -1)
+    check("/t -1 cancels it", (target(kim_game, kim_id) == -1 and target(lou_game, lou_id) == -1) if zones
+          else await told(kim) == "Your squad has no target")
     await asyncio.sleep(gap)
     kim_game.squad(10403, None)
     await told(kim)
