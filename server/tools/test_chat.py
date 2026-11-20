@@ -55,7 +55,7 @@ class Recorder(ts.lt.Game):
     def datagram_received(self, data, addr):
         pkt = ts.fdp.Packet.parse(data)
         if not pkt.system:
-            self.events += [(typ, raw[12:]) for raw, _, typ in ts.fdp.messages(pkt.payload) if typ in (30020, 30030, 30057, 30150, 30500, 30501, 30503, 30505, 50400, 50401, 50404)]
+            self.events += [(typ, raw[12:]) for raw, _, typ in ts.fdp.messages(pkt.payload) if typ in (30020, 30030, 30057, 30150, 30500, 30501, 30503, 30505, 50400, 50401, 50404, 50410)]
         super().datagram_received(data, addr)
 
     def last(self, typ):
@@ -539,6 +539,16 @@ async def squads(kim, kim_id, kim_game, lou, lou_id, lou_game):
         await asyncio.sleep(0.3)
     check("/t 1 shows the target zone to the squad", not zones or (target(kim_game, kim_id) == zone1
           and target(lou_game, lou_id) == zone1), f"{kim_game.last(30505)} {lou_game.last(30505)}")
+    lou_game.send(40502, bytes(4), reliable=True)
+    await asyncio.sleep(0.3)
+    info = lou_game.last(50410)
+    rows = info and [struct.unpack_from("<IfI3f", info, 8 + 24 * i) for i in range(struct.unpack_from("<I", info, 4)[0])]
+    check("the member list's update gets every member's place", info and len(info) == 8 + 24 * 2
+          and struct.unpack_from("<I", info)[0] == ls.group_id((ls.ALLIANCE, 3))
+          and sorted(r[0] for r in rows) == sorted([kim_id, lou_id]), repr(info))
+    lou_game.send(40502, bytes(4), reliable=True)
+    await asyncio.sleep(0.3)
+    check("and is not sent more than once a second", sum(t == 50410 for t, _ in lou_game.events) == 1)
     say(kim, "squad hi", 21004, struct.pack("<H", 3))
     check("squad chat reaches the squad", await heard(lou) == (ls.SQUAD_CHAT, kim_id, "kim", "squad hi"))
     check("and comes back to the sender", await heard(kim) == (ls.SQUAD_CHAT, kim_id, "kim", "squad hi"))

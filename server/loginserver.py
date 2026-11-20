@@ -5412,6 +5412,8 @@ def on_game_message(server, peer, raw):
         squad_resign(peer)
     elif key == (9, 10407) and len(body) >= 5:
         squad_target(peer, body[4])
+    elif key == (9, 40502):
+        squad_member_info(peer)
     elif key == (9, 40110):
         suicide(server, peer)
     elif key in ((9, 40314), (9, 40333)):
@@ -5598,6 +5600,31 @@ def squad_apply_leader(peer):
         if members[0] is peer:
             return tell_player(peer, f"You lead squad {peer.squad[1]}")
         tell_player(peer, f"{members[0].name} leads squad {peer.squad[1]}")
+
+
+MEMBER_INFO_EVERY = 1.0  # seconds between member updates one player is sent
+
+
+def squad_member_info(peer):
+    """RequestUpdateGroupData (9,40502) f32, sent on a timer by the squad member list (CGroupMemberUI::Tick).
+    Answer: UpdateGroupMemberInfo (19,50410), handler Game.dll 0x103b65f0 -> Group::UpdateMemberInfo (0x10391050):
+    u32 group | u32 n | n x (u32 character | f32 | u32 | 3 x f32 position). Members the client does not have are
+    skipped. The member list (distance) and the radar (CRadarMapUI::RefreshGroupmate) use the position only when the
+    member's robot is not in the client's world, as while they are dead; otherwise they read the robot. The f32 and
+    u32 (member +0x38 / +0x3c) are read by nothing found in this client; AddToGroup leaves them 0, so 0 is sent."""
+    with GAME_LOCK:
+        m = getattr(peer, "match", None)
+        if not m or peer not in (m.peers or ()) or m.now - getattr(peer, "member_info_at", -MEMBER_INFO_EVERY) <                 MEMBER_INFO_EVERY:
+            return
+        peer.member_info_at = m.now
+        key = getattr(peer, "squad", None)
+        members = m.squads.get(key) if key else None
+        if not members:
+            return
+        body = struct.pack("<II", group_id(key), len(members))
+        for o in members:
+            body += struct.pack("<IfI3f", o.cid, 0.0, 0, *getattr(o, "pos", (0.0, 0.0, 0.0)))
+        send_game_event(m.server, peer, 19, 50410, body)
 
 
 def squad_resign(peer):

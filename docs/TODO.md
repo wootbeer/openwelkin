@@ -505,9 +505,11 @@ reply layout, and answer with real data.
       wrong: clicking a tab takes the focus from the input line, so typed text went nowhere; click the input line
       (pm.ps1 470 792) after the tab. The client also sends (9,40502) u32 and (9,20001) 12 bytes in battle.
       2026-11-19, offline: (9,40502) is f32 only, GroupManager::RequestUpdateGroupData from CGroupMemberUI::Tick
-      (the member list) on a timer. Its likely answer is UpdateGroupMemberInfo (19,50410): u32 group | u32 n |
+      (the member list) on a timer. Its answer is UpdateGroupMemberInfo (19,50410): u32 group | u32 n |
       n x (u32 character | f32 (kept at member +0x38) | u32 (+0x3c) | vec3 (+0x2c)) -> Group::UpdateMemberInfo, then
-      (9,40500). Not answered: what the f32 and u32 mean is not known (the list reads live robots for most of it).
+      (9,40500). 2026-11-20, offline: answered with each member's position (the list's distance and the radar use it
+      when the member's robot is missing, as while dead); +0x38 / +0x3c are read by nothing found (sent as 0). Not
+      tried in game: a dead member's distance and radar mark.
       (9,20001) is not built by a catalog 9 push in Game.dll (only CVideoTutorialManager uses the number) T did not open a window (Bravo's view went to a 4X scope instead)
       2026-11-18, offline: squad lines show from (21,21203) as "[Squadron Team]"; the emulator sends a squad's
       lines there for (21,21004) channel 3 or 4 (the client's send table has three tabs with u16 2, 3, 5, and 2 and 5
