@@ -85,9 +85,10 @@ reply layout, and answer with real data.
       each enemy a member of the squad destroys (stat "command"); grades 1..10 at 0, 10, 30, 60, 100, 150, 250, 400,
       600, 1000 credits. Not tried in game: the Info window's bar
 - [x] (14,14057) CGS_GetCharacterTodayMilitary
-- [ ] (14,14059) GetCharacterHelpLog: help events seen, "10100|10101|". Nothing in Game.dll sends the save
-      (14,14060), so it stays empty. An empty log at rank level 1 opens the tutorial video; if that shows at
-      every login, send "10100|"
+- [x] (14,14059) GetCharacterHelpLog: help events seen, "10100|10101|". Nothing in Game.dll sends the save
+      (14,14060). 2026-11-20, offline (observer 0x106a3af0): at rank level 1 a log without 10100 makes the client
+      add it and play the tutorial video, so it would play at every login. The emulator saves 10100 (texts "help")
+      when it answers a character at rank level 1: the video plays once. Not tried in game
 
 ## Medals / badges
 - [x] (14,14007) CGS_UpdateMyMedal

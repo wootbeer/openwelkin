@@ -925,7 +925,7 @@ Sent from Game.dll 0x106afdb0, text as in 14004. The ack has no body; any other 
 str log | u8 flag
 ```
 
-Help events already seen, each id followed by `|`: `10100|10101|`. A log starting with `|` or holding `||` hangs the client. With 10100 missing and rank level (+0x44) 1, the client opens the tutorial video. Nothing in Game.dll sends the save request (14,14060), so the emulator answers with an empty log.
+Help events already seen, each id followed by `|`: `10100|10101|`. A log starting with `|` or holding `||` hangs the client. With 10100 missing and rank level (+0x44) 1, the client adds 10100 itself and opens the tutorial video (GetCharacterHelpLogObserver, Game.dll 0x106a3af0). Nothing in Game.dll sends the save request (14,14060), so the client would play it at every login. The emulator keeps the log per character and adds 10100 when it answers a character at rank level 1, so the video plays once. The u8 goes to CHelpSystemManager +0xa4, use not known; the emulator sends 0.
 
 <a name="m-15-15003"></a>
 #### AddTeam (make a division) `(15,15003)`

@@ -480,6 +480,16 @@ RANK_THRESHOLDS = [int(50 * n ** 1.8) for n in range(71)]
 # Comm. Credits (the Info window's "Comm. Lvl" bar) are the emulator's own rule: a squad leader earns one for each
 # enemy a member of the squad destroys. Grade n needs COMMAND_GRADES[n - 1] credits; grade 1 needs none.
 COMMAND_GRADES = [0, 10, 30, 60, 100, 150, 250, 400, 600, 1000]
+TUTORIAL_EVENT = 10100  # the help event the client adds when it plays the tutorial video (GetCharacterHelpLog)
+
+
+def help_log_for(cid):
+    """The help log GetCharacterHelpLog sends (the log before this answer). At rank level 1 the client plays the
+    tutorial video when the log lacks TUTORIAL_EVENT, so the event is saved then: the next answer has it."""
+    seen = STORE.help_log(cid)
+    if rank_for(STORE.stats(cid).get("honor", 0)) == 1:
+        STORE.help_log(cid, seen=TUTORIAL_EVENT)
+    return seen
 
 
 def command_grade(credits):
@@ -1043,6 +1053,20 @@ class Store:
                 texts.pop("mute", None)
             self.mark_dirty(cid)
             return cid
+
+    def help_log(self, cid, seen=None):
+        """The help events a character has seen ("10100|10101|"), kept in its texts as "help". With seen, that event
+        is added first (once)."""
+        with self.lock:
+            c = self.by_id(cid)
+            if not c:
+                return ""
+            texts = c.setdefault("texts", {})
+            log_ = texts.get("help", "")
+            if seen is not None and str(seen) not in log_.split("|"):
+                texts["help"] = log_ = log_ + f"{seen}|"
+                self.mark_dirty(cid)
+            return log_
 
     def contacts(self, cid, kind):
         """Character ids on a friend ("friends") or block ("blocked") list."""
@@ -2014,6 +2038,18 @@ class Session:
         st = STORE.stats(cid)
         exploit, credits = st.get("honor", 0), int(st.get("command", 0))
         self.reply(msg, struct.pack("<IIIIIBI", exploit, exploit, 0, 0, 0, command_grade(credits), credits))
+
+    def on_help_log(self, msg):
+        # GetCharacterHelpLog (14,14059), request u32 character id. Reply read by GetCharacterHelpLogObserver
+        # (Game.dll 0x106a3af0): str help events seen ("10100|10101|") -> CHelpSystemManager | u8 (+0xa4, use not
+        # known). At rank level 1 the client adds event 10100 if the log lacks it and then plays the tutorial video.
+        # The client never sends the log back (nothing in Game.dll sends (14,14060)), so the server marks 10100 as
+        # seen when it answers a character at rank level 1 (the rank CharacterOnline sends, which the client checks
+        # at character +0x44): the video plays once there, not at every login.
+        cid = struct.unpack_from("<I", msg.body)[0] if len(msg.body) >= 4 else 0
+        if not self.own_character(cid):
+            return self.reply(msg, wstr("") + struct.pack("<B", 0))
+        self.reply(msg, wstr(help_log_for(cid)) + struct.pack("<B", 0))
 
     def on_command_grades(self, msg):
         # CGS_CGSManager_CommandGradeTable (14,14054), asked once at hall login. Reply: u32 n | n x (u8 grade |
@@ -3405,6 +3441,7 @@ HANDLERS = {
     (14, 14010): Session.on_exploit,             # CG_Character_Get_Exploit (rank / experience)
     (14, 14040): Session.on_rank_table,          # CGS_GetAllMilitaryRank
     (14, 14054): Session.on_command_grades,      # CGS_CGSManager_CommandGradeTable (Comm. Lvl)
+    (14, 14059): Session.on_help_log,            # GetCharacterHelpLog (tutorial video once)
     (24, 24019): Session.on_money,               # GS_UpdateCharacterMoney
     (24, 24008): Session.on_goods_flyweights,    # GS_RequestAllGoodsFlyweight
     (14, 14042): Session.on_talents,             # CGS_UpdateTalentInfo (Robot tab)

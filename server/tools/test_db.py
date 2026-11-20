@@ -226,6 +226,18 @@ def accounts():
     check("role of nobody", not ls.ACCOUNTS.set_role("nobody", "gm") and ls.ACCOUNTS.role("nobody") == "player")
 
 
+def help_log():
+    """The tutorial video plays once: at rank level 1, then the help log has its event."""
+    cid = ls.STORE.create("hana", "Hotel", gender=0, model=0, state=1, raw="")
+    check("help log: empty, and not marked below rank level 1", ls.help_log_for(cid) == "" and ls.help_log_for(cid) == "")
+    ls.STORE.add_stats(cid, honor=ls.RANK_THRESHOLDS[1])
+    check("at rank level 1 the first answer is empty (the video plays)", ls.help_log_for(cid) == "")
+    check("then the event is there", ls.help_log_for(cid) == f"{ls.TUTORIAL_EVENT}|")
+    reopen()
+    check("and kept after a restart", ls.help_log_for(cid) == f"{ls.TUTORIAL_EVENT}|"
+          and ls.STORE.help_log(cid, seen=ls.TUTORIAL_EVENT) == f"{ls.TUTORIAL_EVENT}|")
+
+
 def rollback():
     """A failed save loses nothing: the change is kept and written by the next one."""
     cid = ls.STORE.create("carl", "Charlie", gender=0, model=0, state=1, raw="")
@@ -439,6 +451,7 @@ def main():
         if MARIADB["CHARACTERS"]:
             mariadb()
         accounts()
+        help_log()
         rollback()
         loading()
         importing()

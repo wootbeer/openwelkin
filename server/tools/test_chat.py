@@ -396,6 +396,12 @@ async def scenario():
     check("announcements come from the file", n == 2 and first == "first line" and len(second) == ls.CHAT_MAX)
     r = await amy.request(20, 20116, struct.pack("<I", 0))
     check("held tasks: an explicit empty list", r.result == 0 and r.body == bytes(4), repr(r.body[:8]))
+    await amy.request(14, 14059, struct.pack("<I", amy_id))
+    r = await amy.request(14, 14059, struct.pack("<I", amy_id))
+    check("help log: a new character's stays empty (the video waits for rank level 1)",
+          r.body == ls.wstr("") + struct.pack("<B", 0), repr(r.body))
+    r = await amy.request(14, 14059, struct.pack("<I", amy_id + 1))
+    check("nobody reads another account's help log", ls.read_wstr(r.body, 0)[0] == "")
     r = await amy.request(14, 14054)
     n = struct.unpack_from("<I", r.body)[0]
     rows = [struct.unpack_from("<BI", r.body, 4 + 5 * i) for i in range(n)]
