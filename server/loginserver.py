@@ -2045,7 +2045,9 @@ class Session:
         # known). At rank level 1 the client adds event 10100 if the log lacks it and then plays the tutorial video.
         # The client never sends the log back (nothing in Game.dll sends (14,14060)), so the server marks 10100 as
         # seen when it answers a character at rank level 1 (the rank CharacterOnline sends, which the client checks
-        # at character +0x44): the video plays once there, not at every login.
+        # at character +0x44): the video plays once there, not at every login. Real client 2026-11-20: at hall login
+        # Game +0x2c8 is 0x2776 when this answer arrives, and the client then skips the video branch altogether, so
+        # it plays no video from here either way; the log is kept right in case another state reaches it.
         cid = struct.unpack_from("<I", msg.body)[0] if len(msg.body) >= 4 else 0
         if not self.own_character(cid):
             return self.reply(msg, wstr("") + struct.pack("<B", 0))

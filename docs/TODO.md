@@ -83,12 +83,14 @@ reply layout, and answer with real data.
       table's length. 2026-11-20, offline: the bar is (C - row[L-1]) / (row[L] - row[L-1]), needed = row[L] - C, so
       L must be 1 or more once there is a table. The emulator's own rule: a squad leader earns one Comm. Credit for
       each enemy a member of the squad destroys (stat "command"); grades 1..10 at 0, 10, 30, 60, 100, 150, 250, 400,
-      600, 1000 credits. Not tried in game: the Info window's bar
+      600, 1000 credits. Real client 2026-11-20 with 15 credits: Comm. Lvl 2, "To lvl up needed 15 Comm. Credits.",
+      the bar a quarter full
 - [x] (14,14057) CGS_GetCharacterTodayMilitary
 - [x] (14,14059) GetCharacterHelpLog: help events seen, "10100|10101|". Nothing in Game.dll sends the save
       (14,14060). 2026-11-20, offline (observer 0x106a3af0): at rank level 1 a log without 10100 makes the client
       add it and play the tutorial video, so it would play at every login. The emulator saves 10100 (texts "help")
-      when it answers a character at rank level 1: the video plays once. Not tried in game
+      when it answers a character at rank level 1: the video plays once. Real client 2026-11-20: Game +0x2c8 is
+      0x2776 at hall login and the client skips the video branch, so no video plays at login either way
 
 ## Medals / badges
 - [x] (14,14007) CGS_UpdateMyMedal
@@ -511,8 +513,9 @@ reply layout, and answer with real data.
       (the member list) on a timer. Its answer is UpdateGroupMemberInfo (19,50410): u32 group | u32 n |
       n x (u32 character | f32 (kept at member +0x38) | u32 (+0x3c) | vec3 (+0x2c)) -> Group::UpdateMemberInfo, then
       (9,40500). 2026-11-20, offline: answered with each member's position (the list's distance and the radar use it
-      when the member's robot is missing, as while dead); +0x38 / +0x3c are read by nothing found (sent as 0). Not
-      tried in game: a dead member's distance and radar mark.
+      when the member's robot is missing, as while dead); +0x38 / +0x3c are read by nothing found (sent as 0). Real
+      client 2026-11-20 (two clients, squad 3): 40502 comes about every 5 s and the answer is processed; 42.5 / 7 in
+      the unknown fields changed nothing on screen; the member list ("0 Bravo") looked the same with members dead.
       (9,20001) is not built by a catalog 9 push in Game.dll (only CVideoTutorialManager uses the number) T did not open a window (Bravo's view went to a 4X scope instead)
       2026-11-18, offline: squad lines show from (21,21203) as "[Squadron Team]"; the emulator sends a squad's
       lines there for (21,21004) channel 3 or 4 (the client's send table has three tabs with u16 2, 3, 5, and 2 and 5
