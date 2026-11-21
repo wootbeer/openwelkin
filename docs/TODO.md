@@ -300,8 +300,12 @@ reply layout, and answer with real data.
       bodies as GS_Wheel_Move (19,50350, -> WheelVehicle::OnUpdateMoveStatus) and CtlEsabHeartMove (19,50363, ->
       SetCorrectPos / SetCorrectRotation). The server passes both on unchanged, only from the driver's seat, whole,
       finite and under 100000, at most 30 a second, and keeps the 40350 position as the vehicle's and its
-      driver's. Tracked, hover and aircraft send 40351 / 40352 / 40353 and are read as 50351 / 50352 / 50353 (not
-      done: only wheeled test vehicles). Not known: the two u32 and the u8 of a move (the input?), whether the
+      driver's. Tracked and hover send 40351 / 40352 (as 40350) and aircraft 40353 (u32 vehicle | 3 x u32 | vec3
+      position | quat | vec3), read as 50351 / 50352 / 50353; each vehicle takes only its own kind's move.
+      Snapshots after ControlledEstab: tracked as wheeled (u32 | u32 | u8 | vec3), hover u32 | u32 | u8 | 16 bytes,
+      aircraft 3 x u32 (snapshots.vehicle). Test vehicles (MW_TEST_VEHICLE=cavy,wolf,lancer,falcon): Cavy 4001,
+      Wolf 4011, Lancer 4012, Falcon 4008, seats by their flyweight ids (101 driver, 102 gunner): the client data
+      does not pair seats with SeatPoint names, so passenger seats are left out. Not known: the two u32 and the u8 of a move (the input?), whether the
       48 bytes are 12 floats, and what 40358 (P2P heartbeat) is for
 - [x] Request read in game 2026-11-03: u8 period (1 Total, 2 Monthly, 3 Weekly, 4 Daily) | u32 first row | u32 rows
       (20); Shooting (15100) has one more u8 in front. My place: u32 character id | u8 period. The u32 after the camp

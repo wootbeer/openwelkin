@@ -4694,31 +4694,49 @@ def show_station(server, peer, st):
                     + snapshots.establishment([func], pos=st["use"], nation=st["nation"]) + b"\x00")
 
 
-VEHICLE_TEST = os.environ.get("MW_TEST_VEHICLE") == "1"  # test: a parked Cavy next to each match's spawn
 VEHICLE_ID = 4_250_000_000  # vehicle object ids (past the platforms', under 2**32); its seats are its id + 1, + 2 ...
-# (vehicle flyweight, its seats' flyweights in SeatPoint order: driver first). Only wheeled vehicles so far.
-TEST_VEHICLE = (4001, (4001101, 4001102))  # Cavy: C_Logic_Cavy_DriverSeat, C_Logic_Cavy_GunnerSeat
-VEHICLE_OFFSET = (12.0, 0.0, 0.0)  # where the test vehicle stands from the spawn point
+# Test vehicles, one of each kind: name -> (kind (snapshots.VEHICLE_TAILS), flyweight, its seats' flyweights in the
+# order of its SeatPoint list, driver first). The client data does not pair seats with seat points; these follow
+# the seat flyweights' ids (vehicle id, then 101 driver, 102 gunner).
+TEST_VEHICLES = {
+    "cavy": ("wheel", 4001, (4001101, 4001102)),     # C_Logic_Cavy_DriverSeat, _GunnerSeat
+    "wolf": ("tracked", 4011, (4011101, 4011102)),   # C_Logic_Wolf_DriverSeat, _GunnerSeat
+    "lancer": ("hover", 4012, (4012101, 4012102)),   # C_Logic_Lancer_DriverSeat, _GunnerSeat
+    "falcon": ("air", 4008, (4008101,)),             # C_Logic_Falcon_DriverSeat
+}
+
+
+def test_vehicle_names(raw):
+    """MW_TEST_VEHICLE: "1" for a Cavy, or names from TEST_VEHICLES ("cavy,wolf"); unknown names are skipped."""
+    names = ["cavy"] if raw.strip() == "1" else [n.strip().lower() for n in raw.split(",")]
+    return [n for n in names if n in TEST_VEHICLES]
+
+
+TEST_VEHICLE_NAMES = test_vehicle_names(os.environ.get("MW_TEST_VEHICLE", ""))  # test: parked by each spawn
+VEHICLE_TEST = bool(TEST_VEHICLE_NAMES)
+VEHICLE_OFFSET = (12.0, 0.0, 0.0)  # where the first test vehicle stands from the spawn point
+VEHICLE_SPACING = 14.0  # and the next ones, further along z
 BOARD_REACH = 20.0  # how far from a vehicle a player may get in (its BoardLoc points are a few units out)
 UNBOARD_OFFSET = (-4.0, 1.0, 0.0)  # where a player is put on getting out, from the vehicle
 
 
 def add_test_vehicle(m):
-    """MW_TEST_VEHICLE: one parked vehicle per match, near the spawn point."""
-    fw, seat_fws = TEST_VEHICLE
+    """MW_TEST_VEHICLE: the test vehicles, parked in a row near the match's spawn point."""
     x, y, z = m.bf["spawn"]
-    vid = VEHICLE_ID + 100 * (m.id % 400_000)  # stays under 2**32
-    m.vehicles[vid] = {"id": vid, "fw": fw, "seat_fws": seat_fws, "seats": [None] * len(seat_fws),
-                       "pos": (x + VEHICLE_OFFSET[0], y + VEHICLE_OFFSET[1], z + VEHICLE_OFFSET[2])}
+    for k, name in enumerate(TEST_VEHICLE_NAMES or ["cavy"]):
+        kind, fw, seat_fws = TEST_VEHICLES[name]
+        vid = VEHICLE_ID + 100 * (m.id % 400_000) + 10 * k  # stays under 2**32; 9 seats at most
+        m.vehicles[vid] = {"id": vid, "kind": kind, "fw": fw, "seat_fws": seat_fws, "seats": [None] * len(seat_fws),
+                           "pos": (x + VEHICLE_OFFSET[0], y + VEHICLE_OFFSET[1], z + VEHICLE_OFFSET[2] + VEHICLE_SPACING * k)}
 
 
 def show_vehicle(server, peer, v):
-    """A vehicle: GS_Object_Attach_Object (19,50001) with no owner, its flyweight and a wheel_vehicle snapshot whose
-    seats show who is in them."""
+    """A vehicle: GS_Object_Attach_Object (19,50001) with no owner, its flyweight and its kind's snapshot
+    (snapshots.vehicle), whose seats show who is in them."""
     seats = [(fw, v["id"] + 1 + i, snapshots.seat(i, occupant.player_rid if occupant else -1))
              for i, (fw, occupant) in enumerate(zip(v["seat_fws"], v["seats"]))]
     send_game_event(server, peer, 19, 50001, struct.pack("<III", 0, v["fw"], v["id"])
-                    + snapshots.wheel_vehicle(seats, pos=v["pos"]) + b"\x00")
+                    + snapshots.vehicle(v["kind"], seats, pos=v["pos"]) + b"\x00")
 
 
 def vehicle_seat(m, body):
@@ -4778,7 +4796,13 @@ def unboard_vehicle(server, peer, body=None):
 #     | 3 x vec3 (velocities)
 #   ControlledEstab::LocalMove (9,40357), a heartbeat on a timer -> CtlEsabHeartMove (19,50363), handler 0x10285b20
 #     -> SetCorrectPos / SetCorrectRotation: u32 vehicle | 48-byte orientation | 4 x vec3
-VEHICLE_MOVES = {40350: (50350, 77, True), 40357: (50363, 100, False)}
+#   PedrailVehicle::Move (9,40351) -> (19,50351), SuspendVehicle::Move (9,40352) -> (19,50352): as 40350;
+#   AircraftVehicle::Move (9,40353) -> GS_Aircraft_Move (19,50353): u32 vehicle | 3 x u32 | vec3 position | quat
+#     rotation | vec3
+# request type -> (event, body size after the envelope, reliable, where the floats start, the vehicle kind or None)
+VEHICLE_MOVES = {40350: (50350, 77, True, 13, "wheel"), 40351: (50351, 77, True, 13, "tracked"),
+                 40352: (50352, 77, True, 13, "hover"), 40353: (50353, 56, True, 16, "air"),
+                 40357: (50363, 100, False, 4, None)}
 VEHICLE_MOVE_GAP = 1.0 / 30  # seconds between two of a driver's messages that are passed on
 VEHICLE_FAR = 100_000.0  # no coordinate of a vehicle is past this
 
@@ -4786,7 +4810,7 @@ VEHICLE_FAR = 100_000.0  # no coordinate of a vehicle is past this
 def vehicle_move(server, peer, typ, body):
     """Pass a driver's move or heartbeat on to the others. Only from the player in the vehicle's driver seat (seat
     0), whole, with finite numbers in reason; a 40350 also sets where the server has the vehicle (and its driver)."""
-    event, size, reliable = VEHICLE_MOVES[typ]
+    event, size, reliable, first, kind = VEHICLE_MOVES[typ]
     if len(body) < 4 + size:
         return
     with GAME_LOCK:
@@ -4795,18 +4819,17 @@ def vehicle_move(server, peer, typ, body):
         if not m or not seated or seated[1] != 0 or peer.player_dead:
             return
         payload = body[4:4 + size]
-        if struct.unpack_from("<I", payload)[0] != seated[0] or seated[0] not in m.vehicles:
-            return
-        floats = struct.unpack_from(f"<{(size - 13) // 4}f", payload, 13) if typ == 40350 else \
-            struct.unpack_from(f"<{(size - 4) // 4}f", payload, 4)
+        v = m.vehicles.get(seated[0])
+        if struct.unpack_from("<I", payload)[0] != seated[0] or v is None or kind not in (None, v["kind"]):
+            return  # a move of another kind of vehicle would be read wrong by the others
+        floats = struct.unpack_from(f"<{(size - first) // 4}f", payload, first)
         if not all(math.isfinite(f) and abs(f) < VEHICLE_FAR for f in floats):
             return
         if m.now - getattr(peer, "vehicle_move_at", -VEHICLE_MOVE_GAP) < VEHICLE_MOVE_GAP:
             return
         peer.vehicle_move_at = m.now
-        if typ == 40350:
-            pos = struct.unpack_from("<3f", payload, 13)
-            m.vehicles[seated[0]]["pos"] = peer.pos = pos
+        if kind:  # a move starts with the position
+            v["pos"] = peer.pos = floats[:3]
             placed(peer)
         m.broadcast(19, event, payload, reliable=reliable, skip=peer)
 

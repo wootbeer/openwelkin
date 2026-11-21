@@ -1019,6 +1019,37 @@ for addr in list(server.peers):
     server.close(server.peers[addr], "test over")
 step()
 
+# one vehicle of each kind; each takes only its own kind's moves
+ok &= check("test vehicles: names from the setting", ls.test_vehicle_names("1") == ["cavy"]
+            and ls.test_vehicle_names(" Wolf,falcon,nope") == ["wolf", "falcon"] and ls.test_vehicle_names("") == [])
+ls.VEHICLE_TEST, ls.TEST_VEHICLE_NAMES = True, ["cavy", "wolf", "lancer", "falcon"]
+sent.clear()
+pa, pb = join_front(A, a_cid), join_front(B, b_cid)
+step()
+mv = pa.match
+kinds = {v["fw"]: v for v in mv.vehicles.values()}
+shown = {struct.unpack_from("<I", b, 4)[0] for b in got(A, 50001)}
+ok &= check("test vehicles: a row of four kinds, each shown", sorted(kinds) == [4001, 4008, 4011, 4012]
+            and {4001, 4008, 4011, 4012} <= shown and len({v["pos"] for v in mv.vehicles.values()}) == 4)
+falcon = kinds[4008]
+pa.pos = falcon["pos"]
+board(A, falcon["id"] + 1, who=falcon["id"])
+ok &= check("test vehicles: the aircraft's driver seat", falcon["seats"] == [pa])
+sent.clear()
+fly = struct.pack("<4I", falcon["id"], 0, 1, 0) + struct.pack("<10f", 5.0, 90.0, 6.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0)
+msg(A, 40353, struct.pack("<f", 0.0) + fly)
+step()
+ok &= check("test vehicles: an aircraft's move goes to the others", got(B, 50353) == [fly]
+            and falcon["pos"] == (5.0, 90.0, 6.0))
+step(0.1)
+msg(A, 40350, struct.pack("<f", 0.0) + struct.pack("<IIIB", falcon["id"], 0, 0, 0) + struct.pack("<16f", *([0.0] * 16)))
+step()
+ok &= check("test vehicles: a wheeled move for an aircraft is dropped", not got(B, 50350))
+ls.VEHICLE_TEST, ls.TEST_VEHICLE_NAMES = False, []
+for addr in list(server.peers):
+    server.close(server.peers[addr], "test over")
+step()
+
 # own character: no base info (it would empty the loadout presets); a Respawn Platform (MW_PLATFORM) can be used
 ls.PLATFORM = True
 before = len(sent)

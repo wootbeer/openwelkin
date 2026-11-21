@@ -115,6 +115,20 @@ def wheel_vehicle(seats, pos=(0.0, 0.0, 0.0), rot=IDENTITY, nation=0, hp=2500):
             + struct.pack("<IIB3f", 0, 0, 0, 0.0, 0.0, 0.0))
 
 
+# What each kind of vehicle adds after ControlledEstab (its WriteSnapshot, all bounds-checked):
+VEHICLE_TAILS = {
+    "wheel": struct.pack("<IIB3f", 0, 0, 0, 0.0, 0.0, 0.0),    # WheelVehicle 0x102bac10: u32 | u32 | u8 | vec3
+    "tracked": struct.pack("<IIB3f", 0, 0, 0, 0.0, 0.0, 0.0),  # PedrailVehicle (0x10027b4c): u32 | u32 | u8 | vec3
+    "hover": struct.pack("<IIB4f", 0, 0, 0, 0.0, 0.0, 0.0, 0.0),  # SuspendVehicle (0x100198e4): u32 | u32 | u8 | 16 bytes
+    "air": struct.pack("<III", 0, 0, 0),                       # AircraftVehicle (0x100197d6): 3 x u32
+}
+
+
+def vehicle(kind, seats, pos=(0.0, 0.0, 0.0), rot=IDENTITY, nation=0, hp=2500):
+    """A vehicle of a kind in VEHICLE_TAILS: ControlledEstab with its seats, then the kind's own fields."""
+    return controlled_establishment([], seats, pos=pos, rot=rot, nation=nation, hp=hp) + VEHICLE_TAILS[kind]
+
+
 def armor_info(hp=1000, cur=None):
     """DamageUnit armor list (DamageUnit::WriteArmorInfo 0x102102b0): u32 count | count x 32-byte ArmorInfo
     (i32 type (8 = skipped) | i32 max hp | f32 current hp | 4 x f32 | i32 -1). Robot::UpdateHUD shows
