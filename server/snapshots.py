@@ -117,8 +117,13 @@ VEHICLE_TAILS = {
 }
 
 
-def vehicle(kind, seats, pos=(0.0, 0.0, 0.0), rot=IDENTITY, nation=0, hp=2500):
-    """A vehicle of a kind in VEHICLE_TAILS: ControlledEstab with its seats, then the kind's own fields."""
+NO_NATION = 0xFFFFFFFF  # -1: an establishment anyone may use
+
+
+def vehicle(kind, seats, pos=(0.0, 0.0, 0.0), rot=IDENTITY, nation=NO_NATION, hp=2500):
+    """A vehicle of a kind in VEHICLE_TAILS: ControlledEstab with its seats, then the kind's own fields.
+    nation (+0x6c): Establishment::RequestBoard (0x1028f8f0) lets a character in only when it equals the
+    character's nation (+0x30) or is -1 (real client 2026-11-20: 0 refused everyone)."""
     return controlled_establishment([], seats, pos=pos, rot=rot, nation=nation, hp=hp) + VEHICLE_TAILS[kind]
 
 

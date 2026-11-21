@@ -1,7 +1,7 @@
 """vinput.py <pid|MarsWar.exe> <step> [step ...] -- drive the client's DirectInput keyboard/mouse (tools/vinput.js).
 
 Steps run in order:
-  w:3          hold a key for 3 s (keys: w a s d q e r f v space shift ctrl tab 1-9 0)
+  w:3          hold a key for 3 s (keys: w a s d q e r f g v space shift ctrl tab 1-9 0 f1-f3)
   w+d:2        hold several keys together
   down:w up:w  press / let go of keys while the next steps run (turn while walking: down:w wait:1 turn:300 up:w)
   turn:200     move the mouse 200 units right (negative = left); turn:0,-50 also moves up
@@ -16,7 +16,8 @@ import frida
 
 SCANCODES = {"esc": 0x01, "1": 0x02, "2": 0x03, "3": 0x04, "4": 0x05, "5": 0x06, "6": 0x07, "7": 0x08, "8": 0x09,
              "9": 0x0A, "0": 0x0B, "tab": 0x0F, "q": 0x10, "w": 0x11, "e": 0x12, "r": 0x13, "a": 0x1E, "s": 0x1F,
-             "d": 0x20, "f": 0x21, "ctrl": 0x1D, "shift": 0x2A, "v": 0x2F, "enter": 0x1C, "space": 0x39, "m": 0x32}
+             "d": 0x20, "f": 0x21, "g": 0x22, "ctrl": 0x1D, "shift": 0x2A, "v": 0x2F, "enter": 0x1C, "space": 0x39,
+             "m": 0x32, "f1": 0x3B, "f2": 0x3C, "f3": 0x3D}
 
 
 def main():

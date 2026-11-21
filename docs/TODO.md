@@ -311,6 +311,28 @@ reply layout, and answer with real data.
       old seat, boards the new); the seat must be free. Also seen, not done: (9,40322) SubmitTransform (trans
       state), (9,40325) seat weapon change, (9,40326) kick from a seat, (9,40327) set position / rotation. Not known: the two u32 and the u8 of a move (the input?), whether the
       48 bytes are 12 floats, and what 40358 (P2P heartbeat) is for
+- [ ] Real client 2026-11-20 (two clients, MW_TEST_VEHICLE=cavy,wolf,lancer,falcon):
+  - Works: all four show (parked in a row). Board key is G ("dovehicle" in System\InputConfig_*.ini; E is
+    "use"), and needs: the robot's ground bit (0x80 of robot +0x19c), standing still (not 0x200), and a 5-unit ray
+    from the eyes (NxPhysics::RayCast, Game.dll 0x1024d62d) hitting the vehicle's physics actor; then
+    Establishment::RequestBoard lets in only a character whose nation (+0x30) equals the vehicle's (+0x6c) or a
+    vehicle with -1. The emulator sent 0, which refused everyone: test vehicles now carry -1
+    (snapshots.NO_NATION). Then (9,40320) arrived with u32 vehicle | u32 seat number 0, BoardRobot put the
+    driver in (vehicle HUD: angle, speed, compass, 2500 armour, seat list), and the other client saw the
+    driver's robot id as the Cavy's driver. G again sent (9,40321): out on foot beside it, driver -1 on the
+    other client. While driving the client sends (9,40350) (81 B with the envelope) on input changes and the
+    (9,40357) heartbeat every 2 s.
+  - Not working: the Cavy does not move. W reaches it (ControlledEstab driver stage 0 -> 1 -> 9, physics vehicle
+    +0xb4 = 9, +0xac brake 1 -> 0, control enable 1, impulse accel 1.0, not kinematic), and it falls and settles
+    when lifted, but no push: the driver's own 40350 still had the parked position. Wheels not touching (the
+    body sits on BodyPos?) or something the snapshot leaves out are the leads. F2 / F3 (prev / next seat) sent
+    nothing, so 40323 is still untried.
+  - Parked vehicles are simulated by every client: the Lancer (hover) drifted about 26 units and the Falcon
+    (aircraft) fell through the ground (y -70 -> -200). The Cavy and Wolf stay put.
+  - The ground bit: Robot::Land (callback Game.dll 0x10244680, on a controller move that hits ground) sets it,
+    0x10240650 (a move that does not) clears it. In both clients it was on right after spawning, off 0.7 s
+    later, and stayed off while walking on flat ground, so G mostly answers nothing. Not yet known whether
+    this is how the client always behaves or something the emulator sends (own moves are not echoed back).
 - [x] Request read in game 2026-11-03: u8 period (1 Total, 2 Monthly, 3 Weekly, 4 Daily) | u32 first row | u32 rows
       (20); Shooting (15100) has one more u8 in front. My place: u32 character id | u8 period. The u32 after the camp
       byte is a team id: anything but 0 makes the client ask UpdateTeamInfo (15,15023) once per row, so 0 is sent
