@@ -85,6 +85,36 @@ def establishment(functions, pos=(0.0, 0.0, 0.0), rot=IDENTITY, nation=0, hp=250
     return out + b"\x00\x00"
 
 
+def seat(index, occupant=-1):
+    """Seat::WriteSnapshot (0x102ac970), one seat of a vehicle (flyweight class FSeat, e.g. C_Logic_Cavy_DriverSeat
+    4001101): i32 robot in it (+0x4c, -1 = empty: Seat::RequestBoard only asks for an empty seat) | 3 x f32 (+0x150)
+    | u32 n weapons, n x (u32 fw | u32 id | weapon snapshot) | u32 (+0x14) | i32 skill fw (-1 = none)
+    [u32 id | skill snapshot] | i32 linked establishment (+0x184, -1 = none) | u32 its seat (+0x188).
+    index: the seat's place in the vehicle's list (the vehicle's SeatPoint order: driver first)."""
+    return struct.pack("<i3fIIiiI", occupant, 0.0, 0.0, 0.0, 0, 0, -1, -1, index)
+
+
+def controlled_establishment(functions, seats, pos=(0.0, 0.0, 0.0), rot=IDENTITY, nation=0, hp=2500, state=1):
+    """ControlledEstab::WriteSnapshot (0x10284e90), what vehicles are: Establishment (as in establishment(), with its
+    seats) | u32 trans state (ControlledEstab::SetCurrentTransState) | f32 | u32 | 4 x vec3 (physics state: velocities
+    and the like, applied to the vehicle's physics actor). seats: list of (flyweight id, object id, snapshot bytes)."""
+    out = world_object(pos=pos, rot=rot, b=nation, c=2) + armor_info(hp) + b"\x00" + struct.pack("<BBI", 0, state, 0)
+    out += struct.pack("<I", len(seats))
+    for fw, oid, snap in seats:
+        out += struct.pack("<II", fw, oid) + snap
+    out += struct.pack("<I", len(functions))
+    for fw, oid, snap in functions:
+        out += struct.pack("<II", fw, oid) + snap
+    return out + struct.pack("<IfI", 0, 0.0, 0) + struct.pack("<12f", *([0.0] * 12))
+
+
+def wheel_vehicle(seats, pos=(0.0, 0.0, 0.0), rot=IDENTITY, nation=0, hp=2500):
+    """WheelVehicle::WriteSnapshot (0x102bac10), a wheeled vehicle (FWheelVehicle, e.g. Cavy 4001):
+    ControlledEstab | u32 (+0x2b8) | u32 (+0x2b4) | u8 (+0x2bc) | vec3 (+0x2a8)."""
+    return (controlled_establishment([], seats, pos=pos, rot=rot, nation=nation, hp=hp)
+            + struct.pack("<IIB3f", 0, 0, 0, 0.0, 0.0, 0.0))
+
+
 def armor_info(hp=1000, cur=None):
     """DamageUnit armor list (DamageUnit::WriteArmorInfo 0x102102b0): u32 count | count x 32-byte ArmorInfo
     (i32 type (8 = skipped) | i32 max hp | f32 current hp | 4 x f32 | i32 -1). Robot::UpdateHUD shows

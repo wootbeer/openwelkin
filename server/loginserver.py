@@ -4247,6 +4247,9 @@ class Match:
         self.terrain = terrain(self.bf["world"])
         self.walls = map_sight(self.bf["world"], "walls")
         self.stations = map_stations(self.bf["world"]) if MAP_STATIONS else []
+        self.vehicles = {}  # vehicle id -> vehicle (add_test_vehicle)
+        if VEHICLE_TEST:
+            add_test_vehicle(self)
         for i, dpos in enumerate(self.bf["dummies"]):
             self.targets[100_000 * (i + 1) + 1] = {
                 "home": dpos, "pos": dpos, "name": f"Target {i + 1}", "cid": DUMMY_CID_BASE + i + 1,
@@ -4645,6 +4648,8 @@ def join_match(server, peer):
         show_platform(server, peer)
     for st in m.stations:
         show_station(server, peer, st)
+    for v in m.vehicles.values():
+        show_vehicle(server, peer, v)
     for other in m.peers:
         show_player(server, peer, other)
         show_player(server, other, peer)
@@ -4687,6 +4692,83 @@ def show_station(server, peer, st):
     func = (505002, st["fid"], snapshots.func_robot_receive(effect_range=st["radius"], effect_height=st["height"]))
     send_game_event(server, peer, 19, 50001, struct.pack("<III", 0, 403002, st["esb"])
                     + snapshots.establishment([func], pos=st["use"], nation=st["nation"]) + b"\x00")
+
+
+VEHICLE_TEST = os.environ.get("MW_TEST_VEHICLE") == "1"  # test: a parked Cavy next to each match's spawn
+VEHICLE_ID = 4_250_000_000  # vehicle object ids (past the platforms', under 2**32); its seats are its id + 1, + 2 ...
+# (vehicle flyweight, its seats' flyweights in SeatPoint order: driver first). Only wheeled vehicles so far.
+TEST_VEHICLE = (4001, (4001101, 4001102))  # Cavy: C_Logic_Cavy_DriverSeat, C_Logic_Cavy_GunnerSeat
+VEHICLE_OFFSET = (12.0, 0.0, 0.0)  # where the test vehicle stands from the spawn point
+BOARD_REACH = 20.0  # how far from a vehicle a player may get in (its BoardLoc points are a few units out)
+UNBOARD_OFFSET = (-4.0, 1.0, 0.0)  # where a player is put on getting out, from the vehicle
+
+
+def add_test_vehicle(m):
+    """MW_TEST_VEHICLE: one parked vehicle per match, near the spawn point."""
+    fw, seat_fws = TEST_VEHICLE
+    x, y, z = m.bf["spawn"]
+    vid = VEHICLE_ID + 100 * (m.id % 400_000)  # stays under 2**32
+    m.vehicles[vid] = {"id": vid, "fw": fw, "seat_fws": seat_fws, "seats": [None] * len(seat_fws),
+                       "pos": (x + VEHICLE_OFFSET[0], y + VEHICLE_OFFSET[1], z + VEHICLE_OFFSET[2])}
+
+
+def show_vehicle(server, peer, v):
+    """A vehicle: GS_Object_Attach_Object (19,50001) with no owner, its flyweight and a wheel_vehicle snapshot whose
+    seats show who is in them."""
+    seats = [(fw, v["id"] + 1 + i, snapshots.seat(i, occupant.player_rid if occupant else -1))
+             for i, (fw, occupant) in enumerate(zip(v["seat_fws"], v["seats"]))]
+    send_game_event(server, peer, 19, 50001, struct.pack("<III", 0, v["fw"], v["id"])
+                    + snapshots.wheel_vehicle(seats, pos=v["pos"]) + b"\x00")
+
+
+def vehicle_seat(m, body):
+    """The vehicle and seat number a board / unboard request names: u32 vehicle id | u32 seat (its object id, or
+    its number), after the f32 envelope. (None, None) if there is no such seat."""
+    if len(body) < 12:
+        return None, None
+    vid, seat = struct.unpack_from("<II", body, 4)
+    v = m.vehicles.get(vid)
+    if v is None:
+        return None, None
+    i = seat - vid - 1 if vid < seat <= vid + len(v["seats"]) else seat
+    return (v, i) if 0 <= i < len(v["seats"]) else (None, None)
+
+
+def board_vehicle(server, peer, body):
+    """Seat::RequestBoard (9,40320): get in. Checked here: alive, not in a vehicle already, near it, the seat free.
+    Confirmed to everyone with BoardRobot (19,50320): u32 robot | u32 vehicle | u32 seat number (handler Game.dll
+    0x1028df00 -> the vehicle's ConfirmBoard)."""
+    with GAME_LOCK:
+        m = getattr(peer, "match", None)
+        if not m or peer not in (m.peers or ()) or peer.player_dead or getattr(peer, "vehicle", None):
+            return
+        v, i = vehicle_seat(m, body)
+        if v is None or v["seats"][i] is not None or math.dist(peer.pos, v["pos"]) > BOARD_REACH:
+            return log(f"[game] {peer.name} could not board: {body[4:12].hex()}")
+        v["seats"][i], peer.vehicle = peer, (v["id"], i)
+        m.broadcast(19, 50320, struct.pack("<III", peer.player_rid, v["id"], i))
+    log(f"[game] {peer.name} boarded vehicle {v['id']} seat {i}")
+
+
+def unboard_vehicle(server, peer, body=None):
+    """Seat::RequestUnBoard (9,40321), or leaving the match: get out. UnBoardRobot (19,50321): u32 robot | u32 vehicle
+    | u32 seat number | vec3 where the robot is put (handler 0x1028dfb0 -> the vehicle's ConfirmUnBoard)."""
+    with GAME_LOCK:
+        m = getattr(peer, "match", None)
+        seated = getattr(peer, "vehicle", None)
+        if not m or not seated:
+            return
+        v = m.vehicles.get(seated[0])
+        peer.vehicle = None
+        if v is None or v["seats"][seated[1]] is not peer:
+            return
+        v["seats"][seated[1]] = None
+        pos = tuple(a + b for a, b in zip(v["pos"], UNBOARD_OFFSET))
+        if peer in (m.peers or ()):
+            peer.pos = pos
+            placed(peer)
+        m.broadcast(19, 50321, struct.pack("<III3f", peer.player_rid, v["id"], seated[1], *pos))
+    log(f"[game] {peer.name} got out of vehicle {v['id']}")
 
 
 def stations_for(peer):
@@ -4899,6 +4981,7 @@ def leave_match(peer):
     side = nation_of(peer.cid)
     commanded = side_commander(m, side) is peer
     squad_quit(m, peer, gone=True)
+    unboard_vehicle(m.server, peer)
     m.peers.remove(peer)
     peer.match = None
     BATTLE_CHOICE.pop(peer.cid, None)
@@ -4975,6 +5058,7 @@ def hit_player(server, m, victim, damage, killer_name, killer=None, suicide=Fals
     if victim.player_hp > 0:
         return False
     victim.player_dead = True
+    unboard_vehicle(server, victim)
     victim.deaths += 1
     record_stats(victim, deaths=1)
     STORE.add_log(victim.cid, f"Destroyed by {killer_name}")
@@ -5537,6 +5621,10 @@ def on_game_message(server, peer, raw):
         squad_target(peer, body[4])
     elif key == (9, 40502):
         squad_member_info(peer)
+    elif key == (9, 40320):
+        board_vehicle(server, peer, body)
+    elif key == (9, 40321):
+        unboard_vehicle(server, peer, body)
     elif key == (9, 40110):
         suicide(server, peer)
     elif key in ((9, 40314), (9, 40333)):

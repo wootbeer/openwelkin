@@ -928,6 +928,58 @@ for addr in list(server.peers):
     server.close(server.peers[addr], "test over")
 step()
 
+# vehicles (MW_TEST_VEHICLE): a parked Cavy per match; getting in and out
+ls.VEHICLE_TEST = True
+sent.clear()
+pa, pb = join_front(A, a_cid), join_front(B, b_cid)
+step()
+mv = pa.match
+vid, v = next(iter(mv.vehicles.items()))
+shown = [b for b in got(A, 50001) if struct.unpack_from("<I", b, 8)[0] == vid]
+ok &= check("vehicles: the test vehicle is shown on join, a Cavy with two empty seats", len(shown) == 1
+            and struct.unpack_from("<II", shown[0], 4) == (4001, vid) and v["seats"] == [None, None])
+
+
+def board(addr, seat, typ=40320, who=vid):
+    msg(addr, typ, struct.pack("<fII", 0.0, who, seat))
+    step()
+
+
+pa.pos = v["pos"]
+pb.pos = (v["pos"][0] + 500.0, v["pos"][1], v["pos"][2])
+board(B, vid + 1)
+ok &= check("vehicles: too far away to get in", v["seats"] == [None, None] and not got(A, 50320))
+board(A, vid + 1)
+ok &= check("vehicles: getting in, told to everyone", v["seats"] == [pa, None] and pa.vehicle == (vid, 0)
+            and struct.pack("<III", pa.player_rid, vid, 0) in got(B, 50320))
+pb.pos = v["pos"]
+board(B, 0)
+ok &= check("vehicles: a taken seat stays taken (a seat by number)", v["seats"] == [pa, None])
+board(A, vid + 2)
+ok &= check("vehicles: one seat at a time", v["seats"] == [pa, None])
+board(B, 7)
+board(B, vid + 2, who=vid + 99)
+ok &= check("vehicles: no such seat or vehicle", v["seats"] == [pa, None])
+board(B, 1)
+ok &= check("vehicles: the other seat", v["seats"] == [pa, pb])
+board(A, vid + 1, typ=40321)
+out = got(B, 50321)
+ok &= check("vehicles: getting out puts the robot beside the vehicle", v["seats"] == [None, pb] and pa.vehicle is None
+            and len(out) == 1 and struct.unpack_from("<III", out[0]) == (pa.player_rid, vid, 0)
+            and struct.unpack_from("<3f", out[0], 12) == tuple(a + b for a, b in zip(v["pos"], ls.UNBOARD_OFFSET)))
+pb.protected_until = 0.0
+ls.hit_player(server, mv, pb, ls.PLAYER_HP, "test")
+ok &= check("vehicles: a player who dies gets out", v["seats"] == [None, None] and pb.vehicle is None)
+step(ls.RESPAWN_DELAY + 1)
+board(A, vid + 1)
+server.close(server.peers[A], "test over")
+step()
+ok &= check("vehicles: a player who leaves gets out", v["seats"] == [None, None])
+ls.VEHICLE_TEST = False
+for addr in list(server.peers):
+    server.close(server.peers[addr], "test over")
+step()
+
 # own character: no base info (it would empty the loadout presets); a Respawn Platform (MW_PLATFORM) can be used
 ls.PLATFORM = True
 before = len(sent)

@@ -280,6 +280,19 @@ reply layout, and answer with real data.
       aircraft move
 - [ ] Order of work when started: show a parked vehicle (50001 with its flyweight), board / unboard it, drive
       it (its move message), then the depot and the Vehicle Roof; each step needs the real client
+- [ ] Parked vehicle and getting in / out, 2026-11-20 offline (MW_TEST_VEHICLE=1, a Cavy 4001 per match): shown with
+      50001 (owner 0, flyweight, id) and a WheelVehicle snapshot = ControlledEstab (Establishment with its seats, then
+      u32 trans state | f32 | u32 | 4 x vec3) | u32 | u32 | u8 | vec3 (snapshots.wheel_vehicle). Seats are FSeat
+      objects in the establishment's seat list, SeatPoint order (Cavy: driver 4001101, gunner 4001102): Seat
+      snapshot i32 robot in it (-1 empty) | 3 x f32 | u32 n weapons x (fw | id | snapshot) | u32 | i32 skill fw (-1)
+      | i32 linked establishment (-1) | u32 seat number. Seat::RequestBoard sends (9,40320) only for an empty seat
+      whose RobotLimit fits the robot's type (a mask; Cavy seats 1); Seat::RequestUnBoard sends (9,40321); both
+      carry the vehicle id and the seat after the f32 (read as its object id, or its number: to confirm in game).
+      Answers: BoardRobot (19,50320) u32 robot | u32 vehicle | u32 seat -> the vehicle's ConfirmBoard;
+      UnBoardRobot (19,50321) u32 robot | u32 vehicle | u32 seat | vec3 where the robot goes -> ConfirmUnBoard.
+      The server checks alive, not seated, within 20 units, seat free; a player who dies or leaves gets out.
+      To try in game: does the Cavy show, does E get in (and what the request carries), what the client sends
+      while driving (MW_DEBUG=1 logs it), and whether getting out works
 - [x] Request read in game 2026-11-03: u8 period (1 Total, 2 Monthly, 3 Weekly, 4 Daily) | u32 first row | u32 rows
       (20); Shooting (15100) has one more u8 in front. My place: u32 character id | u8 period. The u32 after the camp
       byte is a team id: anything but 0 makes the client ask UpdateTeamInfo (15,15023) once per row, so 0 is sent
