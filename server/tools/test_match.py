@@ -975,6 +975,45 @@ board(A, vid + 1)
 server.close(server.peers[A], "test over")
 step()
 ok &= check("vehicles: a player who leaves gets out", v["seats"] == [None, None])
+for addr in list(server.peers):
+    server.close(server.peers[addr], "test over")
+step()
+
+# driving: the driver's moves and heartbeats go to the others as their own readers take them
+sent.clear()
+pa, pb = join_front(A, a_cid), join_front(B, b_cid)
+step()
+mv = pa.match
+vid, v = next(iter(mv.vehicles.items()))
+pa.pos = pb.pos = v["pos"]
+board(A, vid + 1, who=vid)
+board(B, vid + 2, who=vid)
+sent.clear()
+where = (v["pos"][0] + 30.0, v["pos"][1], v["pos"][2] - 5.0)
+move = struct.pack("<IIIB", vid, 1, 0, 1) + struct.pack("<3f", *where) + struct.pack("<4f", 0.0, 0.0, 0.0, 1.0) \
+    + struct.pack("<9f", 1.0, 0.0, 0.0, *([0.0] * 6))
+msg(A, 40350, struct.pack("<f", 0.0) + move)
+step()
+ok &= check("driving: the driver's move goes to the others, as sent", got(B, 50350) == [move] and not got(A, 50350))
+ok &= check("driving: the server follows the vehicle and its driver", v["pos"] == where and pa.pos == where)
+msg(A, 40350, struct.pack("<f", 0.0) + move)
+step()
+ok &= check("driving: no more than 30 a second", len(got(B, 50350)) == 1)
+step(0.1)
+msg(B, 40350, struct.pack("<f", 0.0) + move)
+step()
+ok &= check("driving: only from the driver's seat", len(got(A, 50350)) == 0)
+bad = move[:13] + struct.pack("<f", float("nan")) + move[17:]
+msg(A, 40350, struct.pack("<f", 0.0) + bad)
+msg(A, 40350, struct.pack("<f", 0.0) + struct.pack("<I", vid + 99) + move[4:])
+msg(A, 40350, struct.pack("<f", 0.0) + move[:40])
+step()
+ok &= check("driving: bad numbers, another vehicle or a short move are dropped", len(got(B, 50350)) == 1)
+beat = struct.pack("<I", vid) + struct.pack("<24f", *([0.5] * 24))
+step(0.1)
+msg(A, 40357, struct.pack("<f", 0.0) + beat)
+step()
+ok &= check("driving: the heartbeat goes to the others too", got(B, 50363) == [beat])
 ls.VEHICLE_TEST = False
 for addr in list(server.peers):
     server.close(server.peers[addr], "test over")

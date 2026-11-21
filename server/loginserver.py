@@ -4771,6 +4771,46 @@ def unboard_vehicle(server, peer, body=None):
     log(f"[game] {peer.name} got out of vehicle {v['id']}")
 
 
+# A driver's vehicle messages, passed on to the other players as the client's own reader takes them (the body after
+# the f32 envelope, unchanged): request type -> (event to the others, body length after the envelope, reliable)
+#   WheelVehicle::Move (9,40350), sent when the driver's input changes -> GS_Wheel_Move (19,50350), handler Game.dll
+#     0x102bb330 -> WheelVehicle::OnUpdateMoveStatus: u32 vehicle | u32 | u32 | u8 | vec3 position | quat rotation
+#     | 3 x vec3 (velocities)
+#   ControlledEstab::LocalMove (9,40357), a heartbeat on a timer -> CtlEsabHeartMove (19,50363), handler 0x10285b20
+#     -> SetCorrectPos / SetCorrectRotation: u32 vehicle | 48-byte orientation | 4 x vec3
+VEHICLE_MOVES = {40350: (50350, 77, True), 40357: (50363, 100, False)}
+VEHICLE_MOVE_GAP = 1.0 / 30  # seconds between two of a driver's messages that are passed on
+VEHICLE_FAR = 100_000.0  # no coordinate of a vehicle is past this
+
+
+def vehicle_move(server, peer, typ, body):
+    """Pass a driver's move or heartbeat on to the others. Only from the player in the vehicle's driver seat (seat
+    0), whole, with finite numbers in reason; a 40350 also sets where the server has the vehicle (and its driver)."""
+    event, size, reliable = VEHICLE_MOVES[typ]
+    if len(body) < 4 + size:
+        return
+    with GAME_LOCK:
+        m = getattr(peer, "match", None)
+        seated = getattr(peer, "vehicle", None)
+        if not m or not seated or seated[1] != 0 or peer.player_dead:
+            return
+        payload = body[4:4 + size]
+        if struct.unpack_from("<I", payload)[0] != seated[0] or seated[0] not in m.vehicles:
+            return
+        floats = struct.unpack_from(f"<{(size - 13) // 4}f", payload, 13) if typ == 40350 else \
+            struct.unpack_from(f"<{(size - 4) // 4}f", payload, 4)
+        if not all(math.isfinite(f) and abs(f) < VEHICLE_FAR for f in floats):
+            return
+        if m.now - getattr(peer, "vehicle_move_at", -VEHICLE_MOVE_GAP) < VEHICLE_MOVE_GAP:
+            return
+        peer.vehicle_move_at = m.now
+        if typ == 40350:
+            pos = struct.unpack_from("<3f", payload, 13)
+            m.vehicles[seated[0]]["pos"] = peer.pos = pos
+            placed(peer)
+        m.broadcast(19, event, payload, reliable=reliable, skip=peer)
+
+
 def stations_for(peer):
     """The stations this player may use: their test platform (MW_PLATFORM) and the map's platforms of their side.
     Platforms of no side (nation 1, the cities) are shown but not usable."""
@@ -5625,6 +5665,8 @@ def on_game_message(server, peer, raw):
         board_vehicle(server, peer, body)
     elif key == (9, 40321):
         unboard_vehicle(server, peer, body)
+    elif key[0] == 9 and key[1] in VEHICLE_MOVES:
+        vehicle_move(server, peer, key[1], body)
     elif key == (9, 40110):
         suicide(server, peer)
     elif key in ((9, 40314), (9, 40333)):
