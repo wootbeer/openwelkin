@@ -23,7 +23,6 @@ TOOLS = os.path.dirname(os.path.abspath(__file__))
 SERVER = os.path.dirname(TOOLS)
 OFFSET = 200
 os.environ["MW_PORT_OFFSET"] = str(OFFSET)
-os.environ["MW_MATCH_PLAYERS"] = "2"  # two players fill a match, so a third goes to the other game server
 sys.path[:0] = [SERVER, TOOLS]
 root = tempfile.mkdtemp(prefix="mw-split-")
 os.environ["MW_STATE_DIR"] = os.path.join(root, "tool")
@@ -347,6 +346,7 @@ def link_attack():
 
 def main():
     proc = subprocess.Popen([sys.executable, "-u", os.path.join(SERVER, "start_split.py"), "--games", "2", "--state", root],
+                            env=dict(os.environ, MW_MATCH_PLAYERS="2"),  # two fill a match: a third goes elsewhere
                             text=True, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
     threading.Thread(target=pump, args=(proc,), daemon=True).start()
