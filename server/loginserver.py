@@ -4789,6 +4789,28 @@ def unboard_vehicle(server, peer, body=None):
     log(f"[game] {peer.name} got out of vehicle {v['id']}")
 
 
+def change_seat(server, peer, body):
+    """Establishment::RequestChangeSeat (9,40323): u32 vehicle | u32 seat number wanted, after the f32 envelope.
+    The seat must be free and in the vehicle the player is in. ChangeSeat (19,50323) to everyone: u32 robot | u32
+    vehicle | u32 old seat | u32 new seat (handler Game.dll 0x1028e0f0 -> ConfirmChangeSeat: Seat::UnBoard of the
+    old seat, then ConfirmBoard of the new one)."""
+    if len(body) < 12:
+        return
+    vid, want = struct.unpack_from("<II", body, 4)
+    with GAME_LOCK:
+        m = getattr(peer, "match", None)
+        seated = getattr(peer, "vehicle", None)
+        if not m or not seated or seated[0] != vid or peer.player_dead:
+            return
+        v = m.vehicles.get(vid)
+        if v is None or not 0 <= want < len(v["seats"]) or v["seats"][want] is not None:
+            return
+        old = seated[1]
+        v["seats"][old], v["seats"][want], peer.vehicle = None, peer, (vid, want)
+        m.broadcast(19, 50323, struct.pack("<IIII", peer.player_rid, vid, old, want))
+    log(f"[game] {peer.name} moved from seat {old} to seat {want} of vehicle {vid}")
+
+
 # A driver's vehicle messages, passed on to the other players as the client's own reader takes them (the body after
 # the f32 envelope, unchanged): request type -> (event to the others, body length after the envelope, reliable)
 #   WheelVehicle::Move (9,40350), sent when the driver's input changes -> GS_Wheel_Move (19,50350), handler Game.dll
@@ -4828,9 +4850,12 @@ def vehicle_move(server, peer, typ, body):
         if m.now - getattr(peer, "vehicle_move_at", -VEHICLE_MOVE_GAP) < VEHICLE_MOVE_GAP:
             return
         peer.vehicle_move_at = m.now
-        if kind:  # a move starts with the position
-            v["pos"] = peer.pos = floats[:3]
-            placed(peer)
+        if kind:  # a move starts with the position: the vehicle and everyone in it are there
+            v["pos"] = floats[:3]
+            for rider in v["seats"]:
+                if rider is not None:
+                    rider.pos = v["pos"]
+                    placed(rider)
         m.broadcast(19, event, payload, reliable=reliable, skip=peer)
 
 
@@ -5688,6 +5713,8 @@ def on_game_message(server, peer, raw):
         board_vehicle(server, peer, body)
     elif key == (9, 40321):
         unboard_vehicle(server, peer, body)
+    elif key == (9, 40323):
+        change_seat(server, peer, body)
     elif key[0] == 9 and key[1] in VEHICLE_MOVES:
         vehicle_move(server, peer, key[1], body)
     elif key == (9, 40110):

@@ -305,7 +305,11 @@ reply layout, and answer with real data.
       Snapshots after ControlledEstab: tracked as wheeled (u32 | u32 | u8 | vec3), hover u32 | u32 | u8 | 16 bytes,
       aircraft 3 x u32 (snapshots.vehicle). Test vehicles (MW_TEST_VEHICLE=cavy,wolf,lancer,falcon): Cavy 4001,
       Wolf 4011, Lancer 4012, Falcon 4008, seats by their flyweight ids (101 driver, 102 gunner): the client data
-      does not pair seats with SeatPoint names, so passenger seats are left out. Not known: the two u32 and the u8 of a move (the input?), whether the
+      does not pair seats with SeatPoint names, so passenger seats are left out. Everyone in a vehicle moves with it
+      on the server. Changing seats: Establishment::RequestChangeSeat (9,40323) u32 vehicle | u32 seat wanted ->
+      ChangeSeat (19,50323) u32 robot | u32 vehicle | u32 old seat | u32 new seat (ConfirmChangeSeat: leaves the
+      old seat, boards the new); the seat must be free. Also seen, not done: (9,40322) SubmitTransform (trans
+      state), (9,40325) seat weapon change, (9,40326) kick from a seat, (9,40327) set position / rotation. Not known: the two u32 and the u8 of a move (the input?), whether the
       48 bytes are 12 floats, and what 40358 (P2P heartbeat) is for
 - [x] Request read in game 2026-11-03: u8 period (1 Total, 2 Monthly, 3 Weekly, 4 Daily) | u32 first row | u32 rows
       (20); Shooting (15100) has one more u8 in front. My place: u32 character id | u8 period. The u32 after the camp
