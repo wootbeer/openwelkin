@@ -108,13 +108,6 @@ def controlled_establishment(functions, seats, pos=(0.0, 0.0, 0.0), rot=IDENTITY
     return out + struct.pack("<IfI", 0, 0.0, 0) + struct.pack("<12f", *([0.0] * 12))
 
 
-def wheel_vehicle(seats, pos=(0.0, 0.0, 0.0), rot=IDENTITY, nation=0, hp=2500):
-    """WheelVehicle::WriteSnapshot (0x102bac10), a wheeled vehicle (FWheelVehicle, e.g. Cavy 4001):
-    ControlledEstab | u32 (+0x2b8) | u32 (+0x2b4) | u8 (+0x2bc) | vec3 (+0x2a8)."""
-    return (controlled_establishment([], seats, pos=pos, rot=rot, nation=nation, hp=hp)
-            + struct.pack("<IIB3f", 0, 0, 0, 0.0, 0.0, 0.0))
-
-
 # What each kind of vehicle adds after ControlledEstab (its WriteSnapshot, all bounds-checked):
 VEHICLE_TAILS = {
     "wheel": struct.pack("<IIB3f", 0, 0, 0, 0.0, 0.0, 0.0),    # WheelVehicle 0x102bac10: u32 | u32 | u8 | vec3

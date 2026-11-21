@@ -4016,6 +4016,7 @@ def send_game_event(server, peer, catalog, type_, body, reliable=True):
 
 
 EVENT_HEAD = struct.Struct("<BBHfI")  # u8 flags | u8 catalog | u16 type | f32 event time | u32 unique key
+MOVE_FRAME = struct.Struct("<HBBHfI")  # fdp's u16 message length, then EVENT_HEAD (Match.tick)
 
 
 def ray_hits_robot(origin, target, pos, reach=math.inf):
@@ -4333,7 +4334,7 @@ class Match:
         if now >= self.next_ai and not self.over:
             self.next_ai = now + AI_TICK
             ai_step(self, now)
-        tick_no, queue = self.tick_no, self.server.queue
+        tick_no = self.tick_no
         for v in self.peers:
             moves = v.moves
             if not moves:
@@ -4360,11 +4361,13 @@ class Match:
                     x, y, z = struct.unpack_from("<3f", body, 8)
                     out.append(body[:8] + struct.pack("<3f", x, y + SNAP_RISE, z) + body[20:])
                 out.append(body)
-            # as send_game_event(..., 19, 50100, body, reliable=False) for each, without taking the lock again
+            # as send_game_event(..., 19, 50100, body, reliable=False) for each, without taking the lock again, and
+            # framed here as fdp.Server.queue would (u16 length | message), straight into the unreliable queue
             key = getattr(v, "event_key", 0)
+            append = v.out_unreliable.append
             for body in out:
                 key += 1
-                queue(v, EVENT_HEAD.pack(MSG_HAS_TYPE, 19, 50100, 0.0, key) + body, False)
+                append(MOVE_FRAME.pack(EVENT_HEAD.size + len(body), MSG_HAS_TYPE, 19, 50100, 0.0, key) + body)
             v.event_key = key
 
 

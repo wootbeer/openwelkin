@@ -80,7 +80,8 @@ class Peer:
         self.next_order = 1        # order id of our next ordered (reliable) packet; repeats are dropped as duplicates
         self.expected = 0          # next reliable number we expect from the client (cumulative ack value)
         self.connect_stream = b""
-        self.out = []              # queued (raw message, reliable) waiting for the next flush
+        self.out = []              # queued reliable messages (framed: u16 length | message) for the next flush
+        self.out_unreliable = []   # the same for unreliable ones
         self.unacked = {}          # our reliable packet number -> [packed packet, last send time, sends]
         self.last_ack, self.dup_acks = None, 0
         self.closed = False
@@ -239,26 +240,28 @@ class Server:
 
     def queue(self, peer, raw, reliable=True):
         """Send a message with the next flush (framed now: u16 length | message)."""
-        peer.out.append((LENGTH.pack(len(raw)) + raw, reliable))
+        (peer.out if reliable else peer.out_unreliable).append(LENGTH.pack(len(raw)) + raw)
+
+    def send_queued(self, peer, framed, reliable):
+        """Send framed messages in as few packets of at most MAX_BATCH payload bytes as they fit in."""
+        start, size = 0, 0
+        for i, f in enumerate(framed):
+            n = len(f)
+            if size and size + n > MAX_BATCH:
+                self.send_payload(peer, b"".join(framed[start:i]), reliable)
+                start, size = i, 0
+            size += n
+        self.send_payload(peer, b"".join(framed[start:]) if start else b"".join(framed), reliable)
+        framed.clear()
 
     def flush(self, now=None):
         """Send every peer's queued messages, packed into as few packets as fit, then resend what looks lost."""
         now = now or time.time()
         for peer in list(self.peers.values()):
             if peer.out:
-                for reliable in (True, False):
-                    batch, size = [], 0
-                    for framed, rel in peer.out:
-                        if rel != reliable:
-                            continue
-                        if batch and size + len(framed) > MAX_BATCH:
-                            self.send_payload(peer, b"".join(batch), reliable)
-                            batch, size = [], 0
-                        batch.append(framed)
-                        size += len(framed)
-                    if batch:
-                        self.send_payload(peer, b"".join(batch), reliable)
-                peer.out.clear()
+                self.send_queued(peer, peer.out, True)
+            if peer.out_unreliable:
+                self.send_queued(peer, peer.out_unreliable, False)
             if peer.unacked:
                 number, (_, sent, sends) = next(iter(peer.unacked.items()))  # oldest first
                 if now - sent > RESEND_AFTER * 2 ** min(sends - 1, 2):
@@ -283,9 +286,16 @@ class Server:
         else:
             number, peer.next_unreliable = peer.next_unreliable, (peer.next_unreliable + 1) & 0xFFFF
         flags = 0xE1 if reliable else 0x01
-        pkt = Packet(flags, number, peer.client_session, HEAD.size + len(payload), 1 if reliable else 0,
-                     peer.expected, order, payload)
-        data = self.send(pkt, peer.addr, quiet=quiet)
+        head = (flags, number, peer.client_session, HEAD.size + len(payload), 1 if reliable else 0, peer.expected,
+                order)
+        if self.trace and not quiet:
+            data = self.send(Packet(*head, payload=payload), peer.addr)
+        else:  # as send(), without building a Packet: this runs for every packet of every player
+            data = HEAD.pack(*head) + payload
+            stats = self.stats
+            stats["pkts_out"] += 1
+            stats["bytes_out"] += len(data)
+            self.sock.sendto(data, peer.addr)
         if reliable:
             peer.unacked[number] = [data, time.time(), 1]
 

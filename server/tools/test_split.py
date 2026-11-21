@@ -9,7 +9,6 @@ import asyncio
 import collections
 import os
 import sqlite3
-import re
 import shutil
 import socket
 import struct
